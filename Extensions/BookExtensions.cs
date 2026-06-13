@@ -32,10 +32,13 @@ public static class BookExtensions
 
     public static string CoverUrl(this Book book, bool appendVersion = false)
     {
+	    var coverExists = File.Exists(book.CoverPath());
+	    if (!coverExists) return "/img/no-cover.jpg";
+	    
 	    var url = "/covers/" + book.BookId + ".jpg";
 	    if(!appendVersion) return url;
-	    var version = File.Exists(book.CoverPath()) ? new FileInfo(book.CoverPath()).LastWriteTimeUtc.Ticks : 0;
-	    return url + "?v=" + version;
+	    
+	    return url + "?v=" + new FileInfo(book.CoverPath()).LastWriteTimeUtc.Ticks;
     }
     
     [Obsolete("Use EbookPath instead")]
