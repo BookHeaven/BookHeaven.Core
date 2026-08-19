@@ -14,9 +14,9 @@ public static class DependencyInjection
     /// </summary>
     /// <param name="services"></param>
     /// <param name="folders">Action to configure the folder paths for books, covers, fonts, and database</param>
-    public static IServiceCollection AddDomain(this IServiceCollection services, Action<DomainOptions> folders)
+    public static IServiceCollection AddCore(this IServiceCollection services, Action<CoreOptions> folders)
     {
-        var folderOptions = new DomainOptions();
+        var folderOptions = new CoreOptions();
         folders.Invoke(folderOptions);
         
         folderOptions.ValidateAndRegister();
@@ -49,10 +49,24 @@ public static class DependencyInjection
         services.AddScoped<BookManager>();
         
         return services;
-    } 
+    }
+    
+    public static IServiceProvider ApplyDatabaseMigrations(this IServiceProvider services)
+    {
+        using var scope = services.CreateScope();
+        var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<DatabaseContext>>();
+        using var dbContext = dbContextFactory.CreateDbContext();
+
+        if (dbContext.Database.GetPendingMigrations().Any())
+        {
+            dbContext.Database.Migrate();
+        }
+
+        return services;
+    }
 }
 
-public class DomainOptions
+public class CoreOptions
 {
     public string BooksPath { get; set; } = null!;
     public string CoversPath { get; set; } = null!;
