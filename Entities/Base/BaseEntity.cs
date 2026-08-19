@@ -1,6 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace BookHeaven.Domain.Entities.Base;
+namespace BookHeaven.Core.Entities.Base;
 
 public abstract class BaseEntity
 {

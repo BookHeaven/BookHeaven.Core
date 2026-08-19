@@ -1,6 +1,8 @@
-﻿using BookHeaven.Domain.Entities;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Shared;
 
-namespace BookHeaven.Domain.Features.Tags;
+namespace BookHeaven.Core.Features.Tags;
 
 public static class GetAllTags
 {

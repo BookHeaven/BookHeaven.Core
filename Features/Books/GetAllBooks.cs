@@ -1,7 +1,9 @@
-﻿using BookHeaven.Domain.Entities;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Shared;
 using Microsoft.Extensions.Logging;
 
-namespace BookHeaven.Domain.Features.Books;
+namespace BookHeaven.Core.Features.Books;
 
 public static class GetAllBooks
 {

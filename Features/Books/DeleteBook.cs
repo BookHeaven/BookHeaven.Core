@@ -1,12 +1,12 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Events;
-using BookHeaven.Domain.Extensions;
-using BookHeaven.Domain.Services;
-using BookHeaven.Domain.Shared;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Events;
+using BookHeaven.Core.Services;
+using BookHeaven.Core.Shared;
+using BookHeaven.Core.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
-namespace BookHeaven.Domain.Features.Books;
+namespace BookHeaven.Core.Features.Books;
 
 public static class DeleteBook
 {

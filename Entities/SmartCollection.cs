@@ -1,11 +1,11 @@
 ﻿using System.Text.Json;
-using BookHeaven.Domain.Entities.Base;
-using BookHeaven.Domain.Entities.Utilities;
-using BookHeaven.Domain.Enums;
+using BookHeaven.Core.Entities.Base;
+using BookHeaven.Core.Entities.Utilities;
+using BookHeaven.Core.Enums;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
-namespace BookHeaven.Domain.Entities;
+namespace BookHeaven.Core.Entities;
 
 public class SmartCollection : Collection
 {

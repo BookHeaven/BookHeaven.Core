@@ -1,6 +1,6 @@
-﻿using BookHeaven.Domain.Enums;
+﻿using BookHeaven.Core.Enums;
 
-namespace BookHeaven.Domain.Abstractions;
+namespace BookHeaven.Core.Abstractions;
 
 public interface IAlertService
 {

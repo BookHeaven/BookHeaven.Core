@@ -6,7 +6,7 @@
         <Nullable>enable</Nullable>
         <LangVersion>default</LangVersion>
         <Authors>Guillem Garrido</Authors>
-        <RepositoryUrl>https://github.com/BookHeaven/BookHeaven.Domain</RepositoryUrl>
+        <RepositoryUrl>https://github.com/BookHeaven/BookHeaven.Core</RepositoryUrl>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904;$(WarningsNotAsErrors)</WarningsNotAsErrors>
     </PropertyGroup>

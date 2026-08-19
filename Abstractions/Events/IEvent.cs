@@ -1,3 +1,3 @@
-﻿namespace BookHeaven.Domain.Abstractions.Events;
+﻿namespace BookHeaven.Core.Abstractions.Events;
 
 public interface IEvent;

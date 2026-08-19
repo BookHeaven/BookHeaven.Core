@@ -1,13 +1,13 @@
-﻿using BookHeaven.Domain.Abstractions;
-using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Enums;
-using BookHeaven.Domain.Extensions;
-using BookHeaven.Domain.Features.Books;
-using BookHeaven.Domain.Features.BooksProgress;
-using BookHeaven.Domain.Localization;
+﻿using BookHeaven.Core.Abstractions;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Enums;
+using BookHeaven.Core.Features.Books;
+using BookHeaven.Core.Features.BooksProgress;
+using BookHeaven.Core.Localization;
+using BookHeaven.Core.Extensions;
 using Mediator;
 
-namespace BookHeaven.Domain.Services;
+namespace BookHeaven.Core.Services;
 
 public class BookManager(
     IAlertService alertService,

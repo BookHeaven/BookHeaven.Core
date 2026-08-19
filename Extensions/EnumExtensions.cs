@@ -1,8 +1,8 @@
 ﻿using System.Reflection;
-using BookHeaven.Domain.Enums;
-using BookHeaven.Domain.Localization;
+using BookHeaven.Core.Enums;
+using BookHeaven.Core.Localization;
 
-namespace BookHeaven.Domain.Extensions;
+namespace BookHeaven.Core.Extensions;
 
 [AttributeUsage(AttributeTargets.Field)]
 public sealed class StringValueAttribute(string resourceKey) : Attribute

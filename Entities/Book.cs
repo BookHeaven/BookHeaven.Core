@@ -1,12 +1,12 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json.Serialization;
-using BookHeaven.Domain.Entities.Base;
-using BookHeaven.Domain.Enums;
-using BookHeaven.Domain.Extensions;
+using BookHeaven.Core.Entities.Base;
+using BookHeaven.Core.Enums;
+using BookHeaven.Core.Extensions;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace BookHeaven.Domain.Entities;
+namespace BookHeaven.Core.Entities;
 
 public partial class Book : BaseEntity
 {

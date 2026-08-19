@@ -4,11 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using BookHeaven.Domain;
+using BookHeaven.Core;
 
 #nullable disable
 
-namespace BookHeaven.Domain.Migrations
+namespace BookHeaven.Core.Migrations
 {
     [DbContext(typeof(DatabaseContext))]
     [Migration("20240620172118_Initial")]
@@ -20,7 +20,7 @@ namespace BookHeaven.Domain.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.6");
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Author", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Author", b =>
                 {
                     b.Property<Guid>("AuthorId")
                         .ValueGeneratedOnAdd()
@@ -40,7 +40,7 @@ namespace BookHeaven.Domain.Migrations
                     b.ToTable("Authors");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Book", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Book", b =>
                 {
                     b.Property<Guid>("BookId")
                         .ValueGeneratedOnAdd()
@@ -91,7 +91,7 @@ namespace BookHeaven.Domain.Migrations
                     b.ToTable("Books");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.BookProgress", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.BookProgress", b =>
                 {
                     b.Property<Guid>("BookProgressId")
                         .ValueGeneratedOnAdd()
@@ -145,7 +145,7 @@ namespace BookHeaven.Domain.Migrations
                     b.ToTable("BooksProgress");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.LocalSettings", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.LocalSettings", b =>
                 {
                     b.Property<Guid>("LocalSettingsId")
                         .ValueGeneratedOnAdd()
@@ -159,7 +159,7 @@ namespace BookHeaven.Domain.Migrations
                     b.ToTable("LocalSettings");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Profile", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Profile", b =>
                 {
                     b.Property<Guid>("ProfileId")
                         .ValueGeneratedOnAdd()
@@ -179,7 +179,7 @@ namespace BookHeaven.Domain.Migrations
                     b.ToTable("Profiles");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.ProfileSettings", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.ProfileSettings", b =>
                 {
                     b.Property<Guid>("ProfileSettingsId")
                         .ValueGeneratedOnAdd()
@@ -223,7 +223,7 @@ namespace BookHeaven.Domain.Migrations
                     b.ToTable("ProfilesSettings");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Series", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Series", b =>
                 {
                     b.Property<Guid>("SeriesId")
                         .ValueGeneratedOnAdd()
@@ -237,13 +237,13 @@ namespace BookHeaven.Domain.Migrations
                     b.ToTable("Series");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Book", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Book", b =>
                 {
-                    b.HasOne("BookHeaven.Domain.Entities.Author", "Author")
+                    b.HasOne("BookHeaven.Core.Entities.Author", "Author")
                         .WithMany("Books")
                         .HasForeignKey("AuthorId");
 
-                    b.HasOne("BookHeaven.Domain.Entities.Series", "Series")
+                    b.HasOne("BookHeaven.Core.Entities.Series", "Series")
                         .WithMany("Books")
                         .HasForeignKey("SeriesId");
 
@@ -252,15 +252,15 @@ namespace BookHeaven.Domain.Migrations
                     b.Navigation("Series");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.BookProgress", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.BookProgress", b =>
                 {
-                    b.HasOne("BookHeaven.Domain.Entities.Book", "Book")
+                    b.HasOne("BookHeaven.Core.Entities.Book", "Book")
                         .WithMany("Progresses")
                         .HasForeignKey("BookId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("BookHeaven.Domain.Entities.Profile", "Profile")
+                    b.HasOne("BookHeaven.Core.Entities.Profile", "Profile")
                         .WithMany("BooksProgress")
                         .HasForeignKey("ProfileId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -271,35 +271,35 @@ namespace BookHeaven.Domain.Migrations
                     b.Navigation("Profile");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.ProfileSettings", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.ProfileSettings", b =>
                 {
-                    b.HasOne("BookHeaven.Domain.Entities.Profile", "Profile")
+                    b.HasOne("BookHeaven.Core.Entities.Profile", "Profile")
                         .WithOne("ProfileSettings")
-                        .HasForeignKey("BookHeaven.Domain.Entities.ProfileSettings", "ProfileId")
+                        .HasForeignKey("BookHeaven.Core.Entities.ProfileSettings", "ProfileId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Profile");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Author", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Author", b =>
                 {
                     b.Navigation("Books");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Book", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Book", b =>
                 {
                     b.Navigation("Progresses");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Profile", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Profile", b =>
                 {
                     b.Navigation("BooksProgress");
 
                     b.Navigation("ProfileSettings");
                 });
 
-            modelBuilder.Entity("BookHeaven.Domain.Entities.Series", b =>
+            modelBuilder.Entity("BookHeaven.Core.Entities.Series", b =>
                 {
                     b.Navigation("Books");
                 });

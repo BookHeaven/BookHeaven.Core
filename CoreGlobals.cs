@@ -1,6 +1,6 @@
-﻿namespace BookHeaven.Domain;
+﻿namespace BookHeaven.Core;
 
-public static class DomainGlobals
+public static class CoreGlobals
 {
     public static string BooksPath { get; set; } = string.Empty;
     public static string CoversPath { get; set; } = string.Empty;

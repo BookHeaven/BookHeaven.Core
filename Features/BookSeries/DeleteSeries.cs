@@ -1,6 +1,8 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Shared;
+using Microsoft.Extensions.Logging;
 
-namespace BookHeaven.Domain.Features.BookSeries;
+namespace BookHeaven.Core.Features.BookSeries;
 
 public static class DeleteSeries
 {

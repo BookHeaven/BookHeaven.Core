@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace BookHeaven.Domain.Migrations
+namespace BookHeaven.Core.Migrations
 {
     /// <inheritdoc />
     public partial class AddFormatToBook : Migration

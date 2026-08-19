@@ -1,7 +1,9 @@
-﻿using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Extensions;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Shared;
+using BookHeaven.Core.Extensions;
 
-namespace BookHeaven.Domain.Features.ProfileSettingss;
+namespace BookHeaven.Core.Features.ProfileSettingss;
 
 public static class UpdateProfileSettings
 {

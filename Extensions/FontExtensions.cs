@@ -1,10 +1,10 @@
-﻿using BookHeaven.Domain.Entities;
+﻿using BookHeaven.Core.Entities;
 
-namespace BookHeaven.Domain.Extensions;
+namespace BookHeaven.Core.Extensions;
 
 public static class FontExtensions
 {
-    public static string FilePath(this Font font) => Path.Combine(DomainGlobals.FontsPath, font.Family, font.FileName);
+    public static string FilePath(this Font font) => Path.Combine(CoreGlobals.FontsPath, font.Family, font.FileName);
     public static string Url(this Font font) => $"/fonts/{font.Family}/{font.FileName}";
 
     public static string GetFontFace(this Font font)

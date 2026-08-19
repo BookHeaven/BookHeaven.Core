@@ -1,12 +1,12 @@
-using BookHeaven.Domain.Services;
+using BookHeaven.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace BookHeaven.Domain;
+namespace BookHeaven.Core;
 
 public static class DependencyInjection
 {
     // Add migration
-    // dotnet ef migrations add [MigrationName] --project BookHeaven.Domain --startup-project BookHeaven.Server
+    // dotnet ef migrations add [MigrationName] --project BookHeaven.Core --startup-project BookHeaven.Server
 
     /// <summary>
     /// Registers the database context and any other services needed for the domain layer.<br/>
@@ -66,10 +66,10 @@ public class DomainOptions
         if (string.IsNullOrEmpty(FontsPath)) throw new ArgumentException("FontsPath must be provided");
         if (string.IsNullOrEmpty(DatabasePath)) throw new ArgumentException("DatabasePath must be provided");
         
-        DomainGlobals.BooksPath = BooksPath;
-        DomainGlobals.CoversPath = CoversPath;
-        DomainGlobals.FontsPath = FontsPath;
-        DomainGlobals.DatabasePath = DatabasePath;
+        CoreGlobals.BooksPath = BooksPath;
+        CoreGlobals.CoversPath = CoversPath;
+        CoreGlobals.FontsPath = FontsPath;
+        CoreGlobals.DatabasePath = DatabasePath;
         
         Directory.CreateDirectory(BooksPath);
         Directory.CreateDirectory(CoversPath);

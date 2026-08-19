@@ -1,9 +1,9 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Shared;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Shared;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
-namespace BookHeaven.Domain.Features.Tags;
+namespace BookHeaven.Core.Features.Tags;
 
 public static class RemoveTagsFromBook
 {

@@ -1,4 +1,4 @@
-﻿namespace BookHeaven.Domain.Constants;
+﻿namespace BookHeaven.Core.Constants;
 
 public static class Broadcast
 {

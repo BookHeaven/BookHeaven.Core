@@ -1,11 +1,11 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Entities.Base;
-using BookHeaven.Domain.Events;
-using BookHeaven.Domain.Services;
-using BookHeaven.Domain.Shared;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities.Base;
+using BookHeaven.Core.Events;
+using BookHeaven.Core.Services;
+using BookHeaven.Core.Shared;
 using Microsoft.EntityFrameworkCore;
 
-namespace BookHeaven.Domain.Features.Collections;
+namespace BookHeaven.Core.Features.Collections;
 
 public static class AddCollection
 {

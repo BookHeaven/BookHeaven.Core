@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace BookHeaven.Domain.Entities;
+namespace BookHeaven.Core.Entities;
 
 public partial class Profile
 {

@@ -1,6 +1,6 @@
-﻿using BookHeaven.Domain.Abstractions.Events;
+﻿using BookHeaven.Core.Abstractions.Events;
 
-namespace BookHeaven.Domain.Events;
+namespace BookHeaven.Core.Events;
 
 public record BookAdded(Guid BookId) : IEvent;
 public record BookUpdated(Guid BookId) : IEvent;

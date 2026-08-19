@@ -1,8 +1,8 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Shared;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Shared;
 using Microsoft.EntityFrameworkCore;
 
-namespace BookHeaven.Domain.Features.Profiles;
+namespace BookHeaven.Core.Features.Profiles;
 
 public static class DeleteProfile
 {

@@ -1,4 +1,4 @@
-﻿namespace BookHeaven.Domain.Shared;
+﻿namespace BookHeaven.Core.Shared;
 
 public sealed record Error(string Description)
 {

@@ -1,4 +1,4 @@
-﻿namespace BookHeaven.Domain.Shared;
+﻿namespace BookHeaven.Core.Shared;
 
 public static class Utilities
 {

@@ -1,4 +1,4 @@
-﻿namespace BookHeaven.Domain.Enums;
+﻿namespace BookHeaven.Core.Enums;
 
 public enum EbookFormat
 {

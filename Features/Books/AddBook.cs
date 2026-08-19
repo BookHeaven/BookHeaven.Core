@@ -1,9 +1,11 @@
-﻿using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Events;
-using BookHeaven.Domain.Extensions;
-using BookHeaven.Domain.Services;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Events;
+using BookHeaven.Core.Services;
+using BookHeaven.Core.Shared;
+using BookHeaven.Core.Extensions;
 
-namespace BookHeaven.Domain.Features.Books;
+namespace BookHeaven.Core.Features.Books;
 
 public static class AddBook
 {

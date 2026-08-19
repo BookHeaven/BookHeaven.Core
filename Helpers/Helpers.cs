@@ -1,4 +1,4 @@
-namespace BookHeaven.Domain.Helpers;
+namespace BookHeaven.Core.Helpers;
 
 public static class Helpers
 {

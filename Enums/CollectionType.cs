@@ -1,6 +1,6 @@
-﻿using BookHeaven.Domain.Extensions;
+﻿using BookHeaven.Core.Extensions;
 
-namespace BookHeaven.Domain.Enums;
+namespace BookHeaven.Core.Enums;
 
 public enum CollectionType
 {

@@ -1,9 +1,9 @@
-﻿using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Entities.Base;
-using BookHeaven.Domain.Enums;
-using BookHeaven.Domain.Helpers;
+﻿using BookHeaven.Core.Entities;
+using BookHeaven.Core.Entities.Base;
+using BookHeaven.Core.Enums;
+using BookHeaven.Core.Helpers;
 
-namespace BookHeaven.Domain.Extensions;
+namespace BookHeaven.Core.Extensions;
 
 public static class BookExtensions
 {
@@ -40,8 +40,8 @@ public static class BookExtensions
 		    return url + "?v=" + new FileInfo(book.CoverPath()).LastWriteTimeUtc.Ticks;
 	    }
 
-	    public string EbookPath() => Path.Combine(DomainGlobals.BooksPath, $"{book.BookId}{book.Format.GetExtension()}");
-	    public string CoverPath() => Path.Combine(DomainGlobals.CoversPath, $"{book.BookId}.jpg");
+	    public string EbookPath() => Path.Combine(CoreGlobals.BooksPath, $"{book.BookId}{book.Format.GetExtension()}");
+	    public string CoverPath() => Path.Combine(CoreGlobals.CoversPath, $"{book.BookId}.jpg");
 
 	    public string GetCoverAsBase64()
 	    {

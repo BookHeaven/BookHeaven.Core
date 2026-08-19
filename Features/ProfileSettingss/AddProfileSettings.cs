@@ -1,9 +1,9 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Shared;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Shared;
 using Microsoft.EntityFrameworkCore;
 
-namespace BookHeaven.Domain.Features.ProfileSettingss;
+namespace BookHeaven.Core.Features.ProfileSettingss;
 
 public static class AddProfileSettings
 {

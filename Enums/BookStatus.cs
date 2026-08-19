@@ -1,7 +1,7 @@
-﻿using BookHeaven.Domain.Extensions;
-using BookHeaven.Domain.Localization;
+﻿using BookHeaven.Core.Extensions;
+using BookHeaven.Core.Localization;
 
-namespace BookHeaven.Domain.Enums;
+namespace BookHeaven.Core.Enums;
 
 public enum BookStatus
 {

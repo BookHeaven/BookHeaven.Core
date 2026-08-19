@@ -1,6 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace BookHeaven.Domain.Entities;
+namespace BookHeaven.Core.Entities;
 
 public class KoreaderProgress
 {

@@ -7,7 +7,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-namespace BookHeaven.Domain.Localization {
+namespace BookHeaven.Core.Localization {
     using System;
     
     
@@ -38,7 +38,7 @@ namespace BookHeaven.Domain.Localization {
         public static global::System.Resources.ResourceManager ResourceManager {
             get {
                 if (object.ReferenceEquals(resourceMan, null)) {
-                    global::System.Resources.ResourceManager temp = new global::System.Resources.ResourceManager("BookHeaven.Domain.Localization.Translations", typeof(Translations).Assembly);
+                    global::System.Resources.ResourceManager temp = new global::System.Resources.ResourceManager("BookHeaven.Core.Localization.Translations", typeof(Translations).Assembly);
                     resourceMan = temp;
                 }
                 return resourceMan;

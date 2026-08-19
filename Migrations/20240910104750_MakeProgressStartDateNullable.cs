@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace BookHeaven.Domain.Migrations
+namespace BookHeaven.Core.Migrations
 {
     /// <inheritdoc />
     public partial class MakeProgressStartDateNullable : Migration

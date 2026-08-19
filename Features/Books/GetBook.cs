@@ -1,9 +1,9 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Shared;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Shared;
 using Microsoft.EntityFrameworkCore;
 
-namespace BookHeaven.Domain.Features.Books;
+namespace BookHeaven.Core.Features.Books;
 
 public static class GetBook
 {

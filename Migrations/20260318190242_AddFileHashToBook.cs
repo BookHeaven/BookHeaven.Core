@@ -1,10 +1,10 @@
-﻿using BookHeaven.Domain.Extensions;
-using BookHeaven.Domain.Helpers;
+﻿using BookHeaven.Core.Helpers;
+using BookHeaven.Core.Extensions;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace BookHeaven.Domain.Migrations
+namespace BookHeaven.Core.Migrations
 {
     /// <inheritdoc />
     public partial class AddFileHashToBook : Migration
@@ -25,7 +25,7 @@ namespace BookHeaven.Domain.Migrations
                 column: "FileHash");
             
             // Populate hashes for existing books
-            var files = Directory.GetFiles(DomainGlobals.BooksPath);
+            var files = Directory.GetFiles(CoreGlobals.BooksPath);
             foreach (var file in files)
             {
                 var bookId = Path.GetFileNameWithoutExtension(file);

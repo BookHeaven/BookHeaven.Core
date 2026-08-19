@@ -1,4 +1,7 @@
-﻿namespace BookHeaven.Domain.Features.KoreaderProgress;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Shared;
+
+namespace BookHeaven.Core.Features.KoreaderProgress;
 
 public static class SaveKoreaderProgress
 {

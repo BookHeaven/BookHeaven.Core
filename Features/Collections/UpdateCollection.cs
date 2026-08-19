@@ -1,8 +1,10 @@
-﻿using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Entities.Base;
-using BookHeaven.Domain.Services;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Entities.Base;
+using BookHeaven.Core.Services;
+using BookHeaven.Core.Shared;
 
-namespace BookHeaven.Domain.Features.Collections;
+namespace BookHeaven.Core.Features.Collections;
 
 public static class UpdateCollection
 {

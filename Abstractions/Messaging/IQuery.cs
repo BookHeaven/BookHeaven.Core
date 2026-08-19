@@ -1,6 +1,7 @@
-﻿using Mediator;
+﻿using BookHeaven.Core.Shared;
+using Mediator;
 
-namespace BookHeaven.Domain.Abstractions.Messaging;
+namespace BookHeaven.Core.Abstractions.Messaging;
 
 public interface IQuery<TResponse> : IRequest<Result<TResponse>>
 {

@@ -1,4 +1,4 @@
-﻿namespace BookHeaven.Domain.Entities.Utilities;
+﻿namespace BookHeaven.Core.Entities.Utilities;
 
 public class FilterSet<T>
 {

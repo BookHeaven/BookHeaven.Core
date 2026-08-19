@@ -1,7 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 
-namespace BookHeaven.Domain.Helpers;
+namespace BookHeaven.Core.Helpers;
 
 public static class FileHelpers
 {

@@ -1,7 +1,9 @@
-﻿using BookHeaven.Domain.Entities;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Shared;
 using Microsoft.Extensions.Logging;
 
-namespace BookHeaven.Domain.Features.Tags;
+namespace BookHeaven.Core.Features.Tags;
 
 public static class AddTagsToBook
 {

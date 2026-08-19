@@ -1,7 +1,9 @@
-﻿using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Extensions;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Shared;
+using BookHeaven.Core.Extensions;
 
-namespace BookHeaven.Domain.Features.BooksProgress;
+namespace BookHeaven.Core.Features.BooksProgress;
 
 public static class UpdateBookProgress
 {

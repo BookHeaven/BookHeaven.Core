@@ -1,6 +1,8 @@
-﻿using BookHeaven.Domain.Entities.Base;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities.Base;
+using BookHeaven.Core.Shared;
 
-namespace BookHeaven.Domain.Features.Collections;
+namespace BookHeaven.Core.Features.Collections;
 
 public static class GetCollectionById
 {

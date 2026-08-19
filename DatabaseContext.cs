@@ -1,8 +1,8 @@
-using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Entities.Base;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Entities.Base;
 
 
-namespace BookHeaven.Domain;
+namespace BookHeaven.Core;
 
 public partial class DatabaseContext(DbContextOptions<DatabaseContext> options) : DbContext(options)
 {

@@ -1,6 +1,8 @@
-﻿using BookHeaven.Domain.Entities;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Shared;
 
-namespace BookHeaven.Domain.Features.BookSeries;
+namespace BookHeaven.Core.Features.BookSeries;
 
 public static class CreateSeries
 {

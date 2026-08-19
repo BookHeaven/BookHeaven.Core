@@ -1,6 +1,6 @@
-﻿using BookHeaven.Domain.Entities;
+﻿using BookHeaven.Core.Entities;
 
-namespace BookHeaven.Domain.Extensions;
+namespace BookHeaven.Core.Extensions;
 
 public static class AuthorExtensions
 {

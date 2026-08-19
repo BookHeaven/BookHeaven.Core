@@ -1,9 +1,9 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Shared;
+﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Shared;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
-namespace BookHeaven.Domain.Features.Fonts;
+namespace BookHeaven.Core.Features.Fonts;
 
 public static class DeleteFont
 {

@@ -1,9 +1,9 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using BookHeaven.Domain.Enums;
+using BookHeaven.Core.Enums;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-namespace BookHeaven.Domain.Entities.Base;
+namespace BookHeaven.Core.Entities.Base;
 
 public abstract class Collection
 {

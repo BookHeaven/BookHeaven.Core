@@ -1,6 +1,6 @@
-﻿using BookHeaven.Domain.Abstractions.Events;
+﻿using BookHeaven.Core.Abstractions.Events;
 
-namespace BookHeaven.Domain.Services;
+namespace BookHeaven.Core.Services;
 
 public class GlobalEventsService
 {
