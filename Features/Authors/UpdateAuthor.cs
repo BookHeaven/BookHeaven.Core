@@ -1,17 +1,15 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Shared;
-using Microsoft.EntityFrameworkCore;
+﻿using BookHeaven.Domain.Entities;
+using BookHeaven.Domain.Extensions;
 
 namespace BookHeaven.Domain.Features.Authors;
 
 public static class UpdateAuthor
 {
-    public sealed record Command(Author Author) : ICommand<Author>;
+    public sealed record Command(Author Author) : ICommand;
 
-    internal class Handler(IDbContextFactory<DatabaseContext> dbContextFactory) : ICommandHandler<Command, Author>
+    internal class Handler(IDbContextFactory<DatabaseContext> dbContextFactory) : ICommandHandler<Command>
     {
-        public async ValueTask<Result<Author>> Handle(Command request, CancellationToken cancellationToken)
+        public async ValueTask<Result> Handle(Command request, CancellationToken cancellationToken)
         {
             await using var context = await dbContextFactory.CreateDbContextAsync(cancellationToken);
             
@@ -21,8 +19,7 @@ public static class UpdateAuthor
                 return new Error("Author not found");
             }
             
-            existingAuthor.Name = request.Author.Name;
-            existingAuthor.Biography = request.Author.Biography;
+            existingAuthor.UpdateFrom(request.Author);
         
             try
             {
@@ -33,7 +30,7 @@ public static class UpdateAuthor
                 return new Error("An error occurred while updating the author");
             }
         
-            return request.Author;
+            return Result.Success();
         }
     }
 }
