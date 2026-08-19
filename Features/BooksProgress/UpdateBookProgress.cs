@@ -1,4 +1,5 @@
 ﻿using BookHeaven.Domain.Entities;
+using BookHeaven.Domain.Extensions;
 
 namespace BookHeaven.Domain.Features.BooksProgress;
 
@@ -12,12 +13,19 @@ public static class UpdateBookProgress
         {
             await using var context = await dbContextFactory.CreateDbContextAsync(cancellationToken);
 
-
-            if (request.BookProgress.Progress > 100)
+            var progress = await context.BooksProgress.FirstOrDefaultAsync(bp => bp.BookProgressId == request.BookProgress.BookProgressId, cancellationToken);
+            
+            if (progress is null)
             {
-                request.BookProgress.Progress = 100;
+                return Result.Failure(new Error("Book progress not found"));
             }
-            context.BooksProgress.Update(request.BookProgress);
+            
+            progress.UpdateFrom(request.BookProgress);
+
+            if (progress.Progress > 100)
+            {
+                progress.Progress = 100;
+            }
 
             try
             {
