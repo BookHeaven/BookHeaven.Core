@@ -1,7 +1,5 @@
-﻿using BookHeaven.Domain.Abstractions.Messaging;
-using BookHeaven.Domain.Entities;
-using BookHeaven.Domain.Shared;
-using Microsoft.EntityFrameworkCore;
+﻿using BookHeaven.Domain.Entities;
+using BookHeaven.Domain.Extensions;
 
 namespace BookHeaven.Domain.Features.ProfileSettingss;
 
@@ -15,8 +13,24 @@ public static class UpdateProfileSettings
         {
             await using var context = await dbContextFactory.CreateDbContextAsync(cancellationToken);
             
-            context.ProfilesSettings.Update(request.ProfileSettings);
-            await context.SaveChangesAsync(cancellationToken);
+            var existingProfileSettings = await context.ProfilesSettings
+                .FirstOrDefaultAsync(ps => ps.ProfileId == request.ProfileSettings.ProfileId, cancellationToken);
+            
+            if (existingProfileSettings is null)
+            {
+                return new Error("Profile settings not found");
+            }
+
+            existingProfileSettings.UpdateFrom(request.ProfileSettings);
+
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                return new Error("An error occurred while updating the profile settings");
+            }
 
             return Result.Success();
         }
