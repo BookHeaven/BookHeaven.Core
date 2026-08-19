@@ -21,6 +21,12 @@ public static class BookProgressExtensions
             progress.LastRead = updatedProgress.LastRead;
             progress.ElapsedTime = updatedProgress.ElapsedTime;
             progress.BookWordCount = updatedProgress.BookWordCount;
+#pragma warning disable CS0618 // Type or member is obsolete
+            progress.Page = updatedProgress.Page;
+            progress.PageCount = updatedProgress.PageCount;
+            progress.PageCountPrev = updatedProgress.PageCountPrev;
+            progress.PageCountNext = updatedProgress.PageCountNext;
+#pragma warning restore CS0618 // Type or member is obsolete
         }
     }
 }
