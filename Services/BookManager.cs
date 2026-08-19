@@ -81,10 +81,7 @@ public class BookManager(
         progress.ElapsedTime = TimeSpan.Zero;
         progress.LastRead = null;
         progress.Chapter = 0;
-        progress.Page = 0;
-        progress.PageCount = 0;
-        progress.PageCountNext = 0;
-        progress.PageCountPrev = 0;
+        progress.ChapterProgress = 0;
         await sender.Send(new UpdateBookProgress.Command(progress));
         //await ClearCache(book, false);
         await alertService.ShowToastAsync(Translations.BOOK_MARKED_AS_NEW);

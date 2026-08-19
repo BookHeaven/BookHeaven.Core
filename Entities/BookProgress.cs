@@ -14,9 +14,14 @@ public partial class BookProgress
     public Guid ProfileId { get; set; }
     public Profile? Profile { get; set; }
     public int Chapter { get; set; }
+    [Obsolete("This property is obsolete and it will be removed in the future.")]
     public int Page { get; set; }
+    public double ChapterProgress { get; set; }
+    [Obsolete("This property is obsolete and it will be removed in the future.")]
     public int PageCount { get; set; }
+    [Obsolete("This property is obsolete and it will be removed in the future.")]
     public int? PageCountPrev { get; set; }
+    [Obsolete("This property is obsolete and it will be removed in the future.")]
     public int? PageCountNext { get; set; }
     public int BookWordCount { get; set; }
     public decimal Progress { get; set; }
@@ -33,6 +38,9 @@ internal class BookProgressConfig : IEntityTypeConfiguration<BookProgress>
     {
         builder.HasKey(bp => bp.BookProgressId);
         builder.Property(bp => bp.BookProgressId).ValueGeneratedOnAdd();
+        
+        builder.Property(bp => bp.ChapterProgress)
+            .HasDefaultValue(0.0);
         
         builder
             .HasOne(bp => bp.Book)
