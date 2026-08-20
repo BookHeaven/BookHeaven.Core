@@ -1,6 +1,4 @@
-using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
-using BookHeaven.Core.Extensions;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace BookHeaven.Core.Entities;
@@ -8,11 +6,8 @@ namespace BookHeaven.Core.Entities;
 public partial class BookProgress
 {
     public Guid BookProgressId { get; set; }
-
     public Guid BookId { get; set; }
-    public Book? Book { get; set; }
     public Guid ProfileId { get; set; }
-    public Profile? Profile { get; set; }
     public int Chapter { get; set; }
     [Obsolete("This property is obsolete and it will be removed in the future.")]
     public int Page { get; set; }
@@ -29,6 +24,11 @@ public partial class BookProgress
     public DateTimeOffset? EndDate { get; set; }
     public DateTimeOffset? LastRead { get; set; }
     public TimeSpan ElapsedTime { get; set; } = TimeSpan.Zero;
+    
+    [JsonIgnore]
+    public Book? Book { get; set; }
+    [JsonIgnore]
+    public Profile? Profile { get; set; }
 
 }
 
