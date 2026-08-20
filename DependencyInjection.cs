@@ -28,16 +28,6 @@ public static class DependencyInjection
             options.EnableSensitiveDataLogging();
 #endif
         });
-        
-        using (var scope = services.BuildServiceProvider().CreateScope())
-        {
-            var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
-
-            if (context.Database.GetPendingMigrations().Any())
-            {
-                context.Database.Migrate();
-            }
-        }
 
         services.AddMediator(config =>
         {
