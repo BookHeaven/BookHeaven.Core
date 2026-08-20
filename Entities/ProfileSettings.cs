@@ -6,11 +6,7 @@ namespace BookHeaven.Core.Entities;
 public class ProfileSettings
 {
     public Guid ProfileSettingsId { get; set; }
-
     public Guid ProfileId { get; set; }
-    [JsonIgnore]
-    public Profile Profile { get; set; } = null!;
-    
     public decimal FontSize { get; set; } = 16;
     public decimal LineHeight { get; set; } = 1.3m;
     public decimal LetterSpacing { get; set; } = 0;
@@ -22,6 +18,9 @@ public class ProfileSettings
     public decimal PageGap { get; set; } = 50;
     public int SelectedLayout { get; set; } = 0;
     public string SelectedFont { get; set; } = string.Empty;
+    
+    [JsonIgnore]
+    public Profile Profile { get; set; } = null!;
 }
 
 internal class ProfileSettingsConfig : IEntityTypeConfiguration<ProfileSettings>
