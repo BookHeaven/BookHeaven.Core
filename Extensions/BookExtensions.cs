@@ -52,6 +52,16 @@ public static class BookExtensions
 		    }
 		    return "data:image/jpeg;base64," + Convert.ToBase64String(File.ReadAllBytes(path));
 	    }
+	    
+	    public bool BelongsToCollection(Collection collection)
+	    {
+		    return collection switch
+		    {
+			    SimpleCollection simpleCollection => simpleCollection.BookIds.Contains(book.BookId),
+			    SmartCollection smartCollection => new[] { book }.ApplyCollectionFilter(smartCollection).Any(),
+			    _ => throw new NotImplementedException($"Collection type {collection.GetType().Name} not implemented")
+		    };
+	    }
 
 	    public void UpdateFrom(Book updatedBook)
 	    {
