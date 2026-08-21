@@ -1,5 +1,6 @@
 ﻿using BookHeaven.Core.Abstractions;
 using BookHeaven.Core.Entities;
+using BookHeaven.Core.Entities.Base;
 using BookHeaven.Core.Enums;
 using BookHeaven.Core.Features.Books;
 using BookHeaven.Core.Features.BooksProgress;
@@ -19,6 +20,7 @@ public class BookManager(
     public int CountByStatus(BookStatus status) => _books.GetCountByStatus(status);
     
     public BookStatus Filter { get; set; } = BookStatus.All;
+    public Collection? CurrentCollection;
 
     /*private async Task ClearCache(Book book, bool showToast = true)
     {
@@ -38,9 +40,9 @@ public class BookManager(
         if (showToast) await alertService.ShowToast("Cache cleared");
     }*/
     
-    public async Task GetBooksAsync(Guid profileId, Guid? collectionId = null)
+    public async Task GetBooksAsync(Guid profileId)
     {
-        if (collectionId is null)
+        if (CurrentCollection is null)
         {
             var getBooks = await sender.Send(new GetAllBooks.Query(profileId));
             if (getBooks.IsSuccess)
@@ -50,7 +52,7 @@ public class BookManager(
         }
         else
         {
-            var getBooks = await sender.Send(new GetBooksByCollection.Query(collectionId.Value, profileId));
+            var getBooks = await sender.Send(new GetBooksByCollection.Query(CurrentCollection.CollectionId, profileId));
             if (getBooks.IsSuccess)
             {
                 _books = getBooks.Value;
@@ -69,6 +71,8 @@ public class BookManager(
         
         var book = getBook.Value;
         book.Progresses.Add(getProgress.Value);
+        
+        if(CurrentCollection is not null && !book.BelongsToCollection(CurrentCollection)) return;
         _books.Add(book);
     }
     
