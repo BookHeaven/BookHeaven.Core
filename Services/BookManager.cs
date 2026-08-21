@@ -38,13 +38,25 @@ public class BookManager(
         if (showToast) await alertService.ShowToast("Cache cleared");
     }*/
     
-    public async Task GetBooksAsync(Guid profileId)
+    public async Task GetBooksAsync(Guid profileId, Guid? collectionId = null)
     {
-        var getBooks = await sender.Send(new GetAllBooks.Query(profileId));
-        if (getBooks.IsSuccess)
+        if (collectionId is null)
         {
-            _books = getBooks.Value;
+            var getBooks = await sender.Send(new GetAllBooks.Query(profileId));
+            if (getBooks.IsSuccess)
+            {
+                _books = getBooks.Value;
+            }
         }
+        else
+        {
+            var getBooks = await sender.Send(new GetBooksByCollection.Query(collectionId.Value, profileId));
+            if (getBooks.IsSuccess)
+            {
+                _books = getBooks.Value;
+            }
+        }
+        
     }
 
     public async Task AppendBookAsync(Guid profileId, Guid bookId)
