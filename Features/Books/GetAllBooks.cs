@@ -32,10 +32,10 @@ public static class GetAllBooks
                 if (!string.IsNullOrEmpty(request.Filter))
                 {
                     books = books.Where(b =>
-                        b.Title!.ToUpper().Contains(request.Filter) ||
-                        b.Author!.Name!.ToUpper().Contains(request.Filter) ||
-                        b.Series!.Name!.ToUpper().Contains(request.Filter) ||
-                        b.Tags.Any(t => t.Name.ToUpper().Contains(request.Filter)));
+                        b.Title!.ToUpper().Contains(request.Filter.ToUpper()) ||
+                        b.Author!.Name!.ToUpper().Contains(request.Filter.ToUpper()) ||
+                        b.Series!.Name!.ToUpper().Contains(request.Filter.ToUpper()) ||
+                        b.Tags.Any(t => t.Name.ToUpper().Contains(request.Filter.ToUpper())));
                 }
             
                 var results = await books.AsSplitQuery().ToListAsync(cancellationToken);
