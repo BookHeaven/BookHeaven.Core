@@ -21,6 +21,8 @@ public class BookManager(
     
     public BookStatus Filter { get; set; } = BookStatus.All;
     public Collection? CurrentCollection;
+    
+    public event Action? OnBooksChanged;
 
     /*private async Task ClearCache(Book book, bool showToast = true)
     {
@@ -82,11 +84,15 @@ public class BookManager(
         if (book != null)
         {
             _books.Remove(book);
+            OnBooksChanged?.Invoke();
         }
     }
     
-    public async Task MarkAsNewAsync(Book book)
+    public async Task MarkAsNewAsync(Guid bookId)
     {
+        var book = _books.FirstOrDefault(b => b.BookId == bookId);
+        if (book == null) return;
+        
         var result = await alertService.ShowConfirmationAsync("Are you sure?", "This will reset your progress, which can't be undone unless you delete the book and download it again.");
         if (!result) return;
         
@@ -100,11 +106,15 @@ public class BookManager(
         progress.ChapterProgress = 0;
         await sender.Send(new UpdateBookProgress.Command(progress));
         //await ClearCache(book, false);
+        OnBooksChanged?.Invoke();
         await alertService.ShowToastAsync(Translations.BOOK_MARKED_AS_NEW);
     }
     
-    public async Task MarkAsFinishedAsync(Book book)
+    public async Task MarkAsFinishedAsync(Guid bookId)
     {
+        var book = _books.FirstOrDefault(b => b.BookId == bookId);
+        if (book == null) return;
+        
         var progress = book.Progress();
         if(progress.ElapsedTime == TimeSpan.Zero)
         {
@@ -114,6 +124,7 @@ public class BookManager(
         progress.Progress = 100;
         await sender.Send(new UpdateBookProgress.Command(progress));
         //await ClearCache(book, false);
+        OnBooksChanged?.Invoke();
         await alertService.ShowToastAsync(Translations.BOOK_MARKED_AS_FINISHED);
     }
 }
