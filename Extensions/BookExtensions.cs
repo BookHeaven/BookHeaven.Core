@@ -29,16 +29,16 @@ public static class BookExtensions
 
 	    public string EbookUrl() => "/books/" + book.BookId + book.Format.GetExtension();
 
-	    public string CoverUrl(bool appendVersion = false)
-	    {
-		    var coverExists = File.Exists(book.CoverPath());
-		    if (!coverExists) return "/img/no-cover.jpg";
-	    
-		    var url = "/covers/" + book.BookId + ".jpg";
-		    if(!appendVersion) return url;
-	    
-		    return url + "?v=" + new FileInfo(book.CoverPath()).LastWriteTimeUtc.Ticks;
-	    }
+		public string CoverUrl(bool appendVersion = false)
+		{
+			var coverExists = File.Exists(book.CoverPath());
+			if (!coverExists) return "/img/no-cover.jpg";
+
+			var url = "/covers/" + book.BookId + ".jpg";
+			if(!appendVersion) return url;
+
+			return url + "?v=" + new FileInfo(book.CoverPath()).LastWriteTimeUtc.Ticks;
+		}
 
 	    public string EbookPath() => Path.Combine(CoreGlobals.BooksPath, $"{book.BookId}{book.Format.GetExtension()}");
 	    public string CoverPath() => Path.Combine(CoreGlobals.CoversPath, $"{book.BookId}.jpg");
