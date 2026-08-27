@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -8,9 +9,11 @@ public partial class BookProgress
     public Guid BookProgressId { get; set; }
     public Guid BookId { get; set; }
     public Guid ProfileId { get; set; }
+    [Description("The current chapter number that the user is reading, 0 based.")]
     public int Chapter { get; set; }
     [Obsolete("This property is obsolete and it will be removed in the future.")]
     public int Page { get; set; }
+    [Description("A decimal value that represents the progress of the current chapter as a percentage, from 0 to 1.")]
     public double ChapterProgress { get; set; }
     [Obsolete("This property is obsolete and it will be removed in the future.")]
     public int PageCount { get; set; }
@@ -19,10 +22,12 @@ public partial class BookProgress
     [Obsolete("This property is obsolete and it will be removed in the future.")]
     public int? PageCountNext { get; set; }
     public int BookWordCount { get; set; }
+    [Description("A decimal value that represents the overall progress of the book as a percentage, from 0 to 100.")]
     public decimal Progress { get; set; }
     public DateTimeOffset? StartDate { get; set; }
     public DateTimeOffset? EndDate { get; set; }
     public DateTimeOffset? LastRead { get; set; }
+    [Description("The total time spent reading the book, represented as a TimeSpan.")]
     public TimeSpan ElapsedTime { get; set; } = TimeSpan.Zero;
     
     [JsonIgnore]
