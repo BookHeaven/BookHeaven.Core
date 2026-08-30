@@ -1,3 +1,5 @@
+using BookHeaven.Core.Features.Reader.Abstractions;
+using BookHeaven.Core.Features.Reader.Services;
 using BookHeaven.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -36,6 +38,8 @@ public static class DependencyInjection
         });
 
         services.AddSingleton<GlobalEventsService>();
+        services.AddScoped<IReaderSettingsService, ReaderSettingsService>();
+        services.AddScoped<IReaderService, ReaderService>();
         services.AddScoped<BookManager>();
         
         return services;
