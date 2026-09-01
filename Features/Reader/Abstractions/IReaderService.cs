@@ -13,12 +13,15 @@ public interface IReaderService : IDisposable
     event Action? OnChapterChanged;
     event Action? OnTotalPagesChanged;
     Task<Result> InitializeAsync(Guid bookId, Guid profileId);
-    Task LoadCurrentContentAsync();
-    void SetTotalPages(int totalPages, int? totalPagesPrev = null, int? totalPagesNext = null);
+    void PauseTimer();
+    void ResumeTimer();
+    void SetTotalPages(int[] pageArray);
     void NavigateTo(int page, int chapter);
     void NavigateToInitialPage();
     void NavigateToChapter(TocEntry chapter);
     void NextPage();
     void PreviousPage();
+    void NextChapter();
+    void PreviousChapter();
     Task SaveProgressAsync();
 }

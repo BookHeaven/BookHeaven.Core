@@ -29,10 +29,6 @@ public class ReaderService(
     private IEbookReader? _reader;
     private BookProgress? _progress;
     
-
-    /*private DateTimeOffset _suspendStartTime;
-    private TimeSpan _totalSuspendedTime;*/
-    
     public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
         State = new();
@@ -53,84 +49,55 @@ public class ReaderService(
         _progress = getProgress.Value;
         
         _reader = ebookManagerProvider.GetReader((Format)book.Format);
-        State.Ebook = await _reader.ReadAllAsync(book.EbookPath());
-        if (State.Styles.Count == 0)
-        {
-            State.Styles = State.Ebook.Content.Stylesheets;
-        }
-        NavigateTo(0, _progress?.Chapter ?? 0);
+        State.SetEbook(await _reader.ReadAllAsync(book.EbookPath()));
+        NavigateTo(1, 0);
         State.EntryTime = DateTimeOffset.UtcNow;
         return Result.Success();
     }
     
-    public async Task LoadCurrentContentAsync()
+    public void PauseTimer()
     {
-        if(State is null) return;
-        var tasks = new List<Task>();
-                
-        if (State.CurrentChapter is { IsContentProcessed: false })
-        {
-            tasks.Add(Task.Run(async () =>
-            {
-                State.CurrentChapter.Content = await _reader!.ApplyHtmlProcessingAsync(State.CurrentChapter.Content);
-                State.CurrentChapter.IsContentProcessed = true;
-            }));
-        }
-        if (State.PreviousChapter is { IsContentProcessed: false })
-        {
-            tasks.Add(Task.Run(async () =>
-            {
-                State.PreviousChapter.Content = await _reader!.ApplyHtmlProcessingAsync(State.PreviousChapter.Content);
-                State.PreviousChapter.IsContentProcessed = true;
-            }));
-        }
-        if (State.NextChapter is { IsContentProcessed: false })
-        {
-            tasks.Add(Task.Run(async () =>
-            {
-                State.NextChapter.Content = await _reader!.ApplyHtmlProcessingAsync(State.NextChapter.Content);
-                State.NextChapter.IsContentProcessed = true;
-            }));
-        }
-        if (tasks.Count > 0) await Task.WhenAll(tasks);
+        State?.SuspendStartTime = DateTimeOffset.UtcNow;
     }
     
-    public void SetTotalPages(int totalPages, int? totalPagesPrev = null, int? totalPagesNext = null)
+    public void ResumeTimer()
     {
-        if(State is null) return;
-        State.TotalPagesPrev = totalPagesPrev ?? 0;
-        State.TotalPagesNext = totalPagesNext ?? 0;
-        State.TotalPages = totalPages;
-        if (State.PageNumber > totalPages)
-        {
-            State.PageNumber = totalPages;
-        }
+        State?.TotalSuspendedTime += DateTimeOffset.UtcNow - State.SuspendStartTime;
+    }
+
+    public void SetTotalPages(int[] pageArray)
+    {
+        State?.SetPagesPerChapter(pageArray);
         OnTotalPagesChanged?.Invoke();
     }
-    
+
     public void NavigateTo(int page, int chapter)
     {
         if(State is null) return;
-        State.ChapterNumber = chapter;
-        State.PageNumber = page;
-
-        
+        State.SetChapterAndPage(chapter, page);
         OnChapterChanged?.Invoke();
     }
     
     public void NavigateToInitialPage()
     {
         if(State is null) return;
+        var targetChapter = _progress?.Chapter ?? 0;
         var targetPage = 1;
 
         if (_progress?.ChapterProgress > 0)
         {
             targetPage = (int)Math.Round(_progress.ChapterProgress * State.TotalPages);
         }
-        targetPage = Math.Clamp(targetPage, 1, State.TotalPages);
-        
+
+        targetChapter = Math.Clamp(targetChapter, 0, State.TotalChapters - 1);
+        var chapterPageCount = State.PagesPerChapter.ElementAtOrDefault(targetChapter);
+        if (chapterPageCount > 0)
+        {
+            targetPage = Math.Clamp(targetPage, 1, chapterPageCount);
+        }
+
         _progress?.StartDate ??= DateTimeOffset.Now;
-        NavigateTo(targetPage, _progress?.Chapter ?? 0);
+        NavigateTo(targetPage, targetChapter);
         IsReady = true;
     }
     
@@ -147,19 +114,14 @@ public class ReaderService(
         if (State is null) return;
         if (State.PageNumber < State.TotalPages)
         {
-            State.PageNumber++;
+            State.SetChapterAndPage(State.ChapterNumber, State.PageNumber + 1);
             OnPageChanged?.Invoke();
             return;
         }
         
         if(State.ChapterNumber == State.TotalChapters - 1) return;
             
-        State.TotalPagesPrev = State.TotalPages;
-        State.TotalPages = State.TotalPagesNext;
-        State.TotalPagesNext = 0;
-            
-        State.PageNumber = 1;
-        State.ChapterNumber++;
+        State.SetChapterAndPage(State.ChapterNumber + 1, 1);
         OnChapterChanged?.Invoke();
         OnTotalPagesChanged?.Invoke();
     }
@@ -169,38 +131,31 @@ public class ReaderService(
         if (State is null) return;
         if (State.PageNumber > 1)
         {
-            State.PageNumber--;
+            State.SetChapterAndPage(State.ChapterNumber, State.PageNumber - 1);
             OnPageChanged?.Invoke();
             return;
         }
         
         if(State.ChapterNumber == 0) return;
             
-        State.TotalPagesNext = State.TotalPages;
-        State.TotalPages = State.TotalPagesPrev;
-        State.TotalPagesPrev = 0;
-            
-        State.PageNumber = State.TotalPages;
-        State.ChapterNumber--;
+        State.SetChapterAndPage(State.ChapterNumber - 1, State.TotalPages);
         OnChapterChanged?.Invoke();
         OnTotalPagesChanged?.Invoke();
     }
-
-    public void NavigateToNextChapter()
+    
+    public void NextChapter()
     {
         if (State is null) return;
         if (State.ChapterNumber >= State.TotalChapters - 1) return;
-        State.ChapterNumber++;
-        State.PageNumber = 1;
+        State.SetChapterAndPage(State.ChapterNumber + 1, 1);
         OnChapterChanged?.Invoke();
     }
     
-    public void NavigateToPreviousChapter()
+    public void PreviousChapter()
     {
         if (State is null) return;
         if (State.ChapterNumber <= 0) return;
-        State.ChapterNumber--;
-        State.PageNumber = 1;
+        State.SetChapterAndPage(State.ChapterNumber - 1, 1);
         OnChapterChanged?.Invoke();
     }
     
@@ -210,12 +165,11 @@ public class ReaderService(
         
         _progress.Chapter = State.ChapterNumber;
         _progress.ChapterProgress = State.PageNumber / (double)State.TotalPages;
-        _progress.BookWordCount = State.TotalWeight;
 
         if (_progress.EndDate is null)
         {
             _progress.Progress = State.ProgressAsPercentage;
-            _progress.ElapsedTime += DateTimeOffset.UtcNow - State.EntryTime;
+            _progress.ElapsedTime += DateTimeOffset.UtcNow - State.EntryTime - State.TotalSuspendedTime;
             _progress.LastRead = DateTimeOffset.Now;
 
             if (State.ChapterNumber == State.Ebook!.Content.Chapters.Count - 1 &&
