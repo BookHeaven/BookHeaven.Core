@@ -37,7 +37,9 @@ public static class DependencyInjection
             config.GenerateTypesAsInternal = true;
         });
 
+        
         services.AddSingleton<GlobalEventsService>();
+        services.AddScoped<IReaderCacheService, ReaderCacheService>();
         services.AddScoped<IReaderSettingsService, ReaderSettingsService>();
         services.AddScoped<IReaderService, ReaderService>();
         services.AddScoped<BookManager>();
@@ -66,6 +68,7 @@ public class CoreOptions
     public string CoversPath { get; set; } = null!;
     public string FontsPath { get; set; } = null!;
     public string DatabasePath { get; set; } = null!;
+    public string CachePath { get; set; } = null!;
     
     internal void ValidateAndRegister()
     {
@@ -73,15 +76,18 @@ public class CoreOptions
         if (string.IsNullOrEmpty(CoversPath)) throw new ArgumentException("CoversPath must be provided");
         if (string.IsNullOrEmpty(FontsPath)) throw new ArgumentException("FontsPath must be provided");
         if (string.IsNullOrEmpty(DatabasePath)) throw new ArgumentException("DatabasePath must be provided");
+        if (string.IsNullOrEmpty(CachePath)) throw new ArgumentException("CachePath must be provided");
         
         CoreGlobals.BooksPath = BooksPath;
         CoreGlobals.CoversPath = CoversPath;
         CoreGlobals.FontsPath = FontsPath;
         CoreGlobals.DatabasePath = DatabasePath;
+        CoreGlobals.CachePath = CachePath;
         
         Directory.CreateDirectory(BooksPath);
         Directory.CreateDirectory(CoversPath);
         Directory.CreateDirectory(FontsPath);
         Directory.CreateDirectory(DatabasePath);
+        Directory.CreateDirectory(CachePath);
     }
 }

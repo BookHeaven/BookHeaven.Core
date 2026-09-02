@@ -3,6 +3,7 @@ using BookHeaven.Core.Extensions;
 using BookHeaven.Core.Features.Books;
 using BookHeaven.Core.Features.BooksProgress;
 using BookHeaven.Core.Features.Reader.Abstractions;
+using BookHeaven.Core.Features.Reader.Extensions;
 using BookHeaven.Core.Features.Reader.Models;
 using BookHeaven.EbookManager;
 using BookHeaven.EbookManager.Abstractions;
@@ -15,6 +16,7 @@ namespace BookHeaven.Core.Features.Reader.Services;
 public class ReaderService(
     IReaderSettingsService readerSettingsService,
     EbookManagerProvider ebookManagerProvider,
+    IReaderCacheService readerCacheService,
     ISender sender) : IReaderService
 {
     public bool IsReady { get; private set; }
@@ -31,6 +33,7 @@ public class ReaderService(
     
     public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
+        readerCacheService.Initialize(bookId);
         State = new();
         await readerSettingsService.LoadSettings(profileId);
         
@@ -50,8 +53,18 @@ public class ReaderService(
         
         _reader = ebookManagerProvider.GetReader((Format)book.Format);
         State.SetEbook(await _reader.ReadAllAsync(book.EbookPath()));
-        NavigateTo(1, 0);
         State.EntryTime = DateTimeOffset.UtcNow;
+        
+        var cachedPages = await readerCacheService.LoadCachedPagesAsync(Settings!.CalculateHash());
+        if(cachedPages.Length > 0)
+        {
+            State.SetPagesPerChapter(cachedPages);
+            NavigateToInitialPage();
+        }
+        else
+        {
+            NavigateTo(1, 0);
+        }
         return Result.Success();
     }
     
@@ -69,9 +82,10 @@ public class ReaderService(
     {
         State?.SetPagesPerChapter(pageArray);
         OnTotalPagesChanged?.Invoke();
+        _ = readerCacheService.SaveCachedPagesAsync(Settings!.CalculateHash(), pageArray);
     }
 
-    public void NavigateTo(int page, int chapter)
+    private void NavigateTo(int page, int chapter)
     {
         if(State is null) return;
         State.SetChapterAndPage(chapter, page);
@@ -188,6 +202,7 @@ public class ReaderService(
         State = null;
         _progress = null;
         _reader?.Dispose();
+        readerCacheService.Dispose();
         readerSettingsService.Dispose();
         GC.SuppressFinalize(this);
     }
