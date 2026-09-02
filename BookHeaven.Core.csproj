@@ -36,6 +36,6 @@
     <ProjectReference Include="..\BookHeaven.EbookManager\BookHeaven.EbookManager.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseNuget)' == 'true'">
-    <PackageReference Include="BookHeaven.EbookManager" Version="1.3.11" />
+    <PackageReference Include="BookHeaven.EbookManager" Version="1.4.0" />
   </ItemGroup>
 </Project>
