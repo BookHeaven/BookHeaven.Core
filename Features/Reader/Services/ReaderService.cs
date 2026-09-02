@@ -138,7 +138,7 @@ public class ReaderService(
         
         if(State.ChapterNumber == 0) return;
             
-        State.SetChapterAndPage(State.ChapterNumber - 1, State.TotalPages);
+        State.SetChapterAndPage(State.ChapterNumber - 1, State.PagesPerChapter.ElementAtOrDefault(State.ChapterNumber - 1));
         OnChapterChanged?.Invoke();
         OnTotalPagesChanged?.Invoke();
     }
