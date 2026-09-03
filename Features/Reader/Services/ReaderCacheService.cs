@@ -1,24 +1,27 @@
 ﻿using System.Text.Json;
+using System.IO.Compression;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Models;
-using BookHeaven.EbookManager;
 using BookHeaven.EbookManager.Abstractions;
 using BookHeaven.EbookManager.Entities;
 using BookHeaven.EbookManager.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
-public class ReaderCacheService(IEbookManagerProvider ebookManagerProvider) : IReaderCacheService
+public class ReaderCacheService(
+    IEbookManagerProvider ebookManagerProvider,
+    IOptions<CoreOptions> options) : IReaderCacheService
 {
 
-    private static string GetBasePath(Guid bookId) => Path.Combine(EbookManagerGlobals.CachePath, bookId.ToString());
+    private string GetBasePath(Guid bookId) => Path.Combine(options.Value.CachePath, bookId.ToString());
     
     
     public async Task<int[]> LoadCachedPagesAsync(Guid bookId, string currentReaderSettingsHash)
     {
         var cachePath = Path.Combine(GetBasePath(bookId), "pages.cache");
         if (!File.Exists(cachePath)) return [];
-        var cacheContent = await File.ReadAllTextAsync(cachePath);
+        var cacheContent = await ReadCompressedAsync(cachePath);
         var cache = JsonSerializer.Deserialize<ReaderPagesCache>(cacheContent);
         if (cache is null || cache.ReaderSettingsHash != currentReaderSettingsHash) return [];
         return cache.CachedPages;
@@ -32,7 +35,8 @@ public class ReaderCacheService(IEbookManagerProvider ebookManagerProvider) : IR
             ReaderSettingsHash = readerSettingsHash,
             CachedPages = pages
         };
-        await File.WriteAllTextAsync(cachePath, JsonSerializer.Serialize(cache));
+        var serialized = JsonSerializer.Serialize(cache);
+        await WriteCompressedAsync(cachePath, serialized);
     }
 
     public async Task CacheContentAsync(Guid bookId, string ebookPath)
@@ -50,16 +54,35 @@ public class ReaderCacheService(IEbookManagerProvider ebookManagerProvider) : IR
     {
         var cachePath = Path.Combine(GetBasePath(bookId), "content.cache");
         var contentJson = JsonSerializer.Serialize(content);
-        await File.WriteAllTextAsync(cachePath, contentJson);
+        await WriteCompressedAsync(cachePath, contentJson);
     }
     
     public async Task<Content?> LoadCachedContentAsync(Guid bookId)
     {
         var cachePath = Path.Combine(GetBasePath(bookId), "content.cache");
         if (!File.Exists(cachePath)) return null;
-        var cacheContent = await File.ReadAllTextAsync(cachePath);
+        var cacheContent = await ReadCompressedAsync(cachePath);
         var content = JsonSerializer.Deserialize<Content?>(cacheContent);
         return content;
+    }
+    
+    private static async Task WriteCompressedAsync(string path, string content)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        await using var fs = File.Create(path);
+        await using var brotli = new BrotliStream(fs, CompressionLevel.Optimal);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+        await brotli.WriteAsync(bytes);
+    }
+    
+    private static async Task<string> ReadCompressedAsync(string path)
+    {
+        await using var fs = File.OpenRead(path);
+        await using var brotli = new BrotliStream(fs, CompressionMode.Decompress);
+        using var ms = new MemoryStream();
+        await brotli.CopyToAsync(ms);
+        return System.Text.Encoding.UTF8.GetString(ms.ToArray());
     }
     
     public void ClearCache(Guid bookId)
