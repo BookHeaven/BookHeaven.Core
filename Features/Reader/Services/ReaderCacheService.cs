@@ -22,9 +22,17 @@ public class ReaderCacheService(
         var cachePath = Path.Combine(GetBasePath(bookId), "pages.cache");
         if (!File.Exists(cachePath)) return [];
         var cacheContent = await ReadCompressedAsync(cachePath);
-        var cache = JsonSerializer.Deserialize<ReaderPagesCache>(cacheContent);
-        if (cache is null || cache.ReaderSettingsHash != currentReaderSettingsHash) return [];
-        return cache.CachedPages;
+        if (cacheContent is null) return [];
+        try
+        {
+            var cache = JsonSerializer.Deserialize<ReaderPagesCache>(cacheContent);
+            if (cache is null || cache.ReaderSettingsHash != currentReaderSettingsHash) return [];
+            return cache.CachedPages;
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     public async Task SaveCachedPagesAsync(Guid bookId, string readerSettingsHash, int[] pages)
@@ -62,8 +70,16 @@ public class ReaderCacheService(
         var cachePath = Path.Combine(GetBasePath(bookId), "content.cache");
         if (!File.Exists(cachePath)) return null;
         var cacheContent = await ReadCompressedAsync(cachePath);
-        var content = JsonSerializer.Deserialize<Content?>(cacheContent);
-        return content;
+        if (cacheContent is null) return null;
+        try
+        {
+            var content = JsonSerializer.Deserialize<Content?>(cacheContent);
+            return content;
+        }
+        catch
+        {
+            return null;
+        }
     }
     
     private static async Task WriteCompressedAsync(string path, string content)
@@ -76,13 +92,20 @@ public class ReaderCacheService(
         await brotli.WriteAsync(bytes);
     }
     
-    private static async Task<string> ReadCompressedAsync(string path)
+    private static async Task<string?> ReadCompressedAsync(string path)
     {
-        await using var fs = File.OpenRead(path);
-        await using var brotli = new BrotliStream(fs, CompressionMode.Decompress);
-        using var ms = new MemoryStream();
-        await brotli.CopyToAsync(ms);
-        return System.Text.Encoding.UTF8.GetString(ms.ToArray());
+        try
+        {
+            await using var fs = File.OpenRead(path);
+            await using var brotli = new BrotliStream(fs, CompressionMode.Decompress);
+            using var ms = new MemoryStream();
+            await brotli.CopyToAsync(ms);
+            return System.Text.Encoding.UTF8.GetString(ms.ToArray());
+        }
+        catch
+        {
+            return null;
+        }
     }
     
     public void ClearCache(Guid bookId)
