@@ -77,6 +77,7 @@ public static class BookExtensions
 		    book.ASIN = updatedBook.ASIN;
 		    book.UUID = updatedBook.UUID;
 		    book.Language = updatedBook.Language;
+		    book.FileHash = updatedBook.FileHash;
 	    }
     }
 
