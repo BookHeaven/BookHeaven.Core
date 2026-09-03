@@ -105,7 +105,6 @@ public class BookManager(
         progress.Chapter = 0;
         progress.ChapterProgress = 0;
         await sender.Send(new UpdateBookProgress.Command(progress));
-        //await ClearCache(book, false);
         OnBooksChanged?.Invoke();
         await alertService.ShowToastAsync(Translations.BOOK_MARKED_AS_NEW);
     }
@@ -123,7 +122,6 @@ public class BookManager(
         progress.EndDate = DateTimeOffset.Now;
         progress.Progress = 100;
         await sender.Send(new UpdateBookProgress.Command(progress));
-        //await ClearCache(book, false);
         OnBooksChanged?.Invoke();
         await alertService.ShowToastAsync(Translations.BOOK_MARKED_AS_FINISHED);
     }
