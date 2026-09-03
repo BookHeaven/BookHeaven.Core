@@ -2,9 +2,9 @@
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Models;
 using BookHeaven.EbookManager;
+using BookHeaven.EbookManager.Abstractions;
 using BookHeaven.EbookManager.Entities;
 using BookHeaven.EbookManager.Extensions;
-using BookHeaven.EbookManager.Formats;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
