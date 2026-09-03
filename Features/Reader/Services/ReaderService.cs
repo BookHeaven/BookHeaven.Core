@@ -5,17 +5,17 @@ using BookHeaven.Core.Features.BooksProgress;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Extensions;
 using BookHeaven.Core.Features.Reader.Models;
-using BookHeaven.EbookManager;
 using BookHeaven.EbookManager.Abstractions;
 using BookHeaven.EbookManager.Entities;
 using BookHeaven.EbookManager.Enums;
+using BookHeaven.EbookManager.Formats;
 using Mediator;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
 public class ReaderService(
     IReaderSettingsService readerSettingsService,
-    EbookManagerProvider ebookManagerProvider,
+    IEbookManagerProvider ebookManagerProvider,
     IReaderCacheService readerCacheService,
     ISender sender) : IReaderService
 {
