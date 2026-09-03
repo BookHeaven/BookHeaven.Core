@@ -11,4 +11,5 @@ public interface IReaderCacheService
     Task CacheContentAsync(Guid bookId, string ebookPath);
     Task CacheContentAsync(Guid bookId, Content content);
     Task<Content?> LoadCachedContentAsync(Guid bookId);
+    void ClearCache(Guid bookId);
 }

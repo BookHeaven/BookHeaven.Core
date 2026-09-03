@@ -61,4 +61,13 @@ public class ReaderCacheService(IEbookManagerProvider ebookManagerProvider) : IR
         var content = JsonSerializer.Deserialize<Content?>(cacheContent);
         return content;
     }
+    
+    public void ClearCache(Guid bookId)
+    {
+        var path = GetBasePath(bookId);
+        if (Directory.Exists(path))
+        {
+            Directory.Delete(path, true);
+        }
+    }
 }
