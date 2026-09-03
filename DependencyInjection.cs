@@ -20,9 +20,10 @@ public static class DependencyInjection
     {
         var folderOptions = new CoreOptions();
         folders.Invoke(folderOptions);
-        
         folderOptions.ValidateAndRegister();
         
+        services.Configure(folders);
+
         services.AddDbContextFactory<DatabaseContext>(options =>
         {
             options.UseSqlite($"Data Source={Path.Combine(folderOptions.DatabasePath, "BookHeaven.db")}");
