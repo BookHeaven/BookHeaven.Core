@@ -1,25 +1,22 @@
 ﻿using System.Text.Json;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Models;
+using BookHeaven.EbookManager;
+using BookHeaven.EbookManager.Entities;
+using BookHeaven.EbookManager.Extensions;
+using BookHeaven.EbookManager.Formats;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
-public class ReaderCacheService : IReaderCacheService
+public class ReaderCacheService(IEbookManagerProvider ebookManagerProvider) : IReaderCacheService
 {
-    private Guid _bookId = Guid.Empty;
-    private string _cacheDirectory = string.Empty;
 
-    public void Initialize(Guid bookId)
+    private static string GetBasePath(Guid bookId) => Path.Combine(EbookManagerGlobals.CachePath, bookId.ToString());
+    
+    
+    public async Task<int[]> LoadCachedPagesAsync(Guid bookId, string currentReaderSettingsHash)
     {
-        _bookId = bookId;
-        _cacheDirectory = Path.Combine(CoreGlobals.CachePath, _bookId.ToString());
-    }
-
-    public async Task<int[]> LoadCachedPagesAsync(string currentReaderSettingsHash)
-    {
-        if(_bookId == Guid.Empty) throw new InvalidOperationException("You must call Initialize() first.");
-        
-        var cachePath = Path.Combine(_cacheDirectory, "pages.cache");
+        var cachePath = Path.Combine(GetBasePath(bookId), "pages.cache");
         if (!File.Exists(cachePath)) return [];
         var cacheContent = await File.ReadAllTextAsync(cachePath);
         var cache = JsonSerializer.Deserialize<ReaderPagesCache>(cacheContent);
@@ -27,11 +24,9 @@ public class ReaderCacheService : IReaderCacheService
         return cache.CachedPages;
     }
 
-    public async Task SaveCachedPagesAsync(string readerSettingsHash, int[] pages)
+    public async Task SaveCachedPagesAsync(Guid bookId, string readerSettingsHash, int[] pages)
     {
-        if(_bookId == Guid.Empty) throw new InvalidOperationException("You must call Initialize() first.");
-        
-        var cachePath = Path.Combine(_cacheDirectory, "pages.cache");
+        var cachePath = Path.Combine(GetBasePath(bookId), "pages.cache");
         var cache = new ReaderPagesCache
         {
             ReaderSettingsHash = readerSettingsHash,
@@ -40,10 +35,30 @@ public class ReaderCacheService : IReaderCacheService
         await File.WriteAllTextAsync(cachePath, JsonSerializer.Serialize(cache));
     }
 
-    public void Dispose()
+    public async Task CacheContentAsync(Guid bookId, string ebookPath)
     {
-        _bookId = Guid.Empty;
-        _cacheDirectory = string.Empty;
-        GC.SuppressFinalize(this);
+        var extension = Path.GetExtension(ebookPath).ToLowerInvariant();
+        var bookFormat = FormatExtensions.GetFormat(extension);
+        var reader = ebookManagerProvider.GetReader(bookFormat);
+        var ebook = await reader.ReadAllAsync(ebookPath);
+        reader.Dispose();
+        
+        await CacheContentAsync(bookId, ebook.Content);
+    }
+    
+    public async Task CacheContentAsync(Guid bookId, Content content)
+    {
+        var cachePath = Path.Combine(GetBasePath(bookId), "content.cache");
+        var contentJson = JsonSerializer.Serialize(content);
+        await File.WriteAllTextAsync(cachePath, contentJson);
+    }
+    
+    public async Task<Content?> LoadCachedContentAsync(Guid bookId)
+    {
+        var cachePath = Path.Combine(GetBasePath(bookId), "content.cache");
+        if (!File.Exists(cachePath)) return null;
+        var cacheContent = await File.ReadAllTextAsync(cachePath);
+        var content = JsonSerializer.Deserialize<Content?>(cacheContent);
+        return content;
     }
 }

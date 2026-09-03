@@ -1,10 +1,14 @@
 ﻿using BookHeaven.Core.Features.Reader.Models;
+using BookHeaven.EbookManager.Entities;
+using BookHeaven.EbookManager.Enums;
 
 namespace BookHeaven.Core.Features.Reader.Abstractions;
 
-public interface IReaderCacheService : IDisposable
+public interface IReaderCacheService
 {
-    void Initialize(Guid bookId);
-    Task<int[]> LoadCachedPagesAsync(string readerSettingsHash);
-    Task SaveCachedPagesAsync(string readerSettingsHash, int[] pages);
+    Task<int[]> LoadCachedPagesAsync(Guid bookId, string readerSettingsHash);
+    Task SaveCachedPagesAsync(Guid bookId, string readerSettingsHash, int[] pages);
+    Task CacheContentAsync(Guid bookId, string ebookPath);
+    Task CacheContentAsync(Guid bookId, Content content);
+    Task<Content?> LoadCachedContentAsync(Guid bookId);
 }
