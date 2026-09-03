@@ -28,12 +28,13 @@ public class ReaderService(
     public event Action? OnChapterChanged;
     public event Action? OnTotalPagesChanged;
 
+    private Guid _bookId;
     private IEbookReader? _reader;
     private BookProgress? _progress;
     
     public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
-        readerCacheService.Initialize(bookId);
+        _bookId = bookId;
         State = new();
         await readerSettingsService.LoadSettings(profileId);
         
@@ -52,10 +53,10 @@ public class ReaderService(
         _progress = getProgress.Value;
         
         _reader = ebookManagerProvider.GetReader((Format)book.Format);
-        State.SetEbook(await _reader.ReadAllAsync(book.EbookPath()));
-        State.EntryTime = DateTimeOffset.UtcNow;
+        State.SetEbook(await LoadEbookAsync(book));
         
-        var cachedPages = await readerCacheService.LoadCachedPagesAsync(Settings!.CalculateHash());
+        
+        var cachedPages = await readerCacheService.LoadCachedPagesAsync(_bookId, Settings!.CalculateHash());
         if(cachedPages.Length > 0)
         {
             State.SetPagesPerChapter(cachedPages);
@@ -65,7 +66,25 @@ public class ReaderService(
         {
             NavigateTo(1, 0);
         }
+        State.EntryTime = DateTimeOffset.UtcNow;
         return Result.Success();
+    }
+    
+    private async Task<Ebook> LoadEbookAsync(Book book)
+    {
+        Ebook ebook;
+        var content = await readerCacheService.LoadCachedContentAsync(_bookId);
+        if (content is null)
+        {
+            ebook = await _reader!.ReadAllAsync(book.EbookPath());
+            _ = readerCacheService.CacheContentAsync(_bookId, ebook.Content);
+        }
+        else
+        {
+            ebook = await _reader!.ReadMetadataAsync(book.EbookPath());
+            ebook.Content = content;
+        }
+        return ebook;
     }
     
     public void PauseTimer()
@@ -82,7 +101,7 @@ public class ReaderService(
     {
         State?.SetPagesPerChapter(pageArray);
         OnTotalPagesChanged?.Invoke();
-        _ = readerCacheService.SaveCachedPagesAsync(Settings!.CalculateHash(), pageArray);
+        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), pageArray);
     }
 
     private void NavigateTo(int page, int chapter)
