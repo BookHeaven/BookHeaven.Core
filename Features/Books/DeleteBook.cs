@@ -3,6 +3,7 @@ using BookHeaven.Core.Events;
 using BookHeaven.Core.Services;
 using BookHeaven.Core.Shared;
 using BookHeaven.Core.Extensions;
+using BookHeaven.Core.Features.Reader.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -15,6 +16,7 @@ public static class DeleteBook
     internal class CommandHandler(
         ILogger<CommandHandler> logger,
         IDbContextFactory<DatabaseContext> dbContextFactory,
+        IReaderCacheService readerCacheService,
         GlobalEventsService globalEventsService) : ICommandHandler<Command>
     {
         public async ValueTask<Result> Handle(Command request, CancellationToken cancellationToken)
@@ -32,9 +34,9 @@ public static class DeleteBook
 
             try
             {
+                readerCacheService.ClearCache(request.BookId);
                 if(File.Exists(book.EbookPath())) File.Delete(book.EbookPath());
                 if(File.Exists(book.CoverPath())) File.Delete(book.CoverPath());
-                
                 context.Books.Remove(book);
                 await context.SaveChangesAsync(cancellationToken);
             }
