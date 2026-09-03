@@ -22,7 +22,7 @@ public sealed class ReaderState
     public string ChapterTitle { get; private set; } = string.Empty;
     public int TotalChapters { get; private set; }
     
-    public decimal ProgressAsPercentage => Ebook is not null && BookPages > 0
+    public decimal ProgressAsPercentage => BookPages > 0
         ? ((decimal)PageBookNumber / BookPages) * 100
         : 0;
     
