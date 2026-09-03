@@ -116,19 +116,17 @@ public class ReaderService(
         if(State is null) return;
         var targetChapter = _progress?.Chapter ?? 0;
         var targetPage = 1;
-
+        var chapterPageCount = State.PagesPerChapter.ElementAtOrDefault(targetChapter);
+        
+        targetChapter = Math.Clamp(targetChapter, 0, State.TotalChapters - 1);
         if (_progress?.ChapterProgress > 0)
         {
-            targetPage = (int)Math.Round(_progress.ChapterProgress * State.TotalPages);
+            targetPage = (int)Math.Round(_progress.ChapterProgress * chapterPageCount);
         }
-
-        targetChapter = Math.Clamp(targetChapter, 0, State.TotalChapters - 1);
-        var chapterPageCount = State.PagesPerChapter.ElementAtOrDefault(targetChapter);
         if (chapterPageCount > 0)
         {
             targetPage = Math.Clamp(targetPage, 1, chapterPageCount);
         }
-
         _progress?.StartDate ??= DateTimeOffset.Now;
         NavigateTo(targetPage, targetChapter);
         IsReady = true;
@@ -219,9 +217,9 @@ public class ReaderService(
     {
         IsReady = false;
         State = null;
+        _bookId = Guid.Empty;
         _progress = null;
         _reader?.Dispose();
-        readerCacheService.Dispose();
         readerSettingsService.Dispose();
         GC.SuppressFinalize(this);
     }
