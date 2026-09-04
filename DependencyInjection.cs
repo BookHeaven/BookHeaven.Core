@@ -80,6 +80,9 @@ public class CoreOptions
         if (string.IsNullOrEmpty(DatabasePath)) throw new ArgumentException("DatabasePath must be provided");
         if (string.IsNullOrEmpty(CachePath)) throw new ArgumentException("CachePath must be provided");
         
+        // Keep to not break migration
+        CoreGlobals.BooksPath = BooksPath;
+        
         Directory.CreateDirectory(BooksPath);
         Directory.CreateDirectory(CoversPath);
         Directory.CreateDirectory(FontsPath);
