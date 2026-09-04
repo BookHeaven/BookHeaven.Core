@@ -1,4 +1,5 @@
 ﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.Entities;
 using BookHeaven.Core.Events;
 using BookHeaven.Core.Services;
@@ -13,6 +14,7 @@ public static class AddBook
 
     internal class CommandHandler(
         IDbContextFactory<DatabaseContext> dbContextFactory,
+        IUrlBuilder urlBuilder,
         GlobalEventsService globalEventsService) : ICommandHandler<Command, Guid>
     {
         public async ValueTask<Result<Guid>> Handle(Command request, CancellationToken cancellationToken)
@@ -65,8 +67,8 @@ public static class AddBook
             try 
             {
                 await context.SaveChangesAsync(cancellationToken);
-                await Utilities.StoreFile(request.CoverPath, request.Book.CoverPath(), cancellationToken);
-                await Utilities.StoreFile(request.EpubPath, request.Book.EbookPath(), cancellationToken);
+                await Utilities.StoreFile(request.CoverPath, urlBuilder.CoverFilePath(request.Book.BookId), cancellationToken);
+                await Utilities.StoreFile(request.EpubPath, urlBuilder.EbookFilePath(request.Book.BookId, request.Book.Format), cancellationToken);
             }
             catch (Exception e)
             {
