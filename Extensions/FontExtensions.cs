@@ -6,14 +6,11 @@ public static class FontExtensions
 {
     extension(Font font)
     {
-        public string FilePath() => Path.Combine(CoreGlobals.FontsPath, font.Family, font.FileName);
-        public string Url() => $"/fonts/{font.Family}/{font.FileName}";
-
-        public string GetFontFace()
+        public string GetFontFace(string url)
         {
             return $@"@font-face {{
             font-family: '{font.Family}';
-            src: url('{font.Url()}') format('{font.GetFormat()}');
+            src: url('{url}') format('{font.GetFormat()}');
             {(font.Weight != "all" ? $"font-weight: {font.Weight};" : string.Empty)}
             {(font.Style != "all" ? $"font-style: {font.Style};" : string.Empty)}
         }}";

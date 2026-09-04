@@ -1,3 +1,4 @@
+using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Services;
 using BookHeaven.Core.Services;
@@ -38,7 +39,7 @@ public static class DependencyInjection
             config.GenerateTypesAsInternal = true;
         });
 
-        
+        services.AddSingleton<IUrlBuilder, UrlBuilder>();
         services.AddSingleton<GlobalEventsService>();
         services.AddScoped<IReaderCacheService, ReaderCacheService>();
         services.AddScoped<IReaderSettingsService, ReaderSettingsService>();
@@ -78,12 +79,6 @@ public class CoreOptions
         if (string.IsNullOrEmpty(FontsPath)) throw new ArgumentException("FontsPath must be provided");
         if (string.IsNullOrEmpty(DatabasePath)) throw new ArgumentException("DatabasePath must be provided");
         if (string.IsNullOrEmpty(CachePath)) throw new ArgumentException("CachePath must be provided");
-        
-        CoreGlobals.BooksPath = BooksPath;
-        CoreGlobals.CoversPath = CoversPath;
-        CoreGlobals.FontsPath = FontsPath;
-        CoreGlobals.DatabasePath = DatabasePath;
-        CoreGlobals.CachePath = CachePath;
         
         Directory.CreateDirectory(BooksPath);
         Directory.CreateDirectory(CoversPath);
