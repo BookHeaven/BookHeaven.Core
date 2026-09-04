@@ -1,4 +1,5 @@
 ﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.Entities;
 using BookHeaven.Core.Shared;
 using BookHeaven.Core.Extensions;
@@ -10,7 +11,9 @@ public static class UpdateBook
 {
     public sealed record Command(Book Book, string? CoverSourcePath, string? EpubSourcePath) : ICommand;
 
-    internal class Handler(IDbContextFactory<DatabaseContext> dbContextFactory) : ICommandHandler<Command>
+    internal class Handler(
+        IDbContextFactory<DatabaseContext> dbContextFactory,
+        IUrlBuilder urlBuilder) : ICommandHandler<Command>
     {
         public async ValueTask<Result> Handle(Command request, CancellationToken cancellationToken)
         {
@@ -38,8 +41,8 @@ public static class UpdateBook
             try
             {
                 await context.SaveChangesAsync(cancellationToken);
-                await Utilities.StoreFile(request.CoverSourcePath, book.CoverPath(), cancellationToken);
-                await Utilities.StoreFile(request.EpubSourcePath, book.EbookPath(), cancellationToken);
+                await Utilities.StoreFile(request.CoverSourcePath, urlBuilder.CoverFilePath(book.BookId), cancellationToken);
+                await Utilities.StoreFile(request.EpubSourcePath, urlBuilder.EbookFilePath(book.BookId, book.Format), cancellationToken);
                 
             }
             catch (DbUpdateException)
