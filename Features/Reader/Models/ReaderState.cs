@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using BookHeaven.Core.Entities;
 using BookHeaven.EbookManager.Entities;
 
@@ -21,6 +22,10 @@ public sealed class ReaderState
     private TocEntry? CurrentTocEntry { get; set; }
     public string ChapterTitle { get; private set; } = string.Empty;
     public int TotalChapters { get; private set; }
+    
+    public decimal ChapterProgress => TotalPages > 0
+        ? (decimal)PageNumber / TotalPages
+        : 0;
     
     public decimal ProgressAsPercentage => BookPages > 0
         ? ((decimal)PageBookNumber / BookPages) * 100
@@ -49,8 +54,11 @@ public sealed class ReaderState
     
     public void SetPagesPerChapter(int[] pagesPerChapter)
     {
+        var currentChapterProgress = ChapterProgress;
         PagesPerChapter = pagesPerChapter;
         BookPages = pagesPerChapter.Sum();
-        SetChapterAndPage(ChapterNumber, PageNumber);
+        var totalPagesInCurrentChapter = PagesPerChapter.ElementAtOrDefault(ChapterNumber);
+        var newPageNumber = (int)Math.Round(currentChapterProgress * totalPagesInCurrentChapter);
+        SetChapterAndPage(ChapterNumber, newPageNumber);
     }
 }
