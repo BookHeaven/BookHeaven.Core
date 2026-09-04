@@ -8,6 +8,6 @@ public interface IUrlBuilder
     string EbookUrl(Guid bookId, EbookFormat format);
     string CoverFilePath(Guid bookId);
     string CoverUrl(Guid bookId);
-    string FontFilePath(string fontFamily, string fontFileName);
+    string FontFilePath(string fontFamily, string? fontFileName = null);
     string FontUrl(string fontFamily, string fontFileName);
 }
