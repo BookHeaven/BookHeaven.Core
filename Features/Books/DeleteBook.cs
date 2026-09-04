@@ -1,4 +1,5 @@
 ﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.Events;
 using BookHeaven.Core.Services;
 using BookHeaven.Core.Shared;
@@ -17,6 +18,7 @@ public static class DeleteBook
         ILogger<CommandHandler> logger,
         IDbContextFactory<DatabaseContext> dbContextFactory,
         IReaderCacheService readerCacheService,
+        IUrlBuilder urlBuilder,
         GlobalEventsService globalEventsService) : ICommandHandler<Command>
     {
         public async ValueTask<Result> Handle(Command request, CancellationToken cancellationToken)
@@ -35,8 +37,8 @@ public static class DeleteBook
             try
             {
                 readerCacheService.ClearCache(request.BookId);
-                if(File.Exists(book.EbookPath())) File.Delete(book.EbookPath());
-                if(File.Exists(book.CoverPath())) File.Delete(book.CoverPath());
+                if(File.Exists(urlBuilder.EbookFilePath(request.BookId, book.Format))) File.Delete(urlBuilder.EbookFilePath(request.BookId, book.Format));
+                if(File.Exists(urlBuilder.CoverFilePath(request.BookId))) File.Delete(urlBuilder.CoverFilePath(request.BookId));
                 context.Books.Remove(book);
                 await context.SaveChangesAsync(cancellationToken);
             }
