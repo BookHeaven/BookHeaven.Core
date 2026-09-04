@@ -2,6 +2,7 @@ using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Services;
 using BookHeaven.Core.Services;
+using BookHeaven.EbookManager;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BookHeaven.Core;
@@ -31,6 +32,11 @@ public static class DependencyInjection
 #if DEBUG
             options.EnableSensitiveDataLogging();
 #endif
+        });
+        
+        services.AddEbookManager(options =>
+        {
+            options.CachePath = folderOptions.CachePath;
         });
 
         services.AddMediator(config =>
