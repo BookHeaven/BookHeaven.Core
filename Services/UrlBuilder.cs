@@ -7,11 +7,11 @@ namespace BookHeaven.Core.Services;
 
 public class UrlBuilder(IOptions<CoreOptions> options) : IUrlBuilder
 {
-    public string EbookFilePath(Guid bookId, EbookFormat format) => Path.Combine(options.Value.BooksPath, bookId.ToString(), format.GetExtension());
+    public string EbookFilePath(Guid bookId, EbookFormat format) => Path.Combine(options.Value.BooksPath, bookId.ToString() + format.GetExtension());
 
     public string CoverFilePath(Guid bookId) => Path.Combine(options.Value.CoversPath, $"{bookId}.jpg");
 
-    public string EbookUrl(Guid bookId, EbookFormat format) => "/books/" + bookId + "/" + format.GetExtension();
+    public string EbookUrl(Guid bookId, EbookFormat format) => "/books/" + bookId + format.GetExtension();
 
     public string CoverUrl(Guid bookId) => "/covers/" + bookId + ".jpg";
     
