@@ -1,5 +1,5 @@
-﻿using BookHeaven.Core.Entities;
-using BookHeaven.Core.Extensions;
+﻿using BookHeaven.Core.Abstractions.Services;
+using BookHeaven.Core.Entities;
 using BookHeaven.Core.Features.Books;
 using BookHeaven.Core.Features.BooksProgress;
 using BookHeaven.Core.Features.Reader.Abstractions;
@@ -8,12 +8,12 @@ using BookHeaven.Core.Features.Reader.Models;
 using BookHeaven.EbookManager.Abstractions;
 using BookHeaven.EbookManager.Entities;
 using BookHeaven.EbookManager.Enums;
-using BookHeaven.EbookManager.Formats;
 using Mediator;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
 public class ReaderService(
+    IUrlBuilder urlBuilder,
     IReaderSettingsService readerSettingsService,
     IEbookManagerProvider ebookManagerProvider,
     IReaderCacheService readerCacheService,
@@ -74,14 +74,15 @@ public class ReaderService(
     {
         Ebook ebook;
         var content = await readerCacheService.LoadCachedContentAsync(_bookId);
+        var ebookFilePath = urlBuilder.EbookFilePath(book.BookId, book.Format);
         if (content is null)
         {
-            ebook = await _reader!.ReadAllAsync(book.EbookPath());
+            ebook = await _reader!.ReadAllAsync(ebookFilePath);
             _ = readerCacheService.CacheContentAsync(_bookId, ebook.Content);
         }
         else
         {
-            ebook = await _reader!.ReadMetadataAsync(book.EbookPath());
+            ebook = await _reader!.ReadMetadataAsync(ebookFilePath);
             ebook.Content = content;
         }
         return ebook;
