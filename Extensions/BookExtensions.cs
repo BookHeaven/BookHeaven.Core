@@ -26,8 +26,6 @@ public static class BookExtensions
 
 		    return BookStatus.New;
 	    }
-
-	    public string EbookUrl() => "/books/" + book.BookId + book.Format.GetExtension();
 	    
 	    public bool BelongsToCollection(Collection collection)
 	    {
