@@ -54,4 +54,10 @@
     <data name="NEW_F" xml:space="preserve">
         <value>New</value>
     </data>
+    <data name="SIMPLE" xml:space="preserve">
+        <value>Simple</value>
+    </data>
+    <data name="SMART" xml:space="preserve">
+        <value>Smart</value>
+    </data>
 </root>

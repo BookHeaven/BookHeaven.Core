@@ -150,6 +150,24 @@ namespace BookHeaven.Core.Localization {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Simple.
+        /// </summary>
+        public static string SIMPLE {
+            get {
+                return ResourceManager.GetString("SIMPLE", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Smart.
+        /// </summary>
+        public static string SMART {
+            get {
+                return ResourceManager.GetString("SMART", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Warning.
         /// </summary>
         public static string WARNING {

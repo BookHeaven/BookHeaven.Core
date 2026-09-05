@@ -1,11 +1,12 @@
 ﻿using BookHeaven.Core.Extensions;
+using BookHeaven.Core.Localization;
 
 namespace BookHeaven.Core.Enums;
 
 public enum CollectionType
 {
-    [StringValue("Simple")]
+    [StringValue(nameof(Translations.SIMPLE))]
     Simple = 0,
-    [StringValue("Smart")]
+    [StringValue(nameof(Translations.SMART))]
     Smart = 1
 }
