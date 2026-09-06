@@ -69,7 +69,7 @@ public class ReaderService(
         {
             NavigateToInitialPage();
         }
-        State.EntryTime = DateTimeOffset.UtcNow;
+        State.StartTimer();
         RefreshReadiness();
         _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.GetCachedPages());
         return Result.Success();
@@ -95,12 +95,12 @@ public class ReaderService(
     
     public void PauseTimer()
     {
-        State?.SuspendStartTime = DateTimeOffset.UtcNow;
+        State?.PauseTimer();
     }
     
     public void ResumeTimer()
     {
-        State?.TotalSuspendedTime += DateTimeOffset.UtcNow - State.SuspendStartTime;
+        State?.ResumeTimer();
     }
 
     public void SetTotalPages(int[] pageArray)
@@ -238,7 +238,7 @@ public class ReaderService(
         if (_progress.EndDate is null)
         {
             _progress.Progress = State.ProgressAsPercentage;
-            _progress.ElapsedTime += DateTimeOffset.UtcNow - State.EntryTime - State.TotalSuspendedTime;
+            _progress.ElapsedTime += State.GetElapsedReadingTime();
             _progress.LastRead = DateTimeOffset.Now;
 
             if (State.ChapterNumber == State.Ebook!.Content.Chapters.Count - 1 &&

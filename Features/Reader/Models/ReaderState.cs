@@ -13,11 +13,7 @@ public sealed class ReaderState
     public int TotalPages => PagesPerChapter.ElementAtOrDefault(ChapterNumber);
     public int BookPages => PagesPerChapter.Sum();
     public int[] PagesPerChapter { get; private set; } = [];
-    private bool[] _pendingRecount = [];
     public IReadOnlyList<Stylesheet> Styles => Ebook?.Content.Stylesheets ?? [];
-    public DateTimeOffset EntryTime { get; set; }
-    public DateTimeOffset SuspendStartTime { get; set; }
-    public TimeSpan TotalSuspendedTime { get; set; }
     
     public Chapter? CurrentChapter => Ebook?.Content.Chapters.ElementAtOrDefault(ChapterNumber);
     private TocEntry? CurrentTocEntry => Ebook?.Content.GetChapterFromTableOfContents(CurrentChapter?.Identifier);
@@ -34,9 +30,39 @@ public sealed class ReaderState
         ? ((decimal)PageBookNumber / BookPages) * 100
         : 0;
     
+    private bool _isSuspended;
+    private DateTimeOffset _entryTime;
+    private DateTimeOffset _suspendStartTime;
+    private TimeSpan _totalSuspendedTime;
+    private bool[] _pendingRecount = [];
+    
     public void SetEbook(Ebook ebook)
     {
         Ebook = ebook;
+    }
+    
+    public void StartTimer()
+    {
+        _entryTime = DateTimeOffset.UtcNow;
+    }
+    
+    public void PauseTimer()
+    {
+        if(_isSuspended) return;
+        _isSuspended = true;
+        _suspendStartTime = DateTimeOffset.UtcNow;
+    }
+    
+    public void ResumeTimer()
+    {
+        if(!_isSuspended) return;
+        _isSuspended = false;
+        _totalSuspendedTime += DateTimeOffset.UtcNow - _suspendStartTime;
+    }
+
+    public TimeSpan GetElapsedReadingTime()
+    {
+        return DateTimeOffset.UtcNow - _entryTime - _totalSuspendedTime;
     }
     
     public void SetChapterAndPage(int chapterNumber, int pageNumber)
