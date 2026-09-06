@@ -16,6 +16,8 @@ public interface IReaderService : IDisposable
     void PauseTimer();
     void ResumeTimer();
     void SetTotalPages(int[] pageArray);
+    void SetChapterPageCount(int chapter, int pageCount);
+    void InvalidatePageCounts();
     void NavigateToInitialPage();
     void NavigateToChapter(TocEntry chapter);
     void NextPage();

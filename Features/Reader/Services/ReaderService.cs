@@ -31,6 +31,7 @@ public class ReaderService(
     private Guid _bookId;
     private IEbookReader? _reader;
     private BookProgress? _progress;
+    private bool _fullCountRequired;
     
     public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
@@ -57,16 +58,20 @@ public class ReaderService(
         
         
         var cachedPages = await readerCacheService.LoadCachedPagesAsync(_bookId, Settings!.CalculateHash());
-        if(cachedPages.Length > 0)
-        {
-            State.SetPagesPerChapter(cachedPages);
-            NavigateToInitialPage();
-        }
-        else
+        State.SetCachedPages(cachedPages);
+        _fullCountRequired = cachedPages.Length == 0;
+        
+        if (cachedPages.Length == 0)
         {
             NavigateTo(1, 0);
         }
+        else
+        {
+            NavigateToInitialPage();
+        }
         State.EntryTime = DateTimeOffset.UtcNow;
+        RefreshReadiness();
+        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.GetCachedPages());
         return Result.Success();
     }
     
@@ -100,9 +105,41 @@ public class ReaderService(
 
     public void SetTotalPages(int[] pageArray)
     {
-        State?.SetPagesPerChapter(pageArray);
+        if (State is null) return;
+        State.SetPagesPerChapter(pageArray);
+        _fullCountRequired = false;
         OnTotalPagesChanged?.Invoke();
-        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), pageArray);
+        RefreshReadiness();
+        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.GetCachedPages());
+    }
+    
+    public void SetChapterPageCount(int chapter, int pageCount)
+    {
+        if (State is null || !State.SetChapterPageCount(chapter, pageCount)) return;
+        OnTotalPagesChanged?.Invoke();
+        RefreshReadiness();
+        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.GetCachedPages());
+    }
+    
+    public void InvalidatePageCounts()
+    {
+        if (State is null || State.TotalChapters == 0) return;
+        State.InvalidatePages();
+        if (State.BookPages > 0) _fullCountRequired = false;
+        RefreshReadiness();
+        OnTotalPagesChanged?.Invoke();
+    }
+    
+    private void RefreshReadiness()
+    {
+        if (State is null)
+        {
+            IsReady = false;
+            return;
+        }
+        IsReady = _fullCountRequired
+            ? !State.AnyChaptersPending
+            : !State.IsChapterPending(State.ChapterNumber);
     }
 
     private void NavigateTo(int page, int chapter)
@@ -110,6 +147,7 @@ public class ReaderService(
         if(State is null) return;
         State.SetChapterAndPage(chapter, page);
         OnChapterChanged?.Invoke();
+        RefreshReadiness();
     }
     
     public void NavigateToInitialPage()
@@ -130,7 +168,6 @@ public class ReaderService(
         }
         _progress?.StartDate ??= DateTimeOffset.Now;
         NavigateTo(targetPage, targetChapter);
-        IsReady = true;
     }
     
     public void NavigateToChapter(TocEntry tocEntry)
@@ -143,7 +180,7 @@ public class ReaderService(
 
     public void NextPage()
     {
-        if (State is null) return;
+        if (State is null || State.TotalPages <= 0) return;
         if (State.PageNumber < State.TotalPages)
         {
             State.SetChapterAndPage(State.ChapterNumber, State.PageNumber + 1);
@@ -160,7 +197,7 @@ public class ReaderService(
     
     public void PreviousPage()
     {
-        if (State is null) return;
+        if (State is null || State.TotalPages <= 0) return;
         if (State.PageNumber > 1)
         {
             State.SetChapterAndPage(State.ChapterNumber, State.PageNumber - 1);
@@ -196,7 +233,7 @@ public class ReaderService(
         if (State is null || _progress is null || State.TotalPages == 0) return;
         
         _progress.Chapter = State.ChapterNumber;
-        _progress.ChapterProgress = State.PageNumber / (double)State.TotalPages;
+        _progress.ChapterProgress = (double)State.ChapterProgress;
 
         if (_progress.EndDate is null)
         {
