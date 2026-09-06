@@ -14,18 +14,17 @@ public sealed class ReaderState
     public int BookPages => PagesPerChapter.Sum();
     public int[] PagesPerChapter { get; private set; } = [];
     public IReadOnlyList<Stylesheet> Styles => Ebook?.Content.Stylesheets ?? [];
-    
     public Chapter? CurrentChapter => Ebook?.Content.Chapters.ElementAtOrDefault(ChapterNumber);
     private TocEntry? CurrentTocEntry => Ebook?.Content.GetChapterFromTableOfContents(CurrentChapter?.Identifier);
     public string ChapterTitle => !string.IsNullOrEmpty(CurrentTocEntry?.Title)
         ? CurrentTocEntry.Title
         : CurrentChapter?.Title ?? string.Empty; 
     public int TotalChapters => Ebook?.Content.Chapters.Count ?? 0;
+    public bool AnyChaptersPending => _pendingRecount.Any(p => p);
     
     public decimal ChapterProgress => TotalPages > 0
         ? (decimal)PageNumber / TotalPages
         : 0;
-    
     public decimal ProgressAsPercentage => BookPages > 0
         ? ((decimal)PageBookNumber / BookPages) * 100
         : 0;
@@ -129,8 +128,6 @@ public sealed class ReaderState
     
     public bool IsChapterPending(int chapter) =>
         chapter >= 0 && chapter < _pendingRecount.Length && _pendingRecount[chapter];
-    
-    public bool AnyChaptersPending => _pendingRecount.Any(p => p);
     
     public int[] GetPendingChapterIndices() =>
         _pendingRecount.Select((pending, index) => (pending, index))
