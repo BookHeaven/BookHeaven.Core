@@ -8,7 +8,7 @@ namespace BookHeaven.Core.Features.Reader.Services;
 public class ReaderSettingsService(ISender sender) : IReaderSettingsService
 {
     public ProfileSettings? ReaderSettings { get; private set; }
-    public event Action? OnSettingsChanged;
+    public event Action<string?>? OnSettingChanged;
 
     public async Task LoadSettings(Guid profileId)
     {
@@ -26,9 +26,9 @@ public class ReaderSettingsService(ISender sender) : IReaderSettingsService
         await sender.Send(new UpdateProfileSettings.Command(ReaderSettings));
     }
     
-    public void NotifySettingsChanged()
+    public void NotifySettingChanged(string? settingName = null)
     {
-        OnSettingsChanged?.Invoke();
+        OnSettingChanged?.Invoke(settingName);
         _ = SaveSettings();
     }
     
