@@ -1,4 +1,5 @@
-﻿using BookHeaven.Core.Entities;
+﻿using BookHeaven.Core.DOM.Services;
+using BookHeaven.Core.Entities;
 
 namespace BookHeaven.Core.Extensions;
 
@@ -19,6 +20,25 @@ public static class ProfileSettingsExtensions
             settings.PageGap = updatedSettings.PageGap;
             settings.SelectedLayout = updatedSettings.SelectedLayout;
             settings.SelectedFont = updatedSettings.SelectedFont;
+        }
+        
+        public PageCalculatorOptions ToPageCalculatorOptions(int pageWidthPx, int pageHeightPx)
+        {
+            return new PageCalculatorOptions
+            {
+                PageWidthPx = pageWidthPx,
+                PageHeightPx = pageHeightPx,
+                FontSize = (float)settings.FontSize,
+                LineHeight = (float)settings.LineHeight,
+                LetterSpacing = (float)settings.LetterSpacing,
+                WordSpacing = (float)settings.WordSpacing,
+                ParagraphSpacing = (float)settings.ParagraphSpacing,
+                TextIndent = (float)settings.TextIndent,
+                HorizontalMargin = (float)settings.HorizontalMargin,
+                VerticalMargin = (float)settings.VerticalMargin,
+                SelectedFont = settings.SelectedFont,
+                TextMeasurer = TextMeasurerType.HarfBuzz
+            };
         }
     }
 }

@@ -1,4 +1,6 @@
 using BookHeaven.Core.Abstractions.Services;
+using BookHeaven.Core.DOM.Services;
+using BookHeaven.Core.DOM.Services.Abstractions;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Services;
 using BookHeaven.Core.Services;
@@ -51,6 +53,8 @@ public static class DependencyInjection
         services.AddScoped<IReaderSettingsService, ReaderSettingsService>();
         services.AddScoped<IReaderService, ReaderService>();
         services.AddScoped<BookManager>();
+        
+        services.AddTransient<IPageCalculator, PageCalculator>();
         
         return services;
     }

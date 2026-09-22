@@ -1,5 +1,7 @@
 ﻿using BookHeaven.Core.Abstractions.Services;
+using BookHeaven.Core.DOM.Services.Abstractions;
 using BookHeaven.Core.Entities;
+using BookHeaven.Core.Extensions;
 using BookHeaven.Core.Features.Books;
 using BookHeaven.Core.Features.BooksProgress;
 using BookHeaven.Core.Features.Reader.Abstractions;
@@ -17,6 +19,7 @@ public class ReaderService(
     IReaderSettingsService readerSettingsService,
     IEbookManagerProvider ebookManagerProvider,
     IReaderCacheService readerCacheService,
+    IPageCalculator pageCalculator,
     ISender sender) : IReaderService
 {
     public bool IsReady { get; private set; }
@@ -31,7 +34,6 @@ public class ReaderService(
     private Guid _bookId;
     private IEbookReader? _reader;
     private BookProgress? _progress;
-    private bool _fullCountRequired;
     
     public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
@@ -58,20 +60,12 @@ public class ReaderService(
         
         
         var cachedPages = await readerCacheService.LoadCachedPagesAsync(_bookId, Settings!.CalculateHash());
-        State.SetCachedPages(cachedPages);
-        _fullCountRequired = cachedPages.Length == 0;
-        
-        if (cachedPages.Length == 0)
+        if (cachedPages.Length > 0)
         {
-            NavigateTo(1, 0);
-        }
-        else
-        {
+            State.SetPagesPerChapter(cachedPages);
             NavigateToInitialPage();
         }
         State.StartTimer();
-        RefreshReadiness();
-        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.GetCachedPages());
         return Result.Success();
     }
     
@@ -107,39 +101,19 @@ public class ReaderService(
     {
         if (State is null) return;
         State.SetPagesPerChapter(pageArray);
-        _fullCountRequired = false;
         OnTotalPagesChanged?.Invoke();
-        RefreshReadiness();
-        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.GetCachedPages());
+        IsReady = true;
+        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.PagesPerChapter);
     }
     
-    public void SetChapterPageCount(int chapter, int pageCount)
+    public async Task CalculatePagesAsync(int pageWidthPx, int pageHeightPx)
     {
-        if (State is null || !State.SetChapterPageCount(chapter, pageCount)) return;
+        if (State?.Ebook is null || Settings is null) return;
+        var options = Settings.ToPageCalculatorOptions(pageWidthPx, pageHeightPx);
+        var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options);
+        State.SetPagesPerChapter(pageCounts);
         OnTotalPagesChanged?.Invoke();
-        RefreshReadiness();
-        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.GetCachedPages());
-    }
-    
-    public void InvalidatePageCounts()
-    {
-        if (State is null || State.TotalChapters == 0) return;
-        State.InvalidatePages();
-        if (State.BookPages > 0) _fullCountRequired = false;
-        RefreshReadiness();
-        OnTotalPagesChanged?.Invoke();
-    }
-    
-    private void RefreshReadiness()
-    {
-        if (State is null)
-        {
-            IsReady = false;
-            return;
-        }
-        IsReady = _fullCountRequired
-            ? !State.AnyChaptersPending
-            : !State.IsChapterPending(State.ChapterNumber);
+        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings.CalculateHash(), State.PagesPerChapter);
     }
 
     private void NavigateTo(int page, int chapter)
@@ -147,7 +121,6 @@ public class ReaderService(
         if(State is null) return;
         State.SetChapterAndPage(chapter, page);
         OnChapterChanged?.Invoke();
-        RefreshReadiness();
     }
     
     public void NavigateToInitialPage()
@@ -168,6 +141,7 @@ public class ReaderService(
         }
         _progress?.StartDate ??= DateTimeOffset.Now;
         NavigateTo(targetPage, targetChapter);
+        IsReady = true;
     }
     
     public void NavigateToChapter(TocEntry tocEntry)

@@ -20,7 +20,6 @@ public sealed class ReaderState
         ? CurrentTocEntry.Title
         : CurrentChapter?.Title ?? string.Empty; 
     public int TotalChapters => Ebook?.Content.Chapters.Count ?? 0;
-    public bool AnyChaptersPending => _pendingRecount.Any(p => p);
     
     public decimal ChapterProgress => TotalPages > 0
         ? (decimal)PageNumber / TotalPages
@@ -33,7 +32,6 @@ public sealed class ReaderState
     private DateTimeOffset _entryTime;
     private DateTimeOffset _suspendStartTime;
     private TimeSpan _totalSuspendedTime;
-    private bool[] _pendingRecount = [];
     
     public void SetEbook(Ebook ebook)
     {
@@ -74,71 +72,9 @@ public sealed class ReaderState
     {
         var lastProgress = ChapterProgress;
         PagesPerChapter = pagesPerChapter;
-        _pendingRecount = new bool[pagesPerChapter.Length];
         SetChapterAndPage(ChapterNumber, 
             lastProgress > 0 
                 ? (int)Math.Round(lastProgress * TotalPages) 
                 : 1);
     }
-    
-    public void SetCachedPages(CachedChapterPages[] cachedPages)
-    {
-        var lastProgress = ChapterProgress;
-        if (cachedPages.Length == 0)
-        {
-            PagesPerChapter = new int[TotalChapters];
-            _pendingRecount = [.. Enumerable.Repeat(true, TotalChapters)];
-        }
-        else
-        {
-            PagesPerChapter = [.. cachedPages.Select(p => p.Pages)];
-            _pendingRecount = [.. cachedPages.Select(p => p.PendingRecount)];
-        }
-        SetChapterAndPage(ChapterNumber, lastProgress > 0 ? (int)Math.Round(lastProgress * TotalPages) : 1);
-    }
-    
-    public void InvalidatePages()
-    {
-        for (var i = 0; i < _pendingRecount.Length; i++)
-        {
-            _pendingRecount[i] = true;
-        }
-    }
-    
-    public bool SetChapterPageCount(int chapter, int pageCount)
-    {
-        if (chapter < 0 || chapter >= PagesPerChapter.Length) return false;
-        var oldCount = PagesPerChapter[chapter];
-        PagesPerChapter[chapter] = pageCount;
-        _pendingRecount[chapter] = false;
-        
-        var pageNumber = PageNumber;
-        if (chapter == ChapterNumber)
-        {
-            if (oldCount > 0 && PageNumber > pageCount)
-            {
-                // Mantener el mismo progreso dentro del capítulo si el recuento cambia
-                pageNumber = (int)Math.Round((double)PageNumber / oldCount * pageCount);
-            }
-            pageNumber = Math.Clamp(pageNumber, 1, Math.Max(pageCount, 1));
-        }
-        SetChapterAndPage(ChapterNumber, pageNumber);
-        return true;
-    }
-    
-    public bool IsChapterPending(int chapter) =>
-        chapter >= 0 && chapter < _pendingRecount.Length && _pendingRecount[chapter];
-    
-    public int[] GetPendingChapterIndices() =>
-        _pendingRecount.Select((pending, index) => (pending, index))
-            .Where(x => x.pending)
-            .Select(x => x.index)
-            .ToArray();
-    
-    public CachedChapterPages[] GetCachedPages() =>
-        PagesPerChapter.Select((pages, index) => new CachedChapterPages
-        {
-            Pages = pages,
-            PendingRecount = index < _pendingRecount.Length && _pendingRecount[index]
-        }).ToArray();
 }

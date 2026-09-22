@@ -17,7 +17,7 @@ public class ReaderCacheService(
     private string GetBasePath(Guid bookId) => Path.Combine(options.Value.CachePath, bookId.ToString());
     
     
-    public async Task<CachedChapterPages[]> LoadCachedPagesAsync(Guid bookId, string currentReaderSettingsHash)
+    public async Task<int[]> LoadCachedPagesAsync(Guid bookId, string currentReaderSettingsHash)
     {
         var cachePath = Path.Combine(GetBasePath(bookId), "pages.cache");
         if (!File.Exists(cachePath)) return [];
@@ -30,9 +30,7 @@ public class ReaderCacheService(
             // If the reader settings hash has changed, we consider the cache useful as a starting point
             // but all chapters remain pending recount
             var isStale = cache.ReaderSettingsHash != currentReaderSettingsHash;
-            return cache.CachedPages
-                .Select(p => new CachedChapterPages { Pages = p.Pages, PendingRecount = p.PendingRecount || isStale })
-                .ToArray();
+            return isStale ? [] : [.. cache.CachedPages];
         }
         catch
         {
@@ -40,13 +38,13 @@ public class ReaderCacheService(
         }
     }
 
-    public async Task SaveCachedPagesAsync(Guid bookId, string readerSettingsHash, CachedChapterPages[] pages)
+    public async Task SaveCachedPagesAsync(Guid bookId, string readerSettingsHash, int[] pages)
     {
         var cachePath = Path.Combine(GetBasePath(bookId), "pages.cache");
         var cache = new ReaderPagesCache
         {
             ReaderSettingsHash = readerSettingsHash,
-            CachedPages = pages.ToList()
+            CachedPages = pages
         };
         var serialized = JsonSerializer.Serialize(cache);
         await WriteCompressedAsync(cachePath, serialized);
