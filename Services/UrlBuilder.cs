@@ -18,4 +18,6 @@ public class UrlBuilder(IOptions<CoreOptions> options) : IUrlBuilder
     public string FontFilePath(string fontFamily, string? fontFileName = null) => Path.Combine(options.Value.FontsPath, fontFamily, fontFileName ?? string.Empty);
 
     public string FontUrl(string fontFamily, string fontFileName) => "/fonts/" + fontFamily + "/" + fontFileName;
+
+    public string DefaultFontDirectory() => options.Value.DefaultFontDirectory ?? string.Empty;
 }

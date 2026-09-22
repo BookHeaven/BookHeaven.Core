@@ -10,4 +10,5 @@ public interface IUrlBuilder
     string CoverUrl(Guid bookId);
     string FontFilePath(string fontFamily, string? fontFileName = null);
     string FontUrl(string fontFamily, string fontFileName);
+    string DefaultFontDirectory();
 }

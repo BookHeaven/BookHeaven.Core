@@ -81,6 +81,11 @@ public class CoreOptions
     public string FontsPath { get; set; } = null!;
     public string DatabasePath { get; set; } = null!;
     public string CachePath { get; set; } = null!;
+    /// <summary>
+    /// Directory holding the default font family: one font file per <c>FontStyle</c>
+    /// variant (Regular, Italic, Bold, BoldItalic), matched by file name.
+    /// </summary>
+    public string DefaultFontDirectory { get; set; } = null!;
     
     internal void ValidateAndRegister()
     {
@@ -89,6 +94,7 @@ public class CoreOptions
         if (string.IsNullOrEmpty(FontsPath)) throw new ArgumentException("FontsPath must be provided");
         if (string.IsNullOrEmpty(DatabasePath)) throw new ArgumentException("DatabasePath must be provided");
         if (string.IsNullOrEmpty(CachePath)) throw new ArgumentException("CachePath must be provided");
+        if (string.IsNullOrEmpty(DefaultFontDirectory)) throw new ArgumentException("DefaultFontDirectory must be provided");
         
         // Keep to not break migration
         CoreGlobals.BooksPath = BooksPath;

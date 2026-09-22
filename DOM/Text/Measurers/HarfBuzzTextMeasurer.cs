@@ -86,20 +86,40 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     }
 
     /// <summary>
-    /// Convenience overload: one font file used for ALL style variants (or the
-    /// platform default typeface when <paramref name="fontPath"/> is null).
+    /// Convenience overload: a font DIRECTORY holding one file per <see cref="FontStyle"/>
+    /// variant (or the platform default typeface when <paramref name="fontDirectory"/> is
+    /// null, empty or missing). Files are matched to styles by file name: a name
+    /// containing "bold" and "italic" is BoldItalic, "bold" is Bold, "italic" is Italic,
+    /// anything else is Regular — covering both "Family.ttf" and "Family-Regular.ttf"
+    /// naming. Missing variants fall back through the style's fallback chain.
     /// </summary>
-    public HarfBuzzTextMeasurer(string? fontPath = null)
-        : this(fontPath == null
-            ? []
-            : new Dictionary<FontStyle, string?>
-            {
-                [FontStyle.Regular] = fontPath,
-                [FontStyle.Italic] = fontPath,
-                [FontStyle.Bold] = fontPath,
-                [FontStyle.BoldItalic] = fontPath
-            })
+    public HarfBuzzTextMeasurer(string? fontDirectory = null)
+        : this(ResolveFontPaths(fontDirectory))
     {
+    }
+
+    private static IReadOnlyDictionary<FontStyle, string?> ResolveFontPaths(string? fontDirectory)
+    {
+        var paths = new Dictionary<FontStyle, string?>();
+        if (string.IsNullOrWhiteSpace(fontDirectory))
+        {
+            return paths;
+        }
+        if (!Directory.Exists(fontDirectory))
+        {
+            Console.WriteLine($"[HarfBuzzTextMeasurer] Font directory not found: '{fontDirectory}'. Using platform default typeface.");
+            return paths;
+        }
+        foreach (var file in Directory.EnumerateFiles(fontDirectory))
+        {
+            var name = Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
+            var style = name.Contains("bold") && name.Contains("italic") ? FontStyle.BoldItalic
+                : name.Contains("bold") ? FontStyle.Bold
+                : name.Contains("italic") ? FontStyle.Italic
+                : FontStyle.Regular;
+            paths.TryAdd(style, file);
+        }
+        return paths;
     }
 
     private static SKTypeface ResolveTypeface(FontStyle style, IReadOnlyDictionary<FontStyle, string?> fontPaths)

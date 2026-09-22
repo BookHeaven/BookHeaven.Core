@@ -66,16 +66,16 @@ public partial class BlockLayoutEngine : IDisposable
     /// Creates the text measurer implementation selected by the (normalized) options.
     /// Exposed so callers running several layout passes — e.g. chapters of one book
     /// in parallel — can share ONE measurer and keep its word-shaping cache warm.
-    /// Without a mediator this path can only use <see cref="PageCalculatorOptions.DefaultFontPath"/>
-    /// (one file for every style variant); use <see cref="CreateMeasurerAsync"/> to
+    /// Without a mediator this path can only use <paramref name="defaultFontDirectory"/>
+    /// (one file per style variant); use <see cref="CreateMeasurerAsync"/> to
     /// resolve the per-style variants of <see cref="PageCalculatorOptions.SelectedFont"/>.
     /// </summary>
-    public static ITextMeasurer CreateMeasurer(PageCalculatorOptions normalizedOptions)
+    public static ITextMeasurer CreateMeasurer(PageCalculatorOptions normalizedOptions, string? defaultFontDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(normalizedOptions);
         return normalizedOptions.TextMeasurer switch
         {
-            TextMeasurerType.HarfBuzz => new HarfBuzzTextMeasurer(string.IsNullOrWhiteSpace(normalizedOptions.DefaultFontPath) ? null : normalizedOptions.DefaultFontPath),
+            TextMeasurerType.HarfBuzz => new HarfBuzzTextMeasurer(defaultFontDirectory),
             _ => new NaiveTextMeasurer()
         };
     }
@@ -86,8 +86,8 @@ public partial class BlockLayoutEngine : IDisposable
     /// database: <c>GetAllFonts</c> filtered by family, each font's full path built with
     /// <see cref="IUrlBuilder.FontFilePath"/>. A font whose style/weight is "all" (single
     /// file upload) covers every variant it intersects; the most specific font wins each
-    /// variant slot. When <see cref="PageCalculatorOptions.SelectedFont"/> is empty,
-    /// <see cref="PageCalculatorOptions.DefaultFontPath"/> is used for all variants.
+    /// variant slot. When <see cref="PageCalculatorOptions.SelectedFont"/> is empty, the
+    /// default font directory (<see cref="IUrlBuilder.DefaultFontDirectory"/>) is used.
     /// </summary>
     public static async Task<ITextMeasurer> CreateMeasurerAsync(PageCalculatorOptions normalizedOptions, ISender sender, IUrlBuilder urlBuilder, CancellationToken cancellationToken = default)
     {
@@ -102,7 +102,7 @@ public partial class BlockLayoutEngine : IDisposable
 
         if (string.IsNullOrWhiteSpace(normalizedOptions.SelectedFont))
         {
-            return new HarfBuzzTextMeasurer(string.IsNullOrWhiteSpace(normalizedOptions.DefaultFontPath) ? null : normalizedOptions.DefaultFontPath);
+            return CreateMeasurer(normalizedOptions, urlBuilder.DefaultFontDirectory());
         }
 
         var result = await sender.Send(new GetAllFonts.Query(normalizedOptions.SelectedFont), cancellationToken);
@@ -115,9 +115,9 @@ public partial class BlockLayoutEngine : IDisposable
             }
         }
 
-        // Selected family not found (or query failed): the measurer falls back to the
-        // platform default typeface for every variant.
-        return new HarfBuzzTextMeasurer();
+        // Selected family not found (or query failed): fall back to the default font
+        // directory (platform default typeface when it is empty or missing).
+        return CreateMeasurer(normalizedOptions, urlBuilder.DefaultFontDirectory());
     }
 
     /// <summary>
@@ -179,7 +179,7 @@ public partial class BlockLayoutEngine : IDisposable
         // A shared measurer (one per book, used by several parallel engines) is not
         // disposed by the engines using it; only the caller that created it owns it.
         _ownsMeasurer = sharedMeasurer == null;
-        _measurer = sharedMeasurer ?? CreateMeasurer(_options);
+        _measurer = sharedMeasurer ?? CreateMeasurer(_options, _coreOptions.DefaultFontDirectory);
     }
 
     /// <summary>

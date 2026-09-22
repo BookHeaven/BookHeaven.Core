@@ -44,11 +44,6 @@ public sealed class PageCalculatorOptions
     public string SelectedFont { get; set; } = string.Empty;
 
     /// <summary>
-    /// Path to the font file used for text measurement when <see cref="SelectedFont"/> is empty.
-    /// </summary>
-    public string DefaultFontPath { get; set; } = string.Empty;
-
-    /// <summary>
     /// Returns a copy where non-positive page dimensions or root font size are
     /// replaced with defaults. Zero values would make length resolution degenerate
     /// (em against a zero font size, % against a zero page width) and the text
@@ -70,7 +65,6 @@ public sealed class PageCalculatorOptions
         WordSpacing = WordSpacing,
         ParagraphSpacing = ParagraphSpacing,
         TextIndent = TextIndent,
-        SelectedFont = SelectedFont,
-        DefaultFontPath = DefaultFontPath
+        SelectedFont = SelectedFont
     };
 }

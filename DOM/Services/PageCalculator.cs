@@ -73,10 +73,10 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         // its own engine (per-document state) but reuses that measurer.
         // With a mediator available, the per-style variants of the selected font
         // family are resolved from the database; otherwise the sync path (default
-        // font file only) is used.
+        // font directory only) is used.
         var sharedMeasurer = sender != null && urlBuilder != null
             ? await BlockLayoutEngine.CreateMeasurerAsync(normalized, sender, urlBuilder, cancellationToken)
-            : BlockLayoutEngine.CreateMeasurer(normalized);
+            : BlockLayoutEngine.CreateMeasurer(normalized, coreOptions.Value.DefaultFontDirectory);
         try
         {
             using var throttled = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount, 1, MaxParallelChapters));
