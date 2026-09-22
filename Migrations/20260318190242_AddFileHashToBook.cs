@@ -25,6 +25,10 @@ namespace BookHeaven.Core.Migrations
                 column: "FileHash");
             
             // Populate hashes for existing books
+            if(!Directory.Exists(CoreGlobals.BooksPath))
+            {
+                return;
+            }
             var files = Directory.GetFiles(CoreGlobals.BooksPath);
             foreach (var file in files)
             {
@@ -32,8 +36,6 @@ namespace BookHeaven.Core.Migrations
                 var hash = FileHelpers.GetPartialMd5HashAsync(file).GetAwaiter().GetResult();
                 migrationBuilder.Sql($"UPDATE Books SET FileHash = '{hash}' WHERE upper(BookId) = upper('{bookId}');");
             }
-            
-            
         }
 
         /// <inheritdoc />
