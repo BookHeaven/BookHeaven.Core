@@ -193,12 +193,12 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         var sb = new StringBuilder(text.Length);
         var currentWidth = 0f;
 
-        foreach (var w in TextRunWrapper.CollapsibleWhitespace().Split(text))
+        TextRunWrapper.ForEachSegment(text, w =>
         {
             if (w.Length == 0)
             {
                 // Leading/trailing whitespace: a browser collapses and drops it.
-                continue;
+                return;
             }
             var limit = ((lines.Count == 0 && firstLineWidthPx.HasValue) ? firstLineWidthPx.Value : maxWidthPx);
             var wWidth = GetWordWidth(w, fontSizePx, style);
@@ -249,7 +249,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     currentWidth = wWidth;
                 }
             }
-        }
+        });
         if (sb.Length > 0)
         {
             lines.Add(sb.ToString());

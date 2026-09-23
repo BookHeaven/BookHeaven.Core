@@ -250,7 +250,7 @@ public static partial class TextRunWrapper
         {
             if (string.IsNullOrEmpty(run.Text) || run.FontSizePx <= 0f) continue;
             var sawWord = false;
-            foreach (var part in CollapsibleWhitespace().Split(run.Text))
+            ForEachSegment(run.Text, part =>
             {
                 if (part.Length == 0)
                 {
@@ -261,7 +261,7 @@ public static partial class TextRunWrapper
                         pendingSpace = run.FontSizePx;
                         pendingSpaceStyle = run.Style;
                     }
-                    continue;
+                    return;
                 }
                 // A word. The space before it is internal (owned by this run) for any
                 // word after the first, otherwise it's a boundary space carried over
@@ -272,7 +272,7 @@ public static partial class TextRunWrapper
                 sawWord = true;
                 pendingSpace = null;
                 pendingSpaceStyle = null;
-            }
+            });
         }
         return tokens;
     }
@@ -280,6 +280,43 @@ public static partial class TextRunWrapper
     /// <summary>CSS-collapsible whitespace (also used by <see cref="HarfBuzzTextMeasurer"/>).</summary>
     [GeneratedRegex(@"[ \t\r\n\f\u0085\u2028\u2029]+", RegexOptions.Compiled)]
     public static partial Regex CollapsibleWhitespace();
+
+    /// <summary>
+    /// The exact character set of <see cref="CollapsibleWhitespace"/> as a cheap char test,
+    /// so <see cref="ForEachSegment"/> can split without the regex engine.
+    /// </summary>
+    private static bool IsCollapsibleWhitespace(char c) =>
+        c is ' ' or '\t' or '\r' or '\n' or '\f' or '\u0085' or '\u2028' or '\u2029';
+
+    /// <summary>
+    /// Invokes <paramref name="onSegment"/> for each maximal word and for the empty
+    /// segments that a leading/trailing whitespace run produces, in order — the same
+    /// sequence as <c>CollapsibleWhitespace().Split(text)</c> but without the regex
+    /// engine and without the <see cref="string"/>[] allocation. Only the word
+    /// substrings themselves are allocated (callers need them as cache keys / tokens).
+    /// </summary>
+    public static void ForEachSegment(string text, Action<string> onSegment)
+    {
+        var n = text.Length;
+        var i = 0;
+        var seenWord = false;
+        while (i < n)
+        {
+            if (IsCollapsibleWhitespace(text[i]))
+            {
+                while (i < n && IsCollapsibleWhitespace(text[i])) i++;
+                // A whitespace run yields an empty segment only when it leads (before
+                // the first word) or trails (after the last word); internal runs are
+                // pure separators and emit nothing — matching Regex.Split with '+'.
+                if (!seenWord || i >= n) onSegment(string.Empty);
+                continue;
+            }
+            var start = i;
+            while (i < n && !IsCollapsibleWhitespace(text[i])) i++;
+            onSegment(text.AsSpan(start, i - start).ToString());
+            seenWord = true;
+        }
+    }
 
     /// <summary>
     /// Dashes that create a break opportunity (UAX #14 BA class): hyphen, figure dash,

@@ -63,6 +63,14 @@ public partial class BlockLayoutEngine : IDisposable
     private readonly Dictionary<IElement, bool> _hiddenCache = [];
 
     /// <summary>
+    /// Per-document style state (style collection, precomputed rule matches, raw
+    /// overrides index, content-width memo). Rebuilt for every parsed document and
+    /// released in <see cref="Dispose"/>, so each chapter's style state is freed
+    /// deterministically with its engine.
+    /// </summary>
+    private DocumentStyleCache? _docCache;
+
+    /// <summary>
     /// Creates the text measurer implementation selected by the (normalized) options.
     /// Exposed so callers running several layout passes — e.g. chapters of one book
     /// in parallel — can share ONE measurer and keep its word-shaping cache warm.
@@ -192,6 +200,17 @@ public partial class BlockLayoutEngine : IDisposable
 
         var doc = await _parser.ParseDocumentAsync(html, css);
         cancellationToken.ThrowIfCancellationRequested();
+
+        // Build the per-document style state once: the style collection (instead of
+        // per element) and the inverted rule-match index (instead of testing every
+        // rule against every element in the cascade).
+        _docCache = new DocumentStyleCache();
+        if (doc.Owner is { DefaultView: { } window })
+        {
+            _docCache.StyleCollection = window.GetStyleCollection(_parser.RenderDevice);
+            CssParser.PrecomputeRuleMatches(doc, _docCache.StyleCollection, _docCache);
+        }
+
         var body = doc.Body;
         var blocks = new List<LayoutBlock>();
         if (body == null) return blocks;
@@ -670,7 +689,6 @@ public partial class BlockLayoutEngine : IDisposable
             PaddingTop = paddingTop,
             PaddingBottom = paddingBottom,
             LineCount = meas.Lines.Count,
-            Lines = meas.Lines.Count > 0 ? [.. meas.Lines] : [],
             LineHeightPx = meas.LineHeightPx,
             LineHeights = meas.LineHeights.Count > 0 ? [.. meas.LineHeights] : null,
             Flags = flags,
@@ -840,12 +858,18 @@ public partial class BlockLayoutEngine : IDisposable
     /// </summary>
     private List<TextRun> BuildTextRuns(IElement el, float ownFontSize, bool ownBold, bool ownItalic)
     {
-        var runs = new List<TextRun>();
-        WalkInlineRuns(el, ownFontSize, ownBold, ownItalic, runs);
-        return runs.Count > 0 ? runs : [new TextRun(el.TextContent.Trim(), ownFontSize, ToFontStyle(ownBold, ownItalic))];
+        var builders = new List<RunBuilder>();
+        WalkInlineRuns(el, ownFontSize, ownBold, ownItalic, builders);
+        if (builders.Count == 0)
+        {
+            return [new TextRun(el.TextContent.Trim(), ownFontSize, ToFontStyle(ownBold, ownItalic))];
+        }
+        var runs = new List<TextRun>(builders.Count);
+        foreach (var b in builders) runs.Add(b.Build());
+        return runs;
     }
 
-    private void WalkInlineRuns(IElement element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<TextRun> runs)
+    private void WalkInlineRuns(IElement element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs)
     {
         foreach (var node in element.ChildNodes)
         {
@@ -879,18 +903,36 @@ public partial class BlockLayoutEngine : IDisposable
         }
     }
 
-    private static void AppendRun(List<TextRun> runs, string text, float size, bool bold, bool italic)
+    private static void AppendRun(List<RunBuilder> runs, string text, float size, bool bold, bool italic)
     {
         if (text.Length == 0) return;
         var style = ToFontStyle(bold, italic);
-        if (runs.Count > 0 && Math.Abs(runs[^1].FontSizePx - size) < 0.001f && runs[^1].Style == style)
+        if (runs.Count > 0 && Math.Abs(runs[^1].Size - size) < 0.001f && runs[^1].Style == style)
         {
-            runs[^1] = runs[^1] with { Text = runs[^1].Text + text };
+            runs[^1].Append(text);
         }
         else
         {
-            runs.Add(new TextRun(text, size, style));
+            runs.Add(new RunBuilder { Size = size, Style = style });
+            runs[^1].Append(text);
         }
+    }
+
+    /// <summary>
+    /// Accumulates the text of a single run in a <see cref="StringBuilder"/> so that merging
+    /// consecutive same-style fragments is O(total text) instead of the O(n²) string
+    /// re-concatenation the old <c>runs[^1] with { Text = ... }</c> performed. The final
+    /// <see cref="TextRun"/> is materialized once, at the end of the walk.
+    /// </summary>
+    private sealed class RunBuilder
+    {
+        public float Size;
+        public FontStyle Style;
+        private readonly StringBuilder _text = new();
+
+        public void Append(string text) => _text.Append(text);
+
+        public TextRun Build() => new(_text.ToString(), Size, Style);
     }
 
     private static FontStyle ToFontStyle(bool bold, bool italic) =>
@@ -1015,7 +1057,7 @@ public partial class BlockLayoutEngine : IDisposable
     private ICssStyleDeclaration? GetComputedStyle(IElement el)
     {
         if (_styleCache.TryGetValue(el, out var cached)) return cached;
-        var computed = CssParser.ComputeStyle(el, _parser.RenderDevice, el.ParentElement is { } parent ? GetComputedStyle(parent) : null);
+        var computed = CssParser.ComputeStyle(el, _parser.RenderDevice, el.ParentElement is { } parent ? GetComputedStyle(parent) : null, _docCache);
         _styleCache.Add(el, computed);
         return computed;
     }
@@ -1066,17 +1108,17 @@ public partial class BlockLayoutEngine : IDisposable
 
     // Resolved content width of an element, per document: it depends only on the
     // element and its ancestor chain, so siblings (and repeated lookups of the same
-    // parent from first/last-child width resolution) reuse one computation.
-    private static readonly ConditionalWeakTable<IDocument, Dictionary<IElement, float>> ContentWidthCache = new();
-
+    // parent from first/last-child width resolution) reuse one computation. The memo
+    // lives in the per-document cache so it is freed with the engine.
     private float GetContainingBlockContentWidth(IElement el, IDocument doc)
     {
         if (el.ParentElement is not { } parent) return _options.PageWidthPx;
-        var memo = ContentWidthCache.GetOrCreateValue(doc);
-        if (memo.TryGetValue(parent, out var cached))
+        var memo = _docCache?.ContentWidth;
+        if (memo is not null && memo.TryGetValue(parent, out var cached))
             return Math.Min(_options.PageWidthPx, cached > 0 ? cached : _options.PageWidthPx);
         var value = ResolveAncestorContentWidth(parent);
-        memo[parent] = value;
+        if (memo is not null)
+            memo[parent] = value;
         return Math.Min(_options.PageWidthPx, value > 0 ? value : _options.PageWidthPx);
     }
 
@@ -1128,6 +1170,13 @@ public partial class BlockLayoutEngine : IDisposable
 
     public void Dispose()
     {
+        // Release the per-document style state deterministically (it references the
+        // parsed DOM, which would otherwise pin the whole chapter until the
+        // ConditionalWeakTable entries were finalized).
+        _docCache = null;
+        _styleCache.Clear();
+        _hiddenCache.Clear();
+
         // HarfBuzz/Skia measurers hold native resources; only the engine that created
         // the measurer releases them (a shared measurer outlives every engine that
         // uses it — see <see cref="PageCalculator"/>).

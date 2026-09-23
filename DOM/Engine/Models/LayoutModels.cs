@@ -80,7 +80,6 @@ public class LayoutBlock
 
     /// <summary>Number of measured text lines (text blocks only; non-text blocks use 0).</summary>
     public int LineCount;
-    public IReadOnlyList<string> Lines = [];
 
     /// <summary>Height of one text line in px (text blocks only). For mixed-size blocks this is the TALLEST line.</summary>
     public float LineHeightPx;
@@ -153,7 +152,6 @@ public class PageBlockSlice
 
     /// <summary>Number of lines in this slice, or 0 for a pixel slice / whole block.</summary>
     public int LineCount;
-    public IReadOnlyList<string> Lines = [];
 
     /// <summary>Y position of the fragment relative to the page top.</summary>
     public float Y;

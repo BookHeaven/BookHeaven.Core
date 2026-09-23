@@ -105,7 +105,7 @@ public sealed class AngleSharpHtmlParser
                    """;
 
         var doc = await _context.OpenAsync(req => req.Content(html));
-        //PruneUnmatchedRules(doc);
+        PruneUnmatchedRules(doc);
         return doc;
     }
 

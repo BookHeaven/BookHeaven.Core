@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -6,6 +7,8 @@ using System.Text.RegularExpressions;
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
+using AngleSharp.Html.Dom;
+using AngleSharp.Svg.Dom;
 using AsCssParser = AngleSharp.Css.Parser.CssParser;
 
 namespace BookHeaven.Core.DOM.CSS;
@@ -106,7 +109,8 @@ public static class CssParser
     public static ICssStyleDeclaration? ComputeStyle(
         IElement element,
         IRenderDevice renderDevice,
-        ICssStyleDeclaration? parentComputed = null)
+        ICssStyleDeclaration? parentComputed = null,
+        DocumentStyleCache? cache = null)
     {
         if (element.Owner is not { DefaultView: { } window } doc)
             return null;
@@ -114,11 +118,21 @@ public static class CssParser
         ICssStyleDeclaration cascaded;
         try
         {
-            var styles = window.GetStyleCollection(renderDevice);
+            // The style collection is per-document: build it once (cache) instead of
+            // per element (GetStyleCollection re-resolves services and re-flattens
+            // every rule on each call).
+            var styles = cache?.StyleCollection ?? window.GetStyleCollection(renderDevice);
+            if (cache is not null)
+                cache.StyleCollection = styles;
             // AngleSharp requires a non-null parent declaration; a detached element's
             // empty style declaration is a safe placeholder for the root of the chain.
             var parentForCascade = parentComputed ?? doc.CreateElement("span").GetStyle();
-            cascaded = styles.ComputeCascadedStyle(element, parentForCascade);
+            if (TryBuildPrecomputedCascade(cache, element, parentForCascade, out var precomputed))
+                cascaded = precomputed!;
+            else
+                // No precomputed matches (cache-less callers, e.g. tests): let
+                // AngleSharp walk every rule for this element.
+                cascaded = styles.ComputeCascadedStyle(element, parentForCascade);
         }
         catch
         {
@@ -131,7 +145,7 @@ public static class CssParser
         // AngleSharp.Css destroys var/calc/max/min/clamp values at parse time (see class
         // remarks): recover the author's raw text for the declarations that apply to this
         // element and override the destroyed cascade values with it.
-        var rawOverrides = GetRawOverrides(doc, element);
+        var rawOverrides = GetRawOverrides(doc, element, cache);
 
         var parentFontSize = ParseFontSize(parentComputed) ?? renderDevice.FontSize;
         var ownFontSize = ParseFontSize(
@@ -181,7 +195,10 @@ public static class CssParser
     /// Computes the style of an element and all its ancestors (bottom-up), without
     /// caching. Convenience for callers outside the engines (tests, diagnostics).
     /// </summary>
-    public static ICssStyleDeclaration? ComputeStyleChain(IElement element, IRenderDevice renderDevice)
+    public static ICssStyleDeclaration? ComputeStyleChain(
+        IElement element,
+        IRenderDevice renderDevice,
+        DocumentStyleCache? cache = null)
     {
         var ancestors = new List<IElement>();
         for (var parent = element.ParentElement; parent is not null; parent = parent.ParentElement)
@@ -190,10 +207,148 @@ public static class CssParser
 
         ICssStyleDeclaration? computed = null;
         foreach (var ancestor in ancestors)
-            computed = ComputeStyle(ancestor, renderDevice, computed) ?? computed;
+            computed = ComputeStyle(ancestor, renderDevice, computed, cache) ?? computed;
 
-        return ComputeStyle(element, renderDevice, computed) ?? computed;
+        return ComputeStyle(element, renderDevice, computed, cache) ?? computed;
     }
+
+    // ------------------------------------------------------------------
+    // Precomputed cascade (per-document rule matching)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Precomputes, for every element in the document, the indices of the rules
+    /// that match it, in cascade order (specificity, then source order). Matching
+    /// is done once per distinct selector text (inverted index) instead of testing
+    /// every rule against every element, and the result is stored compactly as
+    /// int[] arrays in the per-document cache.
+    /// </summary>
+    public static void PrecomputeRuleMatches(IDocument doc, IStyleCollection styles, DocumentStyleCache cache)
+    {
+        var rules = styles.ToList();
+        cache.Rules = rules;
+
+        var selectorMatches = new Dictionary<string, IElement[]>(StringComparer.Ordinal);
+        var perElement = new Dictionary<IElement, List<int>>();
+
+        for (var i = 0; i < rules.Count; i++)
+        {
+            var text = rules[i].Selector.Text;
+            if (string.IsNullOrEmpty(text))
+                continue;
+            // Pseudo-element selectors (e.g. "::before") never match a regular
+            // element in the cascade, and QuerySelectorAll cannot express them.
+            if (text.Contains("::", StringComparison.Ordinal))
+                continue;
+
+            if (!selectorMatches.TryGetValue(text, out var matched))
+            {
+                try
+                {
+                    matched = [.. doc.QuerySelectorAll(text)];
+                }
+                catch
+                {
+                    matched = [];
+                }
+                selectorMatches[text] = matched;
+            }
+
+            foreach (var el in matched)
+            {
+                if (!perElement.TryGetValue(el, out var list))
+                    perElement[el] = list = [];
+                list.Add(i);
+            }
+        }
+
+        var result = new Dictionary<IElement, int[]>(perElement.Count);
+        foreach (var (el, list) in perElement)
+        {
+            // Mirror AngleSharp's stable sort: specificity first, then source order.
+            list.Sort((a, b) =>
+            {
+                var c = Comparer<Priority>.Default.Compare(rules[a].Selector.Specificity, rules[b].Selector.Specificity);
+                return c != 0 ? c : a.CompareTo(b);
+            });
+            result[el] = [.. list];
+        }
+        cache.RuleMatches = result;
+    }
+
+    /// <summary>
+    /// Builds the cascaded style from the precomputed rule matches, mirroring
+    /// AngleSharp's <c>ComputeExplicitStyle</c> + <c>ComputeCascadedStyle</c>:
+    /// declarations are applied in (specificity, source order), then the inline
+    /// style, then inheritance from the parent declaration. Returns false only
+    /// when the cache carries no precomputed matches (caller falls back to
+    /// AngleSharp's per-element rule walk).
+    ///
+    /// AngleSharp.Css 1.1.2 exposes the cascade internals (<c>SetDeclarations</c>,
+    /// <c>UpdateDeclarations</c>, <c>CssStyleDeclaration</c>) as internal, so the
+    /// merge is replicated here with the public API: entries are merged with the
+    /// same skip/replace predicates AngleSharp uses, then applied with a single
+    /// <see cref="ICssStyleDeclaration.CssText"/> parse. Shorthands therefore stay
+    /// unexpanded, exactly as in AngleSharp's own cascade.
+    /// </summary>
+    private static bool TryBuildPrecomputedCascade(
+        DocumentStyleCache? cache,
+        IElement element,
+        ICssStyleDeclaration parent,
+        [NotNullWhen(true)] out ICssStyleDeclaration? cascaded)
+    {
+        cascaded = null;
+        if (cache?.RuleMatches is not { } matches || cache.Rules is not { } rules)
+            return false;
+
+        var entries = new List<CascadeEntry>();
+        var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        if (matches.TryGetValue(element, out var ruleIndices))
+            foreach (var ruleIndex in ruleIndices) Add(rules[ruleIndex].Style, _ => false, (old, _) => !old.IsImportant, inherited: false);
+
+        if (element is IHtmlElement or ISvgElement)
+            Add(element.GetStyle(), _ => false, (old, _) => !old.IsImportant, inherited: false);
+        Add(parent, d => !d.CanBeInherited, (old, _) => old.IsInherited, inherited: true);
+
+        var scratch = element.Owner?.CreateElement("span").GetStyle();
+        if (scratch is null)
+            return false;
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < entries.Count; i++)
+        {
+            if (i > 0)
+                sb.Append(';');
+            sb.Append(entries[i].Name).Append(':').Append(entries[i].Decl.RawValue?.CssText ?? entries[i].Decl.Value);
+            if (entries[i].Important)
+                sb.Append(" !important");
+        }
+        scratch.CssText = sb.ToString();
+        cascaded = scratch;
+        return true;
+
+        void Add(IEnumerable<ICssProperty> decls, Func<ICssProperty, bool> skip, Func<ICssProperty, ICssProperty, bool> replace, bool inherited)
+        {
+            foreach (var d in decls)
+            {
+                if (skip(d))
+                    continue;
+                if (index.TryGetValue(d.Name, out var i))
+                {
+                    if (replace(entries[i].Decl, d))
+                        entries[i] = entries[i] with { Decl = d, Important = d.IsImportant, Inherited = inherited };
+                }
+                else
+                {
+                    index[d.Name] = entries.Count;
+                    entries.Add(new CascadeEntry(d.Name, d, d.IsImportant, inherited));
+                }
+            }
+        }
+    }
+
+    private sealed record CascadeEntry(string Name, ICssProperty Decl, bool Important, bool Inherited);
 
     // ------------------------------------------------------------------
     // Raw author declarations (recovery of values AngleSharp.Css destroyed)
@@ -203,7 +358,7 @@ public static class CssParser
     /// A declaration copied verbatim from the author's stylesheet text (style elements
     /// or style attributes). Names are lower-cased; selectors are kept as written.
     /// </summary>
-    private sealed record RawAuthorDeclaration(string Selector, string Name, string Value, bool Important)
+    public sealed record RawAuthorDeclaration(string Selector, string Name, string Value, bool Important)
     {
         /// <summary>True when the value contains a function AngleSharp.Css cannot parse.</summary>
         public bool HasFunction => HasUnparseableFunctionRegex.IsMatch(Value);
@@ -240,7 +395,7 @@ public static class CssParser
             var rule = SelectorSpecificityParser
                 .ParseStyleSheet(selector + " { z-index: 0 }")
                 .Rules.OfType<ICssStyleRule>().FirstOrDefault();
-            specificity = rule?.Selector?.Specificity ?? default;
+            specificity = rule?.Selector.Specificity ?? default;
         }
         catch
         {
@@ -263,7 +418,7 @@ public static class CssParser
     /// per distinct selector instead of re-matching every selector against every
     /// element, which is orders of magnitude cheaper.
     /// </summary>
-    private sealed record RawOverridesIndex(List<RawAuthorDeclaration> Declarations, Dictionary<IElement, List<int>> Matched);
+    public sealed record RawOverridesIndex(List<RawAuthorDeclaration> Declarations, Dictionary<IElement, List<int>> Matched);
 
     private static readonly ConditionalWeakTable<IDocument, RawOverridesIndex> RawOverridesIndexCache = new();
 
@@ -455,11 +610,18 @@ public static class CssParser
     /// longhand the shorthand sets is overridden — even the plain parts — because
     /// AngleSharp drops the whole shorthand when any part fails.
     /// </summary>
-    private static Dictionary<string, (string Value, bool Important)> GetRawOverrides(IDocument doc, IElement element)
+    private static Dictionary<string, (string Value, bool Important)> GetRawOverrides(
+        IDocument doc,
+        IElement element,
+        DocumentStyleCache? cache)
     {
         var result = new Dictionary<string, (string Value, bool Important)>(StringComparer.Ordinal);
 
-        var index = GetRawOverridesIndex(doc);
+        // Prefer the per-document cache (freed with the engine); the static
+        // ConditionalWeakTable remains as a fallback for cache-less callers.
+        var index = cache?.RawIndex ?? GetRawOverridesIndex(doc);
+        if (cache is not null)
+            cache.RawIndex = index;
         var matching = new List<RawAuthorDeclaration>();
         if (index.Matched.TryGetValue(element, out var matched))
             foreach (var declarationIndex in matched)
@@ -484,7 +646,7 @@ public static class CssParser
                 var specificity = GetSelectorSpecificity(declaration.Selector);
                 foreach (var (longhand, partValue) in targets)
                 {
-                    var candidate = (Value: partValue, HasFunction: declaration.HasFunction, Specificity: specificity, Order: i);
+                    var candidate = (Value: partValue, declaration.HasFunction, Specificity: specificity, Order: i);
                     if (!winners.TryGetValue(longhand, out var current)
                         || (BeatsSpecificity(candidate.Specificity, current.Specificity)
                             || (candidate.Specificity == current.Specificity && candidate.Order > current.Order)))
@@ -510,30 +672,32 @@ public static class CssParser
         var parts = CssLengthParser.SplitTopLevel(value, char.IsWhiteSpace);
         if (parts.Count == 0) return null;
 
-        if (longhands.Length == 4)
+        switch (longhands.Length)
         {
-            if (parts.Count > 4) return null;
-            var top = parts[0];
-            var right = parts.Count >= 2 ? parts[1] : top;
-            var bottom = parts.Count >= 3 ? parts[2] : top;
-            var left = parts.Count >= 4 ? parts[3] : right;
-            return [(longhands[0], top), (longhands[1], right), (longhands[2], bottom), (longhands[3], left)];
-        }
-
-        if (longhands.Length == 2)
-        {
-            if (parts.Count > 2) return null;
-            if (name.Equals("width", StringComparison.OrdinalIgnoreCase))
+            case 4 when parts.Count > 4:
+                return null;
+            case 4:
+            {
+                var top = parts[0];
+                var right = parts.Count >= 2 ? parts[1] : top;
+                var bottom = parts.Count >= 3 ? parts[2] : top;
+                var left = parts.Count >= 4 ? parts[3] : right;
+                return [(longhands[0], top), (longhands[1], right), (longhands[2], bottom), (longhands[3], left)];
+            }
+            case 2 when parts.Count > 2:
+                return null;
+            case 2 when name.Equals("width", StringComparison.OrdinalIgnoreCase):
                 return parts.Count == 1
                     ? [(longhands[0], parts[0])]
                     : [(longhands[0], parts[0]), (longhands[1], parts[1])];
             // *-block / *-inline: one value sets both longhands.
-            return parts.Count == 1
-                ? [(longhands[0], parts[0]), (longhands[1], parts[0])]
-                : [(longhands[0], parts[0]), (longhands[1], parts[1])];
+            case 2:
+                return parts.Count == 1
+                    ? [(longhands[0], parts[0]), (longhands[1], parts[0])]
+                    : [(longhands[0], parts[0]), (longhands[1], parts[1])];
+            default:
+                return null;
         }
-
-        return null;
     }
 
     // ------------------------------------------------------------------
@@ -582,7 +746,7 @@ public static class CssParser
         if (!value.Contains("var(", StringComparison.OrdinalIgnoreCase)) return value;
 
         var current = value;
-        for (int pass = 0; pass < 10 && current.Contains("var(", StringComparison.OrdinalIgnoreCase); pass++)
+        for (var pass = 0; pass < 10 && current.Contains("var(", StringComparison.OrdinalIgnoreCase); pass++)
         {
             var sb = new StringBuilder(current.Length);
             var changed = false;
@@ -595,9 +759,9 @@ public static class CssParser
                     continue;
                 }
 
-                int depth = 0;
+                var depth = 0;
                 var end = -1;
-                for (int j = i; j < current.Length; j++)
+                for (var j = i; j < current.Length; j++)
                 {
                     if (current[j] == '(') depth++;
                     else if (current[j] == ')' && --depth == 0) { end = j; break; }
@@ -611,8 +775,8 @@ public static class CssParser
                 var inner = current[(i + 4)..end].Trim();
                 var name = inner;
                 string? fallback = null;
-                int parenDepth = 0;
-                for (int j = 0; j < inner.Length; j++)
+                var parenDepth = 0;
+                for (var j = 0; j < inner.Length; j++)
                 {
                     if (inner[j] == '(') parenDepth++;
                     else if (inner[j] == ')') parenDepth--;

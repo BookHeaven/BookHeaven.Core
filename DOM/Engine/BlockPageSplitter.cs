@@ -74,12 +74,11 @@ public static class BlockPageSplitter
 
         // The engine emits blocks in document order; the splitter is the single
         // authority for placement and margin collapse, so no re-sort is needed.
-        var indexed = blocks.Select((b, i) => (Block: b, Idx: i)).ToList();
         var context = new SplitContext(pageHeight);
 
-        foreach (var entry in indexed)
+        for (var i = 0; i < blocks.Count; i++)
         {
-            context.PlaceBlock(entry.Block, entry.Idx, childIdx: -1, parentPaddingTop: 0f,
+            context.PlaceBlock(blocks[i], i, childIdx: -1, parentPaddingTop: 0f,
                 ref context.PrevBottomMargin, ref context.PrevZeroHeightMargin);
         }
 
@@ -362,7 +361,6 @@ public static class BlockPageSplitter
                 ChildIndex = childIdx,
                 LineStart = lineStart,
                 LineCount = lineCount,
-                Lines = [.. block.Lines.Skip(lineStart).Take(lineCount)],
                 Y = y,
                 Height = height,
                 Flags = block.Flags
@@ -375,6 +373,23 @@ public static class BlockPageSplitter
                     Content = string.Join(",", block.Links)
                 });
             }
+        }
+
+        /// <summary>
+        /// Copies <paramref name="count"/> lines starting at <paramref name="start"/> into an
+        /// exact-size array, avoiding the LINQ iterator allocations of
+        /// <c>[.. lines.Skip(start).Take(count)]</c>.
+        /// </summary>
+        private static string[] CopyLines(IReadOnlyList<string> lines, int start, int count)
+        {
+            if (count <= 0) return [];
+            var result = new string[count];
+            for (var i = 0; i < count; i++)
+            {
+                var src = start + i;
+                result[i] = src < lines.Count ? lines[src] : string.Empty;
+            }
+            return result;
         }
 
         private void EnsurePage(int idx)
