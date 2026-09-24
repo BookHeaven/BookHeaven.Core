@@ -13,11 +13,26 @@ public sealed class MiniStyle
     // default-capacity dictionary would grow (and re-allocate) on every Set.
     private readonly Dictionary<string, string> _props = new(8, StringComparer.OrdinalIgnoreCase);
 
+    // Properties set by a rule/inline style (as opposed to inherited). Relative
+    // units in an inherited value (e.g. an inherited `font-size: 2.42em`) must NOT be
+    // re-resolved against the parent's resolved size — that would apply the unit twice.
+    private HashSet<string>? _explicit;
+
     public string GetPropertyValue(string name) => _props.TryGetValue(name, out var v) ? v : string.Empty;
 
     internal void Set(string name, string value) => _props[name] = value;
 
     internal Dictionary<string, string> Props => _props;
+
+    /// <summary>True when <paramref name="name"/> was set by a rule/inline style, not inherited.</summary>
+    internal bool IsExplicit(string name) => _explicit?.Contains(name) ?? false;
+
+    internal void MarkExplicit(string name)
+    {
+        (_explicit ??= new HashSet<string>(8, StringComparer.OrdinalIgnoreCase)).Add(name);
+    }
+
+    internal void UnmarkExplicit(string name) => _explicit?.Remove(name);
 }
 
 /// <summary>
@@ -66,7 +81,10 @@ public static class MiniStyleResolver
         }
 
         foreach (var (prop, w) in best)
+        {
             style.Set(prop, w.Value);
+            style.MarkExplicit(prop);
+        }
 
         // Inheritance: inheritable properties and custom properties (--*) not set here.
         if (parent is not null)
@@ -87,7 +105,12 @@ public static class MiniStyleResolver
                     continue;
                 var inherited = parent.GetPropertyValue(prop);
                 if (inherited.Length > 0)
+                {
                     style.Set(prop, inherited);
+                    // The value is now the parent's (possibly relative) string: treat
+                    // it as inherited, not explicit, so units are not re-resolved.
+                    style.UnmarkExplicit(prop);
+                }
                 else
                     style.Props.Remove(prop);
             }
