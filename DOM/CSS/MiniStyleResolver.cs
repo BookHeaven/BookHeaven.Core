@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BookHeaven.Core.DOM.HTML.Models;
 
 namespace BookHeaven.Core.DOM.CSS;
@@ -11,25 +12,24 @@ public sealed class MiniStyle
 {
     // Pre-sized: a typical element resolves fewer than 8 properties, so the
     // default-capacity dictionary would grow (and re-allocate) on every Set.
-    private readonly Dictionary<string, string> _props = new(8, StringComparer.OrdinalIgnoreCase);
 
     // Properties set by a rule/inline style (as opposed to inherited). Relative
     // units in an inherited value (e.g. an inherited `font-size: 2.42em`) must NOT be
     // re-resolved against the parent's resolved size — that would apply the unit twice.
     private HashSet<string>? _explicit;
 
-    public string GetPropertyValue(string name) => _props.TryGetValue(name, out var v) ? v : string.Empty;
+    public string GetPropertyValue(string name) => Props.TryGetValue(name, out var v) ? v : string.Empty;
 
-    internal void Set(string name, string value) => _props[name] = value;
+    internal void Set(string name, string value) => Props[name] = value;
 
-    internal Dictionary<string, string> Props => _props;
+    internal Dictionary<string, string> Props { get; } = new();
 
     /// <summary>True when <paramref name="name"/> was set by a rule/inline style, not inherited.</summary>
     internal bool IsExplicit(string name) => _explicit?.Contains(name) ?? false;
 
     internal void MarkExplicit(string name)
     {
-        (_explicit ??= new HashSet<string>(8, StringComparer.OrdinalIgnoreCase)).Add(name);
+        (_explicit ??= []).Add(name);
     }
 
     internal void UnmarkExplicit(string name) => _explicit?.Remove(name);
@@ -58,7 +58,7 @@ public static class MiniStyleResolver
         var style = new MiniStyle();
         // Pre-sized: a typical element matches a handful of declarations, so the
         // default-capacity dictionary would grow (and re-allocate) on every Consider.
-        var best = new Dictionary<string, (int Importance, int Spec, int Order, string Value)>(8, StringComparer.OrdinalIgnoreCase);
+        var best = new Dictionary<string, (int Importance, int Spec, int Order, string Value)>();
 
         // Stylesheet rules.
         for (var r = 0; r < rules.Count; r++)
@@ -176,7 +176,7 @@ public static class MiniStyleResolver
     // Shorthand values are pure functions of (value, count) and the same CSS values
     // (e.g. "1em 0") repeat across thousands of elements, so the split result is
     // memoized for the process lifetime instead of re-allocated per element.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), string[]> ShorthandCache = [];
+    private static readonly ConcurrentDictionary<(string, int), string[]> ShorthandCache = [];
 
     /// <summary>
     /// Splits a shorthand value on top-level whitespace (parentheses-aware) and
@@ -368,7 +368,7 @@ public static class MiniStyleResolver
     // The key is a (value, fingerprint) tuple — a struct that references the shared
     // value string and a 32-bit hash of the in-scope custom props, so building it
     // allocates nothing.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), string> VarCache = [];
+    private static readonly ConcurrentDictionary<(string, int), string> VarCache = [];
 
     private static string ResolveVarValue(string value, Dictionary<string, string> props, int depth)
     {
