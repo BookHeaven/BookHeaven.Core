@@ -621,7 +621,6 @@ public sealed partial class MiniLayoutEngine : IDisposable
             LineHeightPx = meas.LineHeightPx,
             LineHeights = meas.LineHeights.Count > 0 ? [.. meas.LineHeights] : null,
             Flags = flags,
-            Text = text,
             Links = []
         };
     }
