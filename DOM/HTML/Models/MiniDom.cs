@@ -204,7 +204,5 @@ public sealed class MiniDocument(MiniElement html)
 {
     /// <summary>The synthetic <c>html</c> root that wraps head and body.</summary>
     public MiniElement Root => html;
-
-    public MiniElement? Head => html.Children.FirstOrDefault(e => e.TagName == "head");
     public MiniElement? Body => html.Children.FirstOrDefault(e => e.TagName == "body");
 }
