@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.Engine.Models;
 using BookHeaven.Core.DOM.Mini;
 using BookHeaven.Core.DOM.Services;
@@ -9,6 +10,7 @@ using BookHeaven.Core.DOM.Text.Measurers;
 using Microsoft.Extensions.Options;
 using SkiaSharp;
 using FontStyle = BookHeaven.Core.DOM.Text.Abstractions.FontStyle;
+using MiniLengthParser = BookHeaven.Core.DOM.CSS.MiniLengthParser;
 
 namespace BookHeaven.Core.DOM.Engine;
 

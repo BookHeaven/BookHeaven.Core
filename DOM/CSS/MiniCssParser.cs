@@ -1,4 +1,4 @@
-namespace BookHeaven.Core.DOM.Mini;
+namespace BookHeaven.Core.DOM.CSS;
 
 /// <summary>A parsed CSS rule: a selector plus its declarations.</summary>
 public sealed class MiniCssRule

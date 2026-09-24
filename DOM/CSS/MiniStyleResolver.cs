@@ -1,4 +1,6 @@
-namespace BookHeaven.Core.DOM.Mini;
+using BookHeaven.Core.DOM.Mini;
+
+namespace BookHeaven.Core.DOM.CSS;
 
 /// <summary>
 /// A resolved style: the cascaded value (as a string) for each property. The layout

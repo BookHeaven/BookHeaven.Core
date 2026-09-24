@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-namespace BookHeaven.Core.DOM.Mini;
+namespace BookHeaven.Core.DOM.CSS;
 
 /// <summary>
 /// The viewport/font context a length resolves against. Plain data (no AngleSharp
