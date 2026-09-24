@@ -7,6 +7,7 @@ namespace BookHeaven.Core.Features.Reader.Abstractions;
 public interface IReaderService : IDisposable
 {
     bool IsReady { get; }
+    bool IsCalculatingPages { get; }
     ReaderState? State { get; }
     ProfileSettings? Settings { get; }
     event Action? OnPageChanged;
