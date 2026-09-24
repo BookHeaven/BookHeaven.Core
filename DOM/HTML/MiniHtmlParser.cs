@@ -1,9 +1,10 @@
 using System.Globalization;
 using System.Text;
 using BookHeaven.Core.DOM.CSS;
+using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Services;
 
-namespace BookHeaven.Core.DOM.Mini;
+namespace BookHeaven.Core.DOM.HTML;
 
 /// <summary>
 /// A minimal, fast HTML-to-DOM parser for the block layout engine. It builds the

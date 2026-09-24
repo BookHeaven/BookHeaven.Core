@@ -1,4 +1,4 @@
-using BookHeaven.Core.DOM.Mini;
+using BookHeaven.Core.DOM.HTML.Models;
 
 namespace BookHeaven.Core.DOM.CSS;
 

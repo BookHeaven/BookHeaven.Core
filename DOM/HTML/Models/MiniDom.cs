@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace BookHeaven.Core.DOM.Mini;
+namespace BookHeaven.Core.DOM.HTML.Models;
 
 /// <summary>
 /// Node kinds of the lightweight DOM. Only the two the layout engine distinguishes:
