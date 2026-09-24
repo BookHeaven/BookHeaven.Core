@@ -285,22 +285,28 @@ public sealed partial class MiniLayoutEngine : IDisposable
             ProcessElement(blockChildren[ci], childSink, ct);
         }
 
-        // An empty container (no measured children) occupies space only through an
-        // explicit CSS height / <br> lines or its own padding and margins.
-        float explicitHeight = 0f;
+        // A container's content height is the sum of its children's content boxes
+        // (content + their vertical padding). An empty container occupies space
+        // only through an explicit CSS height / <br> lines.
+        float contentHeight = 0f;
         if (childSink.Count == 0)
         {
-            explicitHeight = ResolveSpacerGeometry(el).ContentHeight;
-            if (explicitHeight <= 0f && layout.MarginTop <= 0f && layout.MarginBottom <= 0f
+            contentHeight = ResolveSpacerGeometry(el).ContentHeight;
+            if (contentHeight <= 0f && layout.MarginTop <= 0f && layout.MarginBottom <= 0f
                 && layout.PaddingTop <= 0f && layout.PaddingBottom <= 0f)
                 return;
+        }
+        else
+        {
+            foreach (var child in childSink)
+                contentHeight += child.ContentHeight + child.PaddingTop + child.PaddingBottom;
         }
 
         var containerBlock = new LayoutBlock
         {
             TagName = el.TagName,
             Kind = BlockKind.Container,
-            ContentHeight = explicitHeight,
+            ContentHeight = contentHeight,
             MarginTop = layout.MarginTop,
             MarginBottom = layout.MarginBottom,
             PaddingTop = layout.PaddingTop,
@@ -669,7 +675,18 @@ public sealed partial class MiniLayoutEngine : IDisposable
         if (heightPx is > 0f) return (heightPx.Value, 0, 0f);
 
         var lineBreaks = CountDescendants(el, "br");
-        if (lineBreaks == 0) return (0f, 0, 0f);
+        if (lineBreaks == 0)
+        {
+            // A whitespace-only element generates a line box only if it contains
+            // non-collapsible content. The browser collapses space, tab, LF, CR and
+            // FF to nothing (a CR from a &#13; reference is a normal line break), but
+            // a non-breaking space (&nbsp;, U+00A0) is not collapsible and occupies a
+            // line. Any other non-whitespace character (real text) also does.
+            if (el.TextContent.Any(c => c is not (' ' or '\t' or '\n' or '\r' or '\f')))
+                lineBreaks = 1;
+            else
+                return (0f, 0, 0f);
+        }
 
         var (lhLengthPx, lhMultiplier) = ResolveLineHeightForm(computed, fontSize);
         var lineHeight = lhLengthPx ?? (lhMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize;
@@ -741,8 +758,13 @@ public sealed partial class MiniLayoutEngine : IDisposable
         if (el.ParentElement is { } parent)
             parentFontSize = ResolveFontSize(parent);
 
+        // An INHERITED font-size is already the parent's resolved size; re-parsing
+        // its raw string (e.g. "max(2.42em, …)") would apply the em unit twice.
+        if (!computed.IsExplicit("font-size"))
+            return parentFontSize;
+
         var parsed = ParseLengthToPx(fs, parentFontSize, parentFontSize);
-        return parsed ?? _options.RootFontSizePx;
+        return parsed ?? parentFontSize;
     }
 
     /// <summary>Extracts text content that belongs directly to the element (not inside block-level children).</summary>
@@ -802,7 +824,9 @@ public sealed partial class MiniLayoutEngine : IDisposable
                 var childItalic = inheritedItalic;
                 var cs = GetComputedStyle(inline, _rules);
                 var fs = cs.GetPropertyValue("font-size");
-                if (!string.IsNullOrWhiteSpace(fs))
+                // Only an explicitly declared font-size is re-parsed; an inherited
+                // raw string (e.g. "max(2.42em, …)") would apply the em unit twice.
+                if (!string.IsNullOrWhiteSpace(fs) && cs.IsExplicit("font-size"))
                 {
                     var parsed = ParseLengthToPx(fs, childSize, childSize);
                     if (parsed is > 0f) childSize = parsed.Value;
