@@ -23,6 +23,7 @@ public class ReaderService(
     ISender sender) : IReaderService
 {
     public bool IsReady { get; private set; }
+    public bool IsCalculatingPages { get; private set; }
     
     public ReaderState? State { get; private set; }
     public ProfileSettings? Settings => readerSettingsService.ReaderSettings;
@@ -33,6 +34,11 @@ public class ReaderService(
 
     private Guid _bookId;
     private BookProgress? _progress;
+
+    // Tracks the in-flight page calculation so a new call can cancel the previous
+    // one. Each calculation owns its CTS and disposes it in its own finally block;
+    // this field is only ever null or a live (non-disposed) source.
+    private CancellationTokenSource? _calcCts;
     
     public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
@@ -111,11 +117,38 @@ public class ReaderService(
     public async Task CalculatePagesAsync(int pageWidthPx, int pageHeightPx)
     {
         if (State?.Ebook is null || Settings is null) return;
+
+        IsCalculatingPages = true;
+        // Supersede any in-flight calculation: cancel it so it stops ASAP and its
+        // partial result is dropped, then start a fresh one with a new token.
+        if (_calcCts is not null)
+        {
+            await _calcCts.CancelAsync();
+        }
+        var cts = new CancellationTokenSource();
+        _calcCts = cts;
+
         var options = Settings.ToPageCalculatorOptions(pageWidthPx, pageHeightPx);
-        var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options);
-        State.SetPagesPerChapter(pageCounts);
-        OnTotalPagesChanged?.Invoke();
-        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings.CalculateHash(), State.PagesPerChapter);
+        try
+        {
+            var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options, cts.Token);
+            State.SetPagesPerChapter(pageCounts);
+            OnTotalPagesChanged?.Invoke();
+            _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings.CalculateHash(), State.PagesPerChapter);
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer calculation superseded this one; drop the partial result.
+        }
+        finally
+        {
+            // Clear the field before disposing so no other thread ever sees a
+            // disposed source; only the current owner clears it.
+            if (ReferenceEquals(_calcCts, cts))
+                _calcCts = null;
+            cts.Dispose();
+            IsCalculatingPages = false;
+        }
     }
 
     private void NavigateTo(int page, int chapter)
@@ -233,6 +266,9 @@ public class ReaderService(
         State = null;
         _bookId = Guid.Empty;
         _progress = null;
+        // Stop any in-flight calculation. Only cancel here — the task's finally
+        // block owns the disposal, so we never double-dispose the CTS.
+        _calcCts?.Cancel();
         readerSettingsService.Dispose();
         GC.SuppressFinalize(this);
     }
