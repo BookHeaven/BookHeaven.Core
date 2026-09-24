@@ -98,7 +98,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         var all = QueryAll(body, BlockSelector);
         if (all.Count == 0)
         {
-            var text = body.TextContent.Trim();
+            var text = body.TrimmedTextContent;
             if (string.IsNullOrEmpty(text)) return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
 
             var block = BuildLeafBlock(text, body);
@@ -118,10 +118,14 @@ public sealed partial class MiniLayoutEngine : IDisposable
         return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
     }
 
+    // Precomputed from BlockSelector so QueryAll doesn't split/allocate per call.
+    private static readonly HashSet<string> BlockTagSet =
+        BlockSelector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Collects every element in the subtree (pre-order) whose tag is in the comma-separated selector.</summary>
     private static List<MiniElement> QueryAll(MiniElement root, string selector)
     {
-        var tags = selector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tags = selector == BlockSelector ? BlockTagSet : selector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var result = new List<MiniElement>();
         Collect(root, result);
         return result;
@@ -156,7 +160,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
 
     private bool ComputeHidden(MiniElement el, List<MiniCssRule> rules)
     {
-        if (el.Attributes.ContainsKey("hidden")) return true;
+        if (el.HasAttribute("hidden")) return true;
         var style = el.Style;
         if (!string.IsNullOrWhiteSpace(style) && DisplayNoneRegex().IsMatch(style))
             return true;
@@ -249,7 +253,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         {
             // Leaf block: measure its full text content. An EMPTY leaf still
             // produces a block when it occupies space (see BuildLeafBlock).
-            var text = el.TextContent.Trim();
+            var text = el.TrimmedTextContent;
             var block = BuildLeafBlock(text, el);
             if (block != null) sink.Add(block);
             return;
@@ -771,7 +775,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         WalkInlineRuns(el, ownFontSize, ownBold, ownItalic, builders);
         if (builders.Count == 0)
         {
-            return [new TextRun(el.TextContent.Trim(), ownFontSize, ToFontStyle(ownBold, ownItalic))];
+            return [new TextRun(el.TrimmedTextContent, ownFontSize, ToFontStyle(ownBold, ownItalic))];
         }
         var runs = new List<TextRun>(builders.Count);
         foreach (var b in builders) runs.Add(b.Build());

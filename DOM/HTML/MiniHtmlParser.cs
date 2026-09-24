@@ -151,7 +151,8 @@ public sealed class MiniHtmlParser
             // Opening tag.
             var openClose = htmlFragment.IndexOf('>', i + 1);
             if (openClose < 0) { i = n; continue; }
-            var (tag, attrs, selfClosing) = ParseTag(htmlFragment.AsSpan(i + 1, openClose - i - 1));
+            var tagSpan = htmlFragment.AsSpan(i + 1, openClose - i - 1);
+            var (tag, bodyStart) = ParseTagName(tagSpan);
 
             // The synthetic wrapper already provides html/head/body. A full-document
             // fragment repeats them; a browser ignores those start tags in body context
@@ -164,8 +165,7 @@ public sealed class MiniHtmlParser
             }
 
             var el = new MiniElement(tag);
-            foreach (var (name, value) in attrs)
-                el.Attributes[name] = value;
+            ParseAttributes(tagSpan, bodyStart, el, out var selfClosing);
 
             var parent = stack.Peek();
             el.Parent = parent;
@@ -323,29 +323,37 @@ public sealed class MiniHtmlParser
     }
 
     /// <summary>
-    /// Parses a tag body (the text between '<' and '>') into a tag name, its attributes
-    /// and a self-closing flag. Attribute names are lowercased; values are entity-decoded.
+    /// Parses the tag name (up to the first whitespace, '/' or end) of a tag body
+    /// (the text between '<' and '>'), working directly on the span so no intermediate
+    /// string is allocated. Returns the lowercase name and the index where the
+    /// attribute body starts.
     /// </summary>
-    private static (string tag, List<(string name, string value)> attrs, bool selfClosing) ParseTag(ReadOnlySpan<char> span)
+    private static (string Tag, int BodyStart) ParseTagName(ReadOnlySpan<char> span)
     {
-        var s = span.ToString();
-        var n = s.Length;
         var i = 0;
-
-        // Tag name: up to the first whitespace, '/' or end.
-        while (i < n && !char.IsWhiteSpace(s[i]) && s[i] != '/')
+        while (i < span.Length && !char.IsWhiteSpace(span[i]) && span[i] != '/')
             i++;
-        var tag = s[..i].ToLowerInvariant();
+        var tag = span[..i].ToString().ToLowerInvariant();
+        return (tag, i);
+    }
 
-        var attrs = new List<(string, string)>(4);
-        var selfClosing = false;
+    /// <summary>
+    /// Parses the attribute body of a tag directly into the element's attribute store
+    /// (no intermediate list). Attribute names are lowercased; values are entity-decoded.
+    /// A trailing '/' sets <paramref name="selfClosing"/>.
+    /// </summary>
+    private static void ParseAttributes(ReadOnlySpan<char> span, int start, MiniElement el, out bool selfClosing)
+    {
+        var n = span.Length;
+        var i = start;
+        selfClosing = false;
 
         while (i < n)
         {
-            while (i < n && char.IsWhiteSpace(s[i])) i++;
+            while (i < n && char.IsWhiteSpace(span[i])) i++;
             if (i >= n) break;
 
-            if (s[i] == '/')
+            if (span[i] == '/')
             {
                 selfClosing = true;
                 i++;
@@ -354,46 +362,48 @@ public sealed class MiniHtmlParser
 
             // Attribute name.
             var nameStart = i;
-            while (i < n && s[i] != '=' && !char.IsWhiteSpace(s[i]) && s[i] != '/')
+            while (i < n && span[i] != '=' && !char.IsWhiteSpace(span[i]) && span[i] != '/')
                 i++;
-            var name = s[nameStart..i].ToLowerInvariant();
+            if (i == nameStart) continue;
+            var name = span[nameStart..i].ToString().ToLowerInvariant();
 
             // Optional value.
-            while (i < n && char.IsWhiteSpace(s[i])) i++;
-            var value = string.Empty;
-            if (i < n && s[i] == '=')
+            while (i < n && char.IsWhiteSpace(span[i])) i++;
+            string value;
+            if (i < n && span[i] == '=')
             {
                 i++;
-                while (i < n && char.IsWhiteSpace(s[i])) i++;
-                if (i < n && (s[i] == '"' || s[i] == '\''))
+                while (i < n && char.IsWhiteSpace(span[i])) i++;
+                if (i < n && (span[i] == '"' || span[i] == '\''))
                 {
-                    var quote = s[i];
+                    var quote = span[i];
                     i++;
                     var valStart = i;
-                    while (i < n && s[i] != quote) i++;
-                    value = DecodeEntities(s[valStart..i]);
+                    while (i < n && span[i] != quote) i++;
+                    value = DecodeEntities(span[valStart..i]);
                     if (i < n) i++; // consume the closing quote
                 }
                 else
                 {
                     var valStart = i;
-                    while (i < n && !char.IsWhiteSpace(s[i])) i++;
-                    value = DecodeEntities(s[valStart..i]);
+                    while (i < n && !char.IsWhiteSpace(span[i])) i++;
+                    value = DecodeEntities(span[valStart..i]);
                 }
             }
+            else
+            {
+                value = string.Empty;
+            }
 
-            if (name.Length > 0)
-                attrs.Add((name, value));
+            el.SetAttribute(name, value);
         }
-
-        return (tag, attrs, selfClosing);
     }
 
     /// <summary>Appends the text span [start, end) to <paramref name="parent"/>, decoding entities.</summary>
     private static void AppendText(string html, int start, int end, MiniElement parent)
     {
         if (end <= start) return;
-        var text = DecodeEntities(html.AsSpan(start, end - start).ToString());
+        var text = DecodeEntities(html.AsSpan(start, end - start));
         if (text.Length == 0) return;
         var node = new MiniText(text);
         node.Parent = parent;
@@ -402,8 +412,12 @@ public sealed class MiniHtmlParser
 
     /// <summary>Decodes HTML entities (&amp;, &lt;, &#nn;, &#xhh;, ...) in <paramref name="text"/>.</summary>
     public static string DecodeEntities(string text)
+        => text.Contains('&') ? DecodeEntities(text.AsSpan()) : text;
+
+    /// <summary>Decodes HTML entities in a span; returns the original text (no copy) when it has none.</summary>
+    public static string DecodeEntities(ReadOnlySpan<char> text)
     {
-        if (!text.Contains('&')) return text;
+        if (!text.Contains('&')) return text.ToString();
 
         var sb = new StringBuilder(text.Length);
         var i = 0;
@@ -417,8 +431,9 @@ public sealed class MiniHtmlParser
                 continue;
             }
 
-            var semi = text.IndexOf(';', i + 1);
-            if (semi > i && semi - i <= 11 && TryDecodeEntity(text.AsSpan(i + 1, semi - i - 1), out var decoded))
+            var semiRel = text.Slice(i + 1).IndexOf(';');
+            var semi = semiRel < 0 ? -1 : i + 1 + semiRel;
+            if (semi > i && semi - i <= 11 && TryDecodeEntity(text.Slice(i + 1, semi - i - 1), out var decoded))
             {
                 sb.Append(decoded);
                 i = semi + 1;

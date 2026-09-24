@@ -18,7 +18,27 @@ public readonly record struct MiniRenderDevice(float ViewPortWidth, float ViewPo
 /// </summary>
 public static partial class MiniLengthParser
 {
+    // A length's pixel value is a pure function of (raw string, reference, emReference,
+    // device). In a book those repeat heavily (every paragraph shares the same calc/length
+    // and a handful of widths/font-sizes), so the result is memoized for the process
+    // lifetime. The key is a struct (no boxing); reference/emReference are rounded to 3
+    // decimals so "equal" layout values share an entry (sub-pixel, invisible). device is
+    // included so vw/vh/vmin/vmax stay correct across different viewports.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, float, float, MiniRenderDevice), float?> LengthCache = [];
+
     public static float? ParseLengthToPx(string? s, MiniRenderDevice device, float reference, float? emReference = null)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        var emRef = emReference ?? device.FontSize;
+        var key = (s, MathF.Round(reference, 3), MathF.Round(emRef, 3), device);
+        if (LengthCache.TryGetValue(key, out var cached))
+            return cached;
+        var result = ParseLengthToPxCore(s, device, reference, emReference);
+        LengthCache[key] = result;
+        return result;
+    }
+
+    private static float? ParseLengthToPxCore(string? s, MiniRenderDevice device, float reference, float? emReference = null)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
         var cur = s.Trim();

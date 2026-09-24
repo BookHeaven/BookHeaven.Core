@@ -49,14 +49,23 @@ public sealed class MiniCompound
 /// </summary>
 public static class MiniCssParser
 {
+    // Parsed rules are immutable after parsing, so identical CSS text (the injected
+    // global stylesheet is re-parsed once per chapter; shared chapter stylesheets are
+    // reused across chapters) can be parsed once and cached for the process lifetime.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<MiniCssRule>> RuleCache = [];
+
     public static List<MiniCssRule> Parse(string css)
     {
-        var rules = new List<MiniCssRule>();
         if (string.IsNullOrWhiteSpace(css))
-            return rules;
+            return [];
 
-        var text = StripComments(css);
+        if (RuleCache.TryGetValue(css, out var cached))
+            return cached;
+
+        var rules = new List<MiniCssRule>();
+        var text = css.Contains("/*", StringComparison.Ordinal) ? StripComments(css) : css;
         ParseBlock(text, 0, text.Length, rules, inMedia: false);
+        RuleCache[css] = rules;
         return rules;
     }
 

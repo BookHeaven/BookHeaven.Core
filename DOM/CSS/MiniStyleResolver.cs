@@ -9,7 +9,9 @@ namespace BookHeaven.Core.DOM.CSS;
 /// </summary>
 public sealed class MiniStyle
 {
-    private readonly Dictionary<string, string> _props = new(StringComparer.OrdinalIgnoreCase);
+    // Pre-sized: a typical element resolves fewer than 8 properties, so the
+    // default-capacity dictionary would grow (and re-allocate) on every Set.
+    private readonly Dictionary<string, string> _props = new(8, StringComparer.OrdinalIgnoreCase);
 
     public string GetPropertyValue(string name) => _props.TryGetValue(name, out var v) ? v : string.Empty;
 
@@ -39,7 +41,9 @@ public static class MiniStyleResolver
     public static MiniStyle Resolve(MiniElement el, List<MiniCssRule> rules, MiniStyle? parent)
     {
         var style = new MiniStyle();
-        var best = new Dictionary<string, (int Importance, int Spec, int Order, string Value)>(StringComparer.OrdinalIgnoreCase);
+        // Pre-sized: a typical element matches a handful of declarations, so the
+        // default-capacity dictionary would grow (and re-allocate) on every Consider.
+        var best = new Dictionary<string, (int Importance, int Spec, int Order, string Value)>(8, StringComparer.OrdinalIgnoreCase);
 
         // Stylesheet rules.
         for (var r = 0; r < rules.Count; r++)
@@ -75,7 +79,9 @@ public static class MiniStyleResolver
 
             // The 'inherit' keyword: the declaration explicitly takes the parent's
             // value (already fully resolved, since styles resolve top-down).
-            foreach (var (prop, value) in style.Props.ToList())
+            // Set on an existing key never changes the dictionary structure, so the
+            // props can be enumerated directly (no ToList() copy per element).
+            foreach (var (prop, value) in style.Props)
             {
                 if (!string.Equals(value, "inherit", StringComparison.OrdinalIgnoreCase))
                     continue;
@@ -144,12 +150,21 @@ public static class MiniStyleResolver
         Consider(best, decl.Property, importance, spec, order, decl.Value);
     }
 
+    // Shorthand values are pure functions of (value, count) and the same CSS values
+    // (e.g. "1em 0") repeat across thousands of elements, so the split result is
+    // memoized for the process lifetime instead of re-allocated per element.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), string[]> ShorthandCache = [];
+
     /// <summary>
     /// Splits a shorthand value on top-level whitespace (parentheses-aware) and
     /// repeats it per the CSS 1/2/3/4-value rules for the target longhand count.
     /// </summary>
     private static string[] SplitShorthandValues(string value, int count)
     {
+        var key = (value, count);
+        if (ShorthandCache.TryGetValue(key, out var cached))
+            return cached;
+
         var parts = new List<string>();
         var depth = 0;
         var start = 0;
@@ -167,7 +182,7 @@ public static class MiniStyleResolver
         }
         if (start < value.Length) parts.Add(value[start..]);
 
-        return count == 2
+        string[] result = count == 2
             ? parts.Count switch
             {
                 0 => ["", ""],
@@ -182,6 +197,8 @@ public static class MiniStyleResolver
                 3 => [parts[0], parts[1], parts[2], parts[1]],
                 _ => [parts[0], parts[1], parts[2], parts[3]]
             };
+        ShorthandCache[key] = result;
+        return result;
     }
 
     private static void Consider(
@@ -311,7 +328,9 @@ public static class MiniStyleResolver
     private static void ResolveVars(MiniStyle style)
     {
         var props = style.Props;
-        foreach (var (prop, value) in props.ToList())
+        // Set on an existing key never changes the dictionary structure, so the
+        // props can be enumerated directly (no ToList() copy per element).
+        foreach (var (prop, value) in props)
         {
             if (!value.Contains("var(", StringComparison.Ordinal))
                 continue;
@@ -319,7 +338,46 @@ public static class MiniStyleResolver
         }
     }
 
+    // Memoizes top-level var() resolution. The result is a pure function of the raw
+    // value plus the values of the custom properties in scope; those are inherited and
+    // rarely overridden, so the same key repeats across the tree and the expensive
+    // StringBuilder resolution runs once per distinct key instead of once per element.
+    // The key is a (value, fingerprint) tuple — a struct that references the shared
+    // value string and a 32-bit hash of the in-scope custom props, so building it
+    // allocates nothing.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int), string> VarCache = [];
+
     private static string ResolveVarValue(string value, Dictionary<string, string> props, int depth)
+    {
+        if (depth > 0)
+            return ResolveVarValueCore(value, props, depth);
+
+        var key = (value, CustomFingerprint(props));
+        if (VarCache.TryGetValue(key, out var cached))
+            return cached;
+        var resolved = ResolveVarValueCore(value, props, 0);
+        VarCache[key] = resolved;
+        return resolved;
+    }
+
+    // 32-bit fingerprint of the custom properties in scope. The resolved value depends
+    // only on `value` plus these, so hashing them (no allocation) lets elements sharing
+    // the same in-scope config reuse one cache entry. A 32-bit collision across the few
+    // distinct configs in a book is negligible.
+    private static int CustomFingerprint(Dictionary<string, string> props)
+    {
+        var hash = new HashCode();
+        foreach (var (name, v) in props)
+        {
+            if (!name.StartsWith("--", StringComparison.Ordinal))
+                continue;
+            hash.Add(name);
+            hash.Add(v);
+        }
+        return hash.ToHashCode();
+    }
+
+    private static string ResolveVarValueCore(string value, Dictionary<string, string> props, int depth)
     {
         if (depth > 8 || !value.Contains("var(", StringComparison.Ordinal))
             return value;
@@ -365,9 +423,9 @@ public static class MiniStyleResolver
 
             var replacement = string.Empty;
             if (name.StartsWith("--", StringComparison.Ordinal) && props.TryGetValue(name, out var custom))
-                replacement = ResolveVarValue(custom, props, depth + 1);
+                replacement = ResolveVarValueCore(custom, props, depth + 1);
             else if (fallback is not null)
-                replacement = ResolveVarValue(fallback, props, depth + 1);
+                replacement = ResolveVarValueCore(fallback, props, depth + 1);
 
             sb.Append(replacement);
             i = j + 1;

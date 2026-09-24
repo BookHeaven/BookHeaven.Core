@@ -356,7 +356,9 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     // (identical result; TryAdd keeps the first).
                     var buffer = _bufferPerThread.Value!; // the factory never returns null
                     buffer.Reset();
-                    buffer.AddUtf8(text);
+                    // AddUtf16 takes the string's chars directly (no UTF8 byte[] copy
+                    // per unique word, as AddUtf8 would allocate).
+                    buffer.AddUtf16(text.AsSpan());
                     buffer.GuessSegmentProperties();
                     shaper.HbFont.Shape(buffer, []);
                     var positions = buffer.GetGlyphPositionSpan();

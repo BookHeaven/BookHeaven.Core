@@ -61,38 +61,126 @@ public sealed class MiniElement : MiniNode
     /// <summary>All child nodes (text and element) in document order.</summary>
     public List<MiniNode> ChildNodes { get; }
 
-    /// <summary>Attributes with lowercase names and decoded values.</summary>
-    public Dictionary<string, string> Attributes { get; } = [];
+    // Attributes as a small pair array: most elements carry 0-2 attributes, so a
+    // Dictionary would cost ~100 bytes of overhead per element for nothing.
+    private (string Name, string Value)[] _attributes = [];
+
+    /// <summary>Number of attributes on this element.</summary>
+    public int AttributeCount => _attributes.Length;
+
+    // Lazily cached: the tree is immutable after parsing, and the engine walks
+    // Children several times per element — caching avoids an OfType iterator per call.
+    private List<MiniElement>? _elementChildren;
 
     /// <summary>Element children only (text nodes excluded), matching AngleSharp's <c>Children</c>.</summary>
-    public IEnumerable<MiniElement> Children => ChildNodes.OfType<MiniElement>();
+    public IEnumerable<MiniElement> Children
+    {
+        get
+        {
+            if (_elementChildren is { } cached) return cached;
+            var list = new List<MiniElement>();
+            foreach (var child in ChildNodes)
+            {
+                if (child is MiniElement element) list.Add(element);
+            }
+            _elementChildren = list;
+            return _elementChildren;
+        }
+    }
 
     public MiniElement? ParentElement => Parent;
 
     public override MiniNodeType NodeType => MiniNodeType.Element;
 
+    /// <summary>Value of the attribute with the given lowercase name, or null.</summary>
     public string? GetAttribute(string name)
-        => Attributes.TryGetValue(name, out var v) ? v : null;
+    {
+        for (var i = 0; i < _attributes.Length; i++)
+        {
+            if (string.Equals(_attributes[i].Name, name, StringComparison.Ordinal))
+                return _attributes[i].Value;
+        }
+        return null;
+    }
+
+    /// <summary>True when the attribute with the given lowercase name is present.</summary>
+    public bool HasAttribute(string name) => GetAttribute(name) is not null;
+
+    /// <summary>Sets (or replaces) an attribute with a lowercase name.</summary>
+    internal void SetAttribute(string name, string value)
+    {
+        for (var i = 0; i < _attributes.Length; i++)
+        {
+            if (string.Equals(_attributes[i].Name, name, StringComparison.Ordinal))
+            {
+                _attributes[i] = (name, value);
+                return;
+            }
+        }
+        var grown = new (string, string)[_attributes.Length + 1];
+        Array.Copy(_attributes, grown, _attributes.Length);
+        grown[_attributes.Length] = (name, value);
+        _attributes = grown;
+    }
 
     public string? Class => GetAttribute("class");
     public string? Id => GetAttribute("id");
     public string? Style => GetAttribute("style");
 
+    // Lazily cached: the tree is immutable after parsing, and HasClass is invoked for
+    // every (rule × element) pair during cascade matching — splitting the class
+    // attribute on each call dominated the style phase. Split once, then reuse.
+    private string[]? _classList;
+
     public bool HasClass(string cls)
     {
-        var c = GetAttribute("class");
-        if (c is null) return false;
-        return c.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(cls);
+        var list = _classList;
+        if (list is null)
+        {
+            var c = GetAttribute("class");
+            if (c is null)
+            {
+                _classList = [];
+                return false;
+            }
+            list = c.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            _classList = list;
+        }
+        return list.Contains(cls);
     }
 
-    /// <summary>Concatenated text of this element and all its descendants.</summary>
+    // Lazily cached: the tree is immutable after parsing, and the engine reads
+    // TextContent several times per element (leaf measurement, inline runs, own-text
+    // extraction). Computing it once removes the repeated O(subtree) StringBuilder
+    // and string allocations from the layout hot path.
+    private string? _textContent;
+
+    /// <summary>Concatenated text of this element and all its descendants (computed once, then cached).</summary>
     public override string TextContent
     {
         get
         {
+            if (_textContent is { } cached) return cached;
             var sb = new StringBuilder();
             AppendDescendantText(this, sb);
-            return sb.ToString();
+            _textContent = sb.ToString();
+            return _textContent;
+        }
+    }
+
+    // Lazily cached: the engine reads the trimmed text in several places (leaf
+    // measurement, inline-run fallback, body root). Trim allocates a new string when
+    // there is surrounding whitespace, so computing it once avoids the repeated copies.
+    private string? _trimmedTextContent;
+
+    /// <summary><see cref="TextContent"/> with surrounding whitespace removed (computed once, then cached).</summary>
+    public string TrimmedTextContent
+    {
+        get
+        {
+            if (_trimmedTextContent is { } cached) return cached;
+            _trimmedTextContent = TextContent.Trim();
+            return _trimmedTextContent;
         }
     }
 
