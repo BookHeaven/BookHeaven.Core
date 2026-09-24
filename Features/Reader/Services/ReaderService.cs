@@ -32,7 +32,6 @@ public class ReaderService(
     public event Action? OnTotalPagesChanged;
 
     private Guid _bookId;
-    private IEbookReader? _reader;
     private BookProgress? _progress;
     
     public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
@@ -55,7 +54,7 @@ public class ReaderService(
         }
         _progress = getProgress.Value;
         
-        _reader = ebookManagerProvider.GetReader((Format)book.Format);
+        
         State.SetEbook(await LoadEbookAsync(book));
         
         
@@ -64,6 +63,7 @@ public class ReaderService(
         {
             State.SetPagesPerChapter(cachedPages);
             NavigateToInitialPage();
+            IsReady = true;
         }
         State.StartTimer();
         return Result.Success();
@@ -71,19 +71,21 @@ public class ReaderService(
     
     private async Task<Ebook> LoadEbookAsync(Book book)
     {
+        var reader = ebookManagerProvider.GetReader((Format)book.Format);
         Ebook ebook;
         var content = await readerCacheService.LoadCachedContentAsync(_bookId);
         var ebookFilePath = urlBuilder.EbookFilePath(book.BookId, book.Format);
         if (content is null)
         {
-            ebook = await _reader!.ReadAllAsync(ebookFilePath);
+            ebook = await reader.ReadAllAsync(ebookFilePath);
             _ = readerCacheService.CacheContentAsync(_bookId, ebook.Content);
         }
         else
         {
-            ebook = await _reader!.ReadMetadataAsync(ebookFilePath);
+            ebook = await reader.ReadMetadataAsync(ebookFilePath);
             ebook.Content = content;
         }
+        reader.Dispose();
         return ebook;
     }
     
@@ -231,7 +233,6 @@ public class ReaderService(
         State = null;
         _bookId = Guid.Empty;
         _progress = null;
-        _reader?.Dispose();
         readerSettingsService.Dispose();
         GC.SuppressFinalize(this);
     }
