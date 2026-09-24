@@ -1,10 +1,5 @@
 namespace BookHeaven.Core.DOM.Services;
 
-/// <summary>
-/// Options that control page calculation (page size, DPI, root font size, etc.).
-/// </summary>
-public enum TextMeasurerType { Naive, HarfBuzz }
-
 public sealed class PageCalculatorOptions
 {
     public const int DefaultPageWidthPx = 1024;
@@ -28,9 +23,6 @@ public sealed class PageCalculatorOptions
 
     /// <summary>Fallback image height in pixels when aspect ratio is not specified.</summary>
     public float DefaultImageHeightPx { get; set; } = 150f;
-
-    /// <summary>Which text measurer implementation to use when measuring text layout.</summary>
-    public TextMeasurerType TextMeasurer { get; set; } = TextMeasurerType.Naive;
 
     // Profile-like reader settings (same as BookHeaven.Core.Entities.ProfileSettings, excluding Ids and SelectedLayout)
     public float FontSize { get; set; } = DefaultRootFontSizePx;
@@ -59,7 +51,6 @@ public sealed class PageCalculatorOptions
         FontSize = FontSize > 0f ? FontSize : DefaultRootFontSizePx,
         HorizontalMargin = HorizontalMargin,
         VerticalMargin = VerticalMargin,
-        TextMeasurer = TextMeasurer,
         LineHeight = LineHeight,
         LetterSpacing = LetterSpacing,
         WordSpacing = WordSpacing,

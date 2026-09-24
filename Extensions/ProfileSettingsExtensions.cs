@@ -36,8 +36,7 @@ public static class ProfileSettingsExtensions
                 TextIndent = (float)settings.TextIndent,
                 HorizontalMargin = (float)settings.HorizontalMargin,
                 VerticalMargin = (float)settings.VerticalMargin,
-                SelectedFont = settings.SelectedFont,
-                TextMeasurer = TextMeasurerType.HarfBuzz
+                SelectedFont = settings.SelectedFont
             };
         }
     }
