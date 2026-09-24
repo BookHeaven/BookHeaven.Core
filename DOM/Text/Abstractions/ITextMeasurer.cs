@@ -18,7 +18,14 @@ public interface ITextMeasurer
     /// </summary>
     const float NormalLineHeightMultiplier = 1.2f;
 
-    TextMeasurementResult Measure(string text, float fontSizePx, float maxWidthPx, float? lineHeightPx = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, FontStyle style = FontStyle.Regular);
+    /// <summary>
+    /// Measures text. When <paramref name="includeLineText"/> is false the measurer
+    /// skips building the per-line strings (only line count and heights are produced),
+    /// which callers that never read <see cref="TextMeasurementResult.Lines"/> — like
+    /// the block layout engine, which only needs the count and heights — can use to
+    /// avoid copying the whole text once per block.
+    /// </summary>
+    TextMeasurementResult Measure(string text, float fontSizePx, float maxWidthPx, float? lineHeightPx = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, FontStyle style = FontStyle.Regular, bool includeLineText = true);
 
     /// <summary>
     /// Measures text made of runs at DIFFERENT font sizes (browser model): word widths
@@ -28,12 +35,23 @@ public interface ITextMeasurer
     /// (<paramref name="lineHeightMultiplier"/>); when both are null the font's "normal"
     /// height (1.2 × size) is approximated per run.
     /// </summary>
-    TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null);
+    /// <summary>
+    /// Measures multi-run text. <paramref name="includeLineText"/> has the same
+    /// meaning as in <see cref="Measure"/>.
+    /// </summary>
+    TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true);
 }
 
 public sealed class TextMeasurementResult
 {
     public IReadOnlyList<string> Lines { get; init; } = [];
+
+    /// <summary>
+    /// Number of wrapped lines. Always valid, even when the measurer was asked to
+    /// skip building the line text (<c>includeLineText: false</c>, in which case
+    /// <see cref="Lines"/> is empty).
+    /// </summary>
+    public int LineCount { get; init; }
 
     /// <summary>Height of the tallest line (max of <see cref="LineHeights"/> when present).</summary>
     public float LineHeightPx { get; init; }

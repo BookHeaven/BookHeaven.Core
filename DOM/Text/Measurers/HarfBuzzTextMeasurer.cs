@@ -153,7 +153,8 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         float? letterSpacingPx = null,
         float? wordSpacingPx = null,
         float? firstLineWidthPx = null,
-        FontStyle style = FontStyle.Regular)
+        FontStyle style = FontStyle.Regular,
+        bool includeLineText = true)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(fontSizePx, 0f);
@@ -164,18 +165,20 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             return new TextMeasurementResult
             {
                 Lines = lines,
+                LineCount = 0,
                 LineHeightPx = lineHeight,
                 TotalHeightPx = 0f
             };
         }
         if (maxWidthPx <= 0f)
         {
-            lines.Add(text);
+            if (includeLineText) lines.Add(text);
             return new TextMeasurementResult
             {
                 Lines = lines,
+                LineCount = 1,
                 LineHeightPx = lineHeight,
-                TotalHeightPx = lineHeight * lines.Count
+                TotalHeightPx = lineHeight
             };
         }
         // Word widths come from a per-(word, fontSize, style) cache: running text
@@ -190,8 +193,10 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             spaceWidth += wordSpacingPx.Value;
         }
 
-        var sb = new StringBuilder(text.Length);
+        var sb = includeLineText ? new StringBuilder(text.Length) : null;
         var currentWidth = 0f;
+        var lineCount = 0;
+        var lineEmpty = true;
 
         TextRunWrapper.ForEachSegment(text, w =>
         {
@@ -200,21 +205,22 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                 // Leading/trailing whitespace: a browser collapses and drops it.
                 return;
             }
-            var limit = ((lines.Count == 0 && firstLineWidthPx.HasValue) ? firstLineWidthPx.Value : maxWidthPx);
+            var limit = ((lineCount == 0 && firstLineWidthPx.HasValue) ? firstLineWidthPx.Value : maxWidthPx);
             var wWidth = GetWordWidth(w, fontSizePx, style);
             if (letterSpacingPx.HasValue && w.Length > 1)
             {
                 wWidth += (w.Length - 1) * letterSpacingPx.Value;
             }
-            var tokenWidth = (sb.Length == 0 ? wWidth : (currentWidth + spaceWidth + wWidth));
-            if (tokenWidth <= limit || sb.Length == 0)
+            var tokenWidth = (lineEmpty ? wWidth : (currentWidth + spaceWidth + wWidth));
+            if (tokenWidth <= limit || lineEmpty)
             {
-                if (sb.Length > 0)
+                if (!lineEmpty)
                 {
-                    sb.Append(' ');
+                    sb?.Append(' ');
                 }
-                sb.Append(w);
+                sb?.Append(w);
                 currentWidth = tokenWidth;
+                lineEmpty = false;
             }
             else
             {
@@ -232,32 +238,47 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     var headWidth = GetWordWidth(head, fontSizePx, style);
                     if (letterSpacingPx.HasValue && head.Length > 1)
                         headWidth += (head.Length - 1) * letterSpacingPx.Value;
-                    sb.Append(' ').Append(head);
+                    sb?.Append(' ').Append(head);
                     currentWidth += spaceWidth + headWidth;
-                    lines.Add(sb.ToString());
-                    sb.Clear();
-                    sb.Append(tail);
+                    if (sb is not null)
+                    {
+                        lines.Add(sb.ToString());
+                        sb.Clear();
+                    }
+                    lineCount++;
+                    sb?.Append(tail);
                     currentWidth = GetWordWidth(tail, fontSizePx, style);
                     if (letterSpacingPx.HasValue && tail.Length > 1)
                         currentWidth += (tail.Length - 1) * letterSpacingPx.Value;
+                    lineEmpty = false;
                 }
                 else
                 {
-                    lines.Add(sb.ToString());
-                    sb.Clear();
-                    sb.Append(w);
+                    if (sb is not null)
+                    {
+                        lines.Add(sb.ToString());
+                        sb.Clear();
+                    }
+                    lineCount++;
+                    sb?.Append(w);
                     currentWidth = wWidth;
+                    lineEmpty = false;
                 }
             }
         });
-        if (sb.Length > 0)
+        if (!lineEmpty)
         {
-            lines.Add(sb.ToString());
+            if (sb is not null)
+            {
+                lines.Add(sb.ToString());
+            }
+            lineCount++;
         }
-        var total = lineHeight * lines.Count;
+        var total = lineHeight * lineCount;
         return new TextMeasurementResult
         {
             Lines = lines,
+            LineCount = lineCount,
             LineHeightPx = lineHeight,
             TotalHeightPx = total
         };
@@ -297,14 +318,14 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         return -1;
     }
 
-    public TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null)
+    public TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true)
     {
         ArgumentNullException.ThrowIfNull(runs);
         return TextRunWrapper.Wrap(runs, TextWidthProbes.Create(
             WordWidth: GetWordWidth,
             SpaceWidth: (size, style) => GetWordWidth(" ", size, style),
             CharWidth: (ch, size, style) => MeasureShapedTextWidth(ch.ToString(), size, style)),
-            maxWidthPx, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx);
+            maxWidthPx, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx, includeLineText);
     }
 
     private float GetWordWidth(string word, float fontSizePx, FontStyle style)

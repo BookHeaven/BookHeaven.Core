@@ -37,9 +37,15 @@ public static partial class TextRunWrapper
     /// <summary>One word plus the font size and style it renders at and the size/style of the run that owns the collapsed space before it (null = no space in the source). <see cref="PrecomputedWidth"/> is set when the token is a glued unit of several original tokens (a word plus punctuation that follows it with no space); it then overrides the per-word width probe.</summary>
     private readonly record struct Token(string Word, float FontSize, FontStyle Style, float? SpaceOwnerSize, FontStyle? SpaceOwnerStyle, float? PrecomputedWidth = null);
 
+    /// <summary>
+    /// <paramref name="includeLineText"/>: when false the per-line strings are not
+    /// built (no StringBuilder, no line copies) — only the line count and heights are
+    /// produced. Line-break decisions depend only on widths, so the wrapping result
+    /// (count, heights, total) is identical with or without the text.
+    /// </summary>
     public static TextMeasurementResult Wrap(IReadOnlyList<TextRun> runs, TextWidthProbes probes, float maxWidthPx,
         float? lineHeightLengthPx = null, float? lineHeightMultiplier = null,
-        float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null)
+        float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true)
     {
         var tokens = BuildTokens(runs);
         var lines = new List<string>();
@@ -53,7 +59,7 @@ public static partial class TextRunWrapper
 
         if (tokens.Count == 0)
         {
-            return new TextMeasurementResult { Lines = lines, LineHeights = lineHeights, LineHeightPx = fallbackLineHeight, TotalHeightPx = 0f };
+            return new TextMeasurementResult { Lines = lines, LineCount = 0, LineHeights = lineHeights, LineHeightPx = fallbackLineHeight, TotalHeightPx = 0f };
         }
 
         float SpaceWidth(float size, FontStyle style) => probes.SpaceWidth(size, style) + (wordSpacingPx ?? 0f);
@@ -80,46 +86,55 @@ public static partial class TextRunWrapper
         }
 
         var current = new List<Token>();
-        var currentText = new StringBuilder();
+        var currentText = includeLineText ? new StringBuilder() : null;
         var currentWidth = 0f;
 
         void FlushLine()
         {
             if (current.Count == 0) return;
-            lines.Add(currentText.ToString());
+            if (currentText is not null)
+            {
+                lines.Add(currentText.ToString());
+                currentText.Clear();
+            }
             var h = 0f;
             foreach (var t in current) h = Math.Max(h, BoxHeight(t.FontSize));
             lineHeights.Add(h);
             current.Clear();
-            currentText.Clear();
             currentWidth = 0f;
         }
 
         void SplitLongWord(Token token)
         {
-            var frag = new StringBuilder();
+            var frag = includeLineText ? new StringBuilder() : null;
+            var fragLen = 0;
             var fragWidth = 0f;
             foreach (var ch in token.Word)
             {
                 var cw = probes.CharWidth(ch, token.FontSize, token.Style);
-                if (frag.Length > 0 && letterSpacingPx.HasValue) cw += letterSpacingPx.Value;
-                if (fragWidth + cw <= maxWidthPx || frag.Length == 0)
+                if (fragLen > 0 && letterSpacingPx.HasValue) cw += letterSpacingPx.Value;
+                if (fragWidth + cw <= maxWidthPx || fragLen == 0)
                 {
-                    frag.Append(ch);
+                    frag?.Append(ch);
+                    fragLen++;
                     fragWidth += cw;
                 }
                 else
                 {
-                    lines.Add(frag.ToString());
+                    if (frag is not null)
+                    {
+                        lines.Add(frag.ToString());
+                        frag.Clear();
+                    }
                     lineHeights.Add(BoxHeight(token.FontSize));
-                    frag.Clear();
-                    frag.Append(ch);
+                    frag?.Append(ch);
+                    fragLen = 1;
                     fragWidth = probes.CharWidth(ch, token.FontSize, token.Style);
                 }
             }
-            if (frag.Length > 0)
+            if (fragLen > 0)
             {
-                lines.Add(frag.ToString());
+                if (frag is not null) lines.Add(frag.ToString());
                 lineHeights.Add(BoxHeight(token.FontSize));
             }
         }
@@ -154,12 +169,12 @@ public static partial class TextRunWrapper
             if (current.Count > 0)
             {
                 // The first line may be narrower (text-indent) until it is flushed.
-                var limit = lines.Count == 0 && firstLineWidthPx.HasValue ? firstLineWidthPx.Value : maxWidthPx;
+                var limit = lineHeights.Count == 0 && firstLineWidthPx.HasValue ? firstLineWidthPx.Value : maxWidthPx;
                 var spaceW = token.SpaceOwnerSize.HasValue && token.SpaceOwnerStyle.HasValue ? SpaceWidth(token.SpaceOwnerSize.Value, token.SpaceOwnerStyle.Value) : 0f;
                 if (currentWidth + spaceW + wWidth <= limit)
                 {
-                    if (token.SpaceOwnerSize.HasValue) currentText.Append(' ');
-                    currentText.Append(token.Word);
+                    if (token.SpaceOwnerSize.HasValue) currentText?.Append(' ');
+                    currentText?.Append(token.Word);
                     currentWidth += spaceW + wWidth;
                     current.Add(token);
                     continue;
@@ -174,7 +189,7 @@ public static partial class TextRunWrapper
                 {
                     var head = token.Word.AsSpan(0, dashIndex).ToString();
                     var tail = token.Word.AsSpan(dashIndex).ToString();
-                    currentText.Append(' ').Append(head);
+                    currentText?.Append(' ').Append(head);
                     currentWidth += spaceW + WordWidth(head, token.FontSize, token.Style);
                     current.Add(new Token(head, token.FontSize, token.Style, token.SpaceOwnerSize, token.SpaceOwnerStyle));
                     FlushLine();
@@ -183,7 +198,7 @@ public static partial class TextRunWrapper
                     if (tailWidth <= maxWidthPx)
                     {
                         current.Add(tailToken);
-                        currentText.Append(tail);
+                        currentText?.Append(tail);
                         currentWidth = tailWidth;
                     }
                     else
@@ -197,11 +212,11 @@ public static partial class TextRunWrapper
             }
 
             // Token starts a fresh line.
-            var firstLimit = lines.Count == 0 && firstLineWidthPx.HasValue ? firstLineWidthPx.Value : maxWidthPx;
+            var firstLimit = lineHeights.Count == 0 && firstLineWidthPx.HasValue ? firstLineWidthPx.Value : maxWidthPx;
             if (wWidth <= firstLimit || wWidth <= maxWidthPx)
             {
                 current.Add(token);
-                currentText.Append(token.Word);
+                currentText?.Append(token.Word);
                 currentWidth = wWidth;
             }
             else
@@ -220,6 +235,7 @@ public static partial class TextRunWrapper
         return new TextMeasurementResult
         {
             Lines = lines,
+            LineCount = lineHeights.Count,
             LineHeights = lineHeights,
             LineHeightPx = maxHeight,
             TotalHeightPx = total

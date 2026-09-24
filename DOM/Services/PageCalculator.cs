@@ -1,6 +1,7 @@
 using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.DOM.Engine;
 using BookHeaven.Core.DOM.Services.Abstractions;
+using BookHeaven.Core.DOM.Text.Measurers;
 using BookHeaven.EbookManager;
 using BookHeaven.EbookManager.Entities;
 using Mediator;
@@ -9,10 +10,10 @@ using Microsoft.Extensions.Options;
 namespace BookHeaven.Core.DOM.Services;
 
 /// <summary>
-/// High-level entry point for page-map calculation. Uses the BlockLayoutEngine and
-/// BlockPageSplitter (block-based path, see BLOCK_LAYOUT_PLAN.md) to count pages from
-/// HTML + optional CSS. The legacy line-based engine (DomLayoutEngine + PageSplitter)
-/// remains in the codebase untouched while the block path is being validated.
+/// High-level entry point for page-map calculation. Uses the MiniLayoutEngine and
+/// BlockPageSplitter (block-based path) to count pages from HTML + optional CSS.
+/// The legacy line-based engine (DomLayoutEngine + PageSplitter) remains in the
+/// codebase untouched while the block path is being validated.
 ///
 /// Chapters of a book are layout-independent, so they are processed IN PARALLEL
 /// (up to <see cref="MaxParallelChapters"/> at a time): one engine per chapter
@@ -75,8 +76,8 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         // family are resolved from the database; otherwise the sync path (default
         // font directory only) is used.
         var sharedMeasurer = sender != null && urlBuilder != null
-            ? await BlockLayoutEngine.CreateMeasurerAsync(normalized, sender, urlBuilder, cancellationToken)
-            : BlockLayoutEngine.CreateMeasurer(normalized, coreOptions.Value.DefaultFontDirectory);
+            ? await TextMeasurerFactory.CreateMeasurerAsync(normalized, sender, urlBuilder, cancellationToken)
+            : TextMeasurerFactory.CreateMeasurer(coreOptions.Value.DefaultFontDirectory);
         try
         {
             using var throttled = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount, 1, MaxParallelChapters));
@@ -87,7 +88,7 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
                 try
                 {
                     // Generate layout blocks and split them into pages (block-based path).
-                    using var engine = new BlockLayoutEngine(normalized, coreOptions, sharedMeasurer);
+                    using var engine = new MiniLayoutEngine(normalized, coreOptions, sharedMeasurer);
                     var blocks = await engine.GenerateLayoutBlocksAsync(chapter.Content, chapterCss[i], cancellationToken);
                     var map = BlockPageSplitter.SplitToPages(blocks, normalized.PageHeightPx);
 
