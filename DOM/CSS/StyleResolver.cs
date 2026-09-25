@@ -181,7 +181,10 @@ public static class StyleResolver
             return;
         var inherited = parent.GetPropertyValue(prop);
         if (inherited.Length > 0)
-            style.Set(prop, inherited);
+            // Inherited, NOT explicit: the raw value may carry relative units (e.g. an
+            // inherited `font-size: 1.2em`) that must not be re-resolved against the
+            // parent's already-resolved size, or the unit would apply twice per level.
+            style.SetInherited(prop, inherited);
     }
 
     /// <summary>
