@@ -71,7 +71,6 @@ public class ReaderService(
             NavigateToInitialPage();
             IsReady = true;
         }
-        State.StartTimer();
         return Result.Success();
     }
     
@@ -175,6 +174,7 @@ public class ReaderService(
         }
         _progress?.StartDate ??= DateTimeOffset.Now;
         NavigateTo(targetPage, targetChapter);
+        State.StartTimer();
         IsReady = true;
     }
     
