@@ -46,10 +46,23 @@ public sealed partial class MiniLayoutEngine : IDisposable
     private readonly MiniHtmlParser _parser;
 
     // Per-document state, cleared per call.
-    private readonly Dictionary<MiniElement, MiniStyle> _styleCache = [];
-    private readonly Dictionary<MiniElement, bool> _hiddenCache = [];
+    private readonly Dictionary<(string Tag, string Attrs, string? Inline, MiniStyle? Parent), StyleEntry> _styleMemo = [];
     private Dictionary<MiniElement, float>? _contentWidthMemo;
     private List<MiniCssRule> _rules = [];
+    private int[] _specificities = [];
+
+    /// <summary>
+    /// A memoized resolution: the resolved style plus the hidden verdict, both pure
+    /// functions of the element's signature (tag, attributes, inline style) and its
+    /// parent's resolved style. Every element sharing a signature reuses one entry,
+    /// so a chapter resolves only its distinct signatures (a few dozen), not its
+    /// hundreds of elements.
+    /// </summary>
+    private sealed class StyleEntry
+    {
+        public required MiniStyle Style;
+        public required bool Hidden;
+    }
 
     public MiniLayoutEngine(
         PageCalculatorOptions options,
@@ -83,12 +96,12 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// </summary>
     public Task<IReadOnlyList<LayoutBlock>> GenerateLayoutBlocksAsync(string html, IReadOnlyList<string>? css = null, CancellationToken cancellationToken = default)
     {
-        _styleCache.Clear();
-        _hiddenCache.Clear();
+        _styleMemo.Clear();
         _contentWidthMemo = null;
 
         var (doc, rules) = _parser.Parse(html, css);
         _rules = rules;
+        _specificities = PrecomputeSpecificities(rules);
         cancellationToken.ThrowIfCancellationRequested();
 
         var body = doc.Body;
@@ -137,34 +150,45 @@ public sealed partial class MiniLayoutEngine : IDisposable
         }
     }
 
+    /// <summary>Precomputes each rule's selector specificity once per document (the cascade used to recompute it per rule × element pair).</summary>
+    private static int[] PrecomputeSpecificities(List<MiniCssRule> rules)
+    {
+        var specs = new int[rules.Count];
+        for (var i = 0; i < rules.Count; i++)
+            specs[i] = MiniStyleResolver.Specificity(rules[i].Selector);
+        return specs;
+    }
+
     /// <summary>
-    /// Cached computed style: resolved on first use and reused for every lookup of
-    /// the same element within the current layout pass.
+    /// Memoized style entry: the resolved style is a pure function of the element's
+    /// signature (tag, full attribute set, inline style) and its parent's resolved
+    /// style, so every element sharing a signature reuses one resolution. The parent
+    /// is resolved first (top-down), and its memoized style is part of the key.
     /// </summary>
-    private MiniStyle GetComputedStyle(MiniElement el, List<MiniCssRule> rules)
+    private StyleEntry GetStyleEntry(MiniElement el)
     {
-        if (_styleCache.TryGetValue(el, out var cached)) return cached;
-        var parent = el.ParentElement is { } p ? GetComputedStyle(p, rules) : null;
-        var style = MiniStyleResolver.Resolve(el, rules, parent);
-        _styleCache[el] = style;
-        return style;
+        var parent = el.ParentElement is { } p ? GetStyleEntry(p).Style : null;
+        var key = (el.TagName, el.AttributeSignature, el.Style, parent);
+        if (_styleMemo.TryGetValue(key, out var entry))
+            return entry;
+        var style = MiniStyleResolver.Resolve(el, _rules, _specificities, parent);
+        entry = new StyleEntry { Style = style, Hidden = ComputeHidden(el, style) };
+        _styleMemo[key] = entry;
+        return entry;
     }
 
-    private bool IsHidden(MiniElement el, List<MiniCssRule> rules)
-    {
-        if (_hiddenCache.TryGetValue(el, out var hidden)) return hidden;
-        var result = ComputeHidden(el, rules);
-        _hiddenCache[el] = result;
-        return result;
-    }
+    /// <summary>Computed style, memoized per (signature, parent style) — see <see cref="GetStyleEntry"/>.</summary>
+    private MiniStyle GetComputedStyle(MiniElement el) => GetStyleEntry(el).Style;
 
-    private bool ComputeHidden(MiniElement el, List<MiniCssRule> rules)
+    private bool IsHidden(MiniElement el) => GetStyleEntry(el).Hidden;
+
+    private static bool ComputeHidden(MiniElement el, MiniStyle style)
     {
         if (el.HasAttribute("hidden")) return true;
-        var style = el.Style;
-        if (!string.IsNullOrWhiteSpace(style) && DisplayNoneRegex().IsMatch(style))
+        var inline = el.Style;
+        if (!string.IsNullOrWhiteSpace(inline) && DisplayNoneRegex().IsMatch(inline))
             return true;
-        var display = GetComputedStyle(el, rules).GetPropertyValue("display");
+        var display = style.GetPropertyValue("display");
         return !string.IsNullOrWhiteSpace(display) && display.Trim().Equals("none", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -186,17 +210,17 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// element and its ancestor chain, so siblings (and repeated lookups of the same
     /// parent) reuse one computation.
     /// </summary>
-    private float GetContainingBlockContentWidth(MiniElement el, List<MiniCssRule> rules)
+    private float GetContainingBlockContentWidth(MiniElement el)
     {
         if (el.ParentElement is not { } parent) return _options.PageWidthPx;
         if (_contentWidthMemo is not null && _contentWidthMemo.TryGetValue(parent, out var cached))
             return Math.Min(_options.PageWidthPx, cached > 0 ? cached : _options.PageWidthPx);
-        var value = ResolveAncestorContentWidth(parent, rules);
+        var value = ResolveAncestorContentWidth(parent);
         (_contentWidthMemo ??= []).Add(parent, value);
         return Math.Min(_options.PageWidthPx, value > 0 ? value : _options.PageWidthPx);
     }
 
-    private float ResolveAncestorContentWidth(MiniElement parent, List<MiniCssRule> rules)
+    private float ResolveAncestorContentWidth(MiniElement parent)
     {
         var chain = new List<MiniElement>();
         for (var p = parent; p != null; p = p.ParentElement) chain.Add(p);
@@ -210,7 +234,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         var result = -1f;
         for (var i = chain.Count - 1; i >= 0; i--)
         {
-            var pc = GetComputedStyle(chain[i], rules);
+            var pc = GetComputedStyle(chain[i]);
             var pl = ParseLengthToPx(pc.GetPropertyValue("padding-left"), cbWidth) ?? 0f;
             var pr = ParseLengthToPx(pc.GetPropertyValue("padding-right"), cbWidth) ?? 0f;
             var ml = ParseLengthToPx(pc.GetPropertyValue("margin-left"), cbWidth) ?? 0f;
@@ -236,7 +260,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// </summary>
     private void ProcessElement(MiniElement el, List<LayoutBlock> sink, CancellationToken ct)
     {
-        if (IsHidden(el, _rules)) return;
+        if (IsHidden(el)) return;
 
         // Image elements are always leaves.
         if (IsImageElement(el))
@@ -247,7 +271,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         }
 
         var blockChildren = el.Children
-            .Where(c => IsBlockLevelTag(c.TagName) && !IsHidden(c, _rules))
+            .Where(c => IsBlockLevelTag(c.TagName) && !IsHidden(c))
             .ToList();
         if (blockChildren.Count == 0)
         {
@@ -315,7 +339,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
             LineHeightPx = 0f,
             Links = [],
             Children = childSink,
-            Flags = ParseBreakFlags(GetComputedStyle(el, _rules))
+            Flags = ParseBreakFlags(GetComputedStyle(el))
         };
 
         if (childSink.Count > 0)
@@ -334,13 +358,13 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// </summary>
     private LayoutBlock? BuildLeafBlock(string text, MiniElement el)
     {
-        var computed = GetComputedStyle(el, _rules);
-        if (IsHidden(el, _rules)) return null;
+        var computed = GetComputedStyle(el);
+        if (IsHidden(el)) return null;
 
         var fontSize = ResolveFontSize(el);
         var bold = IsBoldWeight(computed.GetPropertyValue("font-weight"));
         var italic = IsItalicStyle(computed.GetPropertyValue("font-style"));
-        var containerRefWidth = GetContainingBlockContentWidth(el, _rules);
+        var containerRefWidth = GetContainingBlockContentWidth(el);
 
         var flags = ParseBreakFlags(computed);
 
@@ -618,7 +642,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         var lineHeights = meas.LineHeights;
         for (var li = 0; li < meas.LineCount; li++)
         {
-            contentHeight += (lineHeights.Count > 0) ? lineHeights[li] : meas.LineHeightPx;
+            contentHeight += lineHeights.Length > 0 ? lineHeights[li] : meas.LineHeightPx;
         }
 
         return new LayoutBlock
@@ -632,7 +656,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
             PaddingBottom = paddingBottom,
             LineCount = meas.LineCount,
             LineHeightPx = meas.LineHeightPx,
-            LineHeights = meas.LineHeights.Count > 0 ? [.. meas.LineHeights] : null,
+            LineHeights = meas.LineHeights.Length > 0 ? meas.LineHeights : null,
             Flags = flags,
             Links = []
         };
@@ -668,7 +692,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// </summary>
     private (float ContentHeight, int LineCount, float LineHeightPx) ResolveSpacerGeometry(MiniElement el)
     {
-        var computed = GetComputedStyle(el, _rules);
+        var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
 
         var heightPx = ParseLengthToPx(computed.GetPropertyValue("height"), _options.PageHeightPx, fontSize);
@@ -682,7 +706,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
             // FF to nothing (a CR from a &#13; reference is a normal line break), but
             // a non-breaking space (&nbsp;, U+00A0) is not collapsible and occupies a
             // line. Any other non-whitespace character (real text) also does.
-            if (el.TextContent.Any(c => c is not (' ' or '\t' or '\n' or '\r' or '\f')))
+            if (HasNonCollapsibleContent(el))
                 lineBreaks = 1;
             else
                 return (0f, 0, 0f);
@@ -691,6 +715,24 @@ public sealed partial class MiniLayoutEngine : IDisposable
         var (lhLengthPx, lhMultiplier) = ResolveLineHeightForm(computed, fontSize);
         var lineHeight = lhLengthPx ?? (lhMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize;
         return (lineBreaks * lineHeight, lineBreaks, lineHeight);
+    }
+
+    private static bool HasNonCollapsibleContent(MiniElement el)
+    {
+        foreach (var node in el.ChildNodes)
+        {
+            if (node.NodeType == MiniNodeType.Text)
+            {
+                if (node.TextContent.Any(c => c is not (' ' or '\t' or '\n' or '\r' or '\f')))
+                    return true;
+            }
+            else if (node is MiniElement childEl && HasNonCollapsibleContent(childEl))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static int CountDescendants(MiniElement root, string tag)
@@ -733,9 +775,9 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// </summary>
     private (float MarginTop, float MarginBottom, float PaddingTop, float PaddingBottom) ComputeVerticalLayout(MiniElement el)
     {
-        var computed = GetComputedStyle(el, _rules);
+        var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
-        var containerRefWidth = GetContainingBlockContentWidth(el, _rules);
+        var containerRefWidth = GetContainingBlockContentWidth(el);
 
         var marginTop = TryGetComputedMarginPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
         var marginBottom = TryGetComputedMarginPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
@@ -748,7 +790,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
 
     private float ResolveFontSize(MiniElement el)
     {
-        var computed = GetComputedStyle(el, _rules);
+        var computed = GetComputedStyle(el);
         var fs = computed.GetPropertyValue("font-size");
         if (string.IsNullOrWhiteSpace(fs))
             return _options.RootFontSizePx;
@@ -780,11 +822,16 @@ public sealed partial class MiniLayoutEngine : IDisposable
             else if (node is MiniElement childEl && !blockChildren.Contains(childEl))
             {
                 // Inline element (span, em, strong, a, etc.) - include its text.
-                sb.Append(childEl.TextContent);
+                MiniElement.AppendDescendantText(childEl, sb);
             }
             // Block children are skipped (their text is handled by recursion).
         }
-        return sb.ToString().Trim();
+
+        var start = 0;
+        var end = sb.Length;
+        while (start < end && char.IsWhiteSpace(sb[start])) start++;
+        while (end > start && char.IsWhiteSpace(sb[end - 1])) end--;
+        return sb.ToString(start, end - start);
     }
 
     /// <summary>
@@ -793,15 +840,51 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// </summary>
     private List<TextRun> BuildTextRuns(MiniElement el, float ownFontSize, bool ownBold, bool ownItalic)
     {
+        if (IsUniformInline(el, ownFontSize, ownBold, ownItalic))
+        {
+            return [new TextRun(el.TextContent, ownFontSize, ToFontStyle(ownBold, ownItalic))];
+        }
+
         var builders = new List<RunBuilder>();
         WalkInlineRuns(el, ownFontSize, ownBold, ownItalic, builders);
-        if (builders.Count == 0)
-        {
-            return [new TextRun(el.TrimmedTextContent, ownFontSize, ToFontStyle(ownBold, ownItalic))];
-        }
         var runs = new List<TextRun>(builders.Count);
         foreach (var b in builders) runs.Add(b.Build());
         return runs;
+    }
+
+    /// <summary>
+    /// True when every inline descendant renders at the inherited size and style, so the
+    /// whole element is a single run and the run walk can be skipped.
+    /// </summary>
+    private bool IsUniformInline(MiniElement element, float inheritedSize, bool inheritedBold, bool inheritedItalic)
+    {
+        foreach (var node in element.ChildNodes)
+        {
+            if (node is not MiniElement childEl || IsBlockLevelTag(childEl.TagName)) continue;
+
+            var childSize = inheritedSize;
+            var childBold = inheritedBold;
+            var childItalic = inheritedItalic;
+            var cs = GetComputedStyle(childEl);
+            var fs = cs.GetPropertyValue("font-size");
+            if (!string.IsNullOrWhiteSpace(fs) && cs.IsExplicit("font-size"))
+            {
+                var parsed = ParseLengthToPx(fs, childSize, childSize);
+                if (parsed is > 0f) childSize = parsed.Value;
+            }
+            var fw = cs.GetPropertyValue("font-weight");
+            if (!string.IsNullOrWhiteSpace(fw)) childBold = IsBoldWeight(fw);
+            var fst = cs.GetPropertyValue("font-style");
+            if (!string.IsNullOrWhiteSpace(fst)) childItalic = IsItalicStyle(fst);
+
+            if (Math.Abs(childSize - inheritedSize) >= 0.001f || childBold != inheritedBold || childItalic != inheritedItalic)
+                return false;
+
+            if (!IsUniformInline(childEl, childSize, childBold, childItalic))
+                return false;
+        }
+
+        return true;
     }
 
     private void WalkInlineRuns(MiniElement element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs)
@@ -822,7 +905,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
                 var childSize = inheritedSize;
                 var childBold = inheritedBold;
                 var childItalic = inheritedItalic;
-                var cs = GetComputedStyle(inline, _rules);
+                var cs = GetComputedStyle(inline);
                 var fs = cs.GetPropertyValue("font-size");
                 // Only an explicitly declared font-size is re-parsed; an inherited
                 // raw string (e.g. "max(2.42em, …)") would apply the em unit twice.
@@ -917,8 +1000,8 @@ public sealed partial class MiniLayoutEngine : IDisposable
     public void Dispose()
     {
         _contentWidthMemo = null;
-        _styleCache.Clear();
-        _hiddenCache.Clear();
+        _styleMemo.Clear();
+        _specificities = [];
 
         // HarfBuzz/Skia measurers hold native resources; only the engine that created
         // the measurer releases them (a shared measurer outlives every engine that

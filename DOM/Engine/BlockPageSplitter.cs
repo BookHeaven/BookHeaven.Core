@@ -375,23 +375,6 @@ public static class BlockPageSplitter
             }
         }
 
-        /// <summary>
-        /// Copies <paramref name="count"/> lines starting at <paramref name="start"/> into an
-        /// exact-size array, avoiding the LINQ iterator allocations of
-        /// <c>[.. lines.Skip(start).Take(count)]</c>.
-        /// </summary>
-        private static string[] CopyLines(IReadOnlyList<string> lines, int start, int count)
-        {
-            if (count <= 0) return [];
-            var result = new string[count];
-            for (var i = 0; i < count; i++)
-            {
-                var src = start + i;
-                result[i] = src < lines.Count ? lines[src] : string.Empty;
-            }
-            return result;
-        }
-
         private void EnsurePage(int idx)
         {
             if (DryRun) return;

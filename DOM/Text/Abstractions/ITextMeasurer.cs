@@ -62,5 +62,5 @@ public sealed class TextMeasurementResult
     /// Per-line heights (one entry per line of <see cref="Lines"/>). Empty when every
     /// line shares the same height (<see cref="LineHeightPx"/>).
     /// </summary>
-    public IReadOnlyList<float> LineHeights { get; init; } = [];
+    public float[] LineHeights { get; init; } = [];
 }

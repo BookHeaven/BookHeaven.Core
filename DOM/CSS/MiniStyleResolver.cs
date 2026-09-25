@@ -7,32 +7,80 @@ namespace BookHeaven.Core.DOM.CSS;
 /// A resolved style: the cascaded value (as a string) for each property. The layout
 /// engine reads values via <see cref="GetPropertyValue"/> and parses lengths itself,
 /// so this only needs to produce the winning raw value per property.
+///
+/// Properties are a small fixed list (typically &lt; 20), read by name a handful of
+/// times per element — a linear scan beats a Dictionary's per-entry overhead. The
+/// style is also SHARED across every element with the same signature (the engine
+/// memoizes resolutions per document), so it must stay immutable after resolution.
 /// </summary>
 public sealed class MiniStyle
 {
-    // Pre-sized: a typical element resolves fewer than 8 properties, so the
-    // default-capacity dictionary would grow (and re-allocate) on every Set.
+    // (name, value, explicit) triples. The explicit flag marks properties set by a
+    // rule/inline style (as opposed to inherited): relative units in an inherited
+    // value (e.g. an inherited `font-size: 2.42em`) must NOT be re-resolved against
+    // the parent's resolved size — that would apply the unit twice.
+    internal List<(string Name, string Value, bool Explicit)> Props { get; } = [];
 
-    // Properties set by a rule/inline style (as opposed to inherited). Relative
-    // units in an inherited value (e.g. an inherited `font-size: 2.42em`) must NOT be
-    // re-resolved against the parent's resolved size — that would apply the unit twice.
-    private HashSet<string>? _explicit;
-
-    public string GetPropertyValue(string name) => Props.TryGetValue(name, out var v) ? v : string.Empty;
-
-    internal void Set(string name, string value) => Props[name] = value;
-
-    internal Dictionary<string, string> Props { get; } = new();
-
-    /// <summary>True when <paramref name="name"/> was set by a rule/inline style, not inherited.</summary>
-    internal bool IsExplicit(string name) => _explicit?.Contains(name) ?? false;
-
-    internal void MarkExplicit(string name)
+    public string GetPropertyValue(string name)
     {
-        (_explicit ??= []).Add(name);
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+                return props[i].Value;
+        return string.Empty;
     }
 
-    internal void UnmarkExplicit(string name) => _explicit?.Remove(name);
+    /// <summary>Sets a property as an EXPLICIT declaration (rule/inline style wins the cascade).</summary>
+    internal void Set(string name, string value)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+        {
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+            {
+                var p = props[i];
+                props[i] = (p.Name, value, true);
+                return;
+            }
+        }
+        props.Add((name, value, true));
+    }
+
+    /// <summary>Sets a property as INHERITED (the explicit flag is cleared, so relative units are not re-resolved).</summary>
+    internal void SetInherited(string name, string value)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+        {
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+            {
+                props[i] = (name, value, false);
+                return;
+            }
+        }
+        props.Add((name, value, false));
+    }
+
+    /// <summary>True when <paramref name="name"/> was set by a rule/inline style, not inherited.</summary>
+    internal bool IsExplicit(string name)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+                return props[i].Explicit;
+        return false;
+    }
+
+    internal void Remove(string name)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+            {
+                props.RemoveAt(i);
+                return;
+            }
+    }
 }
 
 /// <summary>
@@ -51,9 +99,11 @@ public static class MiniStyleResolver
 
     /// <summary>
     /// Resolves the style for <paramref name="el"/> against the parsed rules, inheriting
-    /// from <paramref name="parent"/> where applicable.
+    /// from <paramref name="parent"/> where applicable. <paramref name="specificities"/>
+    /// is a parallel array of precomputed selector specificities (one per rule) — the
+    /// engine computes it once per document instead of per (rule × element) pair.
     /// </summary>
-    public static MiniStyle Resolve(MiniElement el, List<MiniCssRule> rules, MiniStyle? parent)
+    public static MiniStyle Resolve(MiniElement el, List<MiniCssRule> rules, int[] specificities, MiniStyle? parent)
     {
         var style = new MiniStyle();
         // Pre-sized: a typical element matches a handful of declarations, so the
@@ -66,7 +116,7 @@ public static class MiniStyleResolver
             var rule = rules[r];
             if (!Matches(rule.Selector, el))
                 continue;
-            var spec = Specificity(rule.Selector);
+            var spec = specificities[r];
             foreach (var decl in rule.Declarations)
                 ConsiderDecl(best, decl, decl.Important ? 1 : 0, spec, r);
         }
@@ -81,38 +131,41 @@ public static class MiniStyleResolver
         }
 
         foreach (var (prop, w) in best)
-        {
             style.Set(prop, w.Value);
-            style.MarkExplicit(prop);
-        }
 
         // Inheritance: inheritable properties and custom properties (--*) not set here.
         if (parent is not null)
         {
             foreach (var prop in Inheritable)
                 InheritIfAbsent(style, best, prop, parent);
-            foreach (var (prop, _) in parent.Props)
+            var parentProps = parent.Props;
+            for (var i = 0; i < parentProps.Count; i++)
+            {
+                var (prop, _, _) = parentProps[i];
                 if (prop.StartsWith("--", StringComparison.Ordinal))
                     InheritIfAbsent(style, best, prop, parent);
+            }
 
             // The 'inherit' keyword: the declaration explicitly takes the parent's
             // value (already fully resolved, since styles resolve top-down).
-            // Set on an existing key never changes the dictionary structure, so the
-            // props can be enumerated directly (no ToList() copy per element).
-            foreach (var (prop, value) in style.Props)
+            var props = style.Props;
+            for (var i = 0; i < props.Count; i++)
             {
+                var (prop, value, _) = props[i];
                 if (!string.Equals(value, "inherit", StringComparison.OrdinalIgnoreCase))
                     continue;
                 var inherited = parent.GetPropertyValue(prop);
                 if (inherited.Length > 0)
                 {
-                    style.Set(prop, inherited);
                     // The value is now the parent's (possibly relative) string: treat
                     // it as inherited, not explicit, so units are not re-resolved.
-                    style.UnmarkExplicit(prop);
+                    style.SetInherited(prop, inherited);
                 }
                 else
-                    style.Props.Remove(prop);
+                {
+                    style.Remove(prop);
+                    i--; // RemoveAt shifted the list; re-inspect the same index.
+                }
             }
         }
 
@@ -240,7 +293,7 @@ public static class MiniStyleResolver
     }
 
     /// <summary>Approximate specificity: 10000 per id, 100 per class/attribute, 1 per element.</summary>
-    private static int Specificity(MiniSelector selector)
+    public static int Specificity(MiniSelector selector)
     {
         var spec = 0;
         foreach (var c in selector.Compounds)
@@ -351,13 +404,12 @@ public static class MiniStyleResolver
     private static void ResolveVars(MiniStyle style)
     {
         var props = style.Props;
-        // Set on an existing key never changes the dictionary structure, so the
-        // props can be enumerated directly (no ToList() copy per element).
-        foreach (var (prop, value) in props)
+        for (var i = 0; i < props.Count; i++)
         {
+            var (prop, value, explicitSet) = props[i];
             if (!value.Contains("var(", StringComparison.Ordinal))
                 continue;
-            style.Set(prop, ResolveVarValue(value, props, depth: 0));
+            props[i] = (prop, ResolveVarValue(value, props, depth: 0), explicitSet);
         }
     }
 
@@ -370,7 +422,7 @@ public static class MiniStyleResolver
     // allocates nothing.
     private static readonly ConcurrentDictionary<(string, int), string> VarCache = [];
 
-    private static string ResolveVarValue(string value, Dictionary<string, string> props, int depth)
+    private static string ResolveVarValue(string value, List<(string Name, string Value, bool Explicit)> props, int depth)
     {
         if (depth > 0)
             return ResolveVarValueCore(value, props, depth);
@@ -387,11 +439,12 @@ public static class MiniStyleResolver
     // only on `value` plus these, so hashing them (no allocation) lets elements sharing
     // the same in-scope config reuse one cache entry. A 32-bit collision across the few
     // distinct configs in a book is negligible.
-    private static int CustomFingerprint(Dictionary<string, string> props)
+    private static int CustomFingerprint(List<(string Name, string Value, bool Explicit)> props)
     {
         var hash = new HashCode();
-        foreach (var (name, v) in props)
+        for (var i = 0; i < props.Count; i++)
         {
+            var (name, v, _) = props[i];
             if (!name.StartsWith("--", StringComparison.Ordinal))
                 continue;
             hash.Add(name);
@@ -400,7 +453,7 @@ public static class MiniStyleResolver
         return hash.ToHashCode();
     }
 
-    private static string ResolveVarValueCore(string value, Dictionary<string, string> props, int depth)
+    private static string ResolveVarValueCore(string value, List<(string Name, string Value, bool Explicit)> props, int depth)
     {
         if (depth > 8 || !value.Contains("var(", StringComparison.Ordinal))
             return value;
@@ -445,7 +498,7 @@ public static class MiniStyleResolver
             name = name.Trim();
 
             var replacement = string.Empty;
-            if (name.StartsWith("--", StringComparison.Ordinal) && props.TryGetValue(name, out var custom))
+            if (name.StartsWith("--", StringComparison.Ordinal) && FindCustom(props, name) is { } custom)
                 replacement = ResolveVarValueCore(custom, props, depth + 1);
             else if (fallback is not null)
                 replacement = ResolveVarValueCore(fallback, props, depth + 1);
@@ -454,5 +507,16 @@ public static class MiniStyleResolver
             i = j + 1;
         }
         return sb.ToString().Trim();
+    }
+
+    private static string? FindCustom(List<(string Name, string Value, bool Explicit)> props, string name)
+    {
+        for (var i = 0; i < props.Count; i++)
+        {
+            var (n, v, _) = props[i];
+            if (string.Equals(n, name, StringComparison.Ordinal))
+                return v;
+        }
+        return null;
     }
 }

@@ -127,6 +127,33 @@ public sealed class MiniElement : MiniNode
     public string? Id => GetAttribute("id");
     public string? Style => GetAttribute("style");
 
+    // Lazily cached: the engine's style memo keys on the FULL attribute set (attribute
+    // selectors like [hidden] must not share a signature with attribute-less twins).
+    // Elements without attributes share one empty string (no allocation).
+    private string? _attributeSignature;
+
+    /// <summary>Stable signature of the element's attributes (name=value pairs, ';'-joined).</summary>
+    public string AttributeSignature
+    {
+        get
+        {
+            if (_attributeSignature is { } cached) return cached;
+            if (_attributes.Length == 0)
+            {
+                _attributeSignature = string.Empty;
+                return _attributeSignature;
+            }
+            var sb = new StringBuilder();
+            for (var i = 0; i < _attributes.Length; i++)
+            {
+                if (i > 0) sb.Append(';');
+                sb.Append(_attributes[i].Name).Append('=').Append(_attributes[i].Value);
+            }
+            _attributeSignature = sb.ToString();
+            return _attributeSignature;
+        }
+    }
+
     // Lazily cached: the tree is immutable after parsing, and HasClass is invoked for
     // every (rule × element) pair during cascade matching — splitting the class
     // attribute on each call dominated the style phase. Split once, then reuse.
@@ -169,8 +196,9 @@ public sealed class MiniElement : MiniNode
     }
 
     // Lazily cached: the engine reads the trimmed text in several places (leaf
-    // measurement, inline-run fallback, body root). Trim allocates a new string when
-    // there is surrounding whitespace, so computing it once avoids the repeated copies.
+    // measurement, inline-run fallback, body root). The text is built into a
+    // StringBuilder and the trimmed range is taken directly from it, so the whole
+    // computation costs ONE string allocation (the old TextContent + Trim cost two).
     private string? _trimmedTextContent;
 
     /// <summary><see cref="TextContent"/> with surrounding whitespace removed (computed once, then cached).</summary>
@@ -179,12 +207,18 @@ public sealed class MiniElement : MiniNode
         get
         {
             if (_trimmedTextContent is { } cached) return cached;
-            _trimmedTextContent = TextContent.Trim();
+            var sb = new StringBuilder();
+            AppendDescendantText(this, sb);
+            var start = 0;
+            var end = sb.Length;
+            while (start < end && char.IsWhiteSpace(sb[start])) start++;
+            while (end > start && char.IsWhiteSpace(sb[end - 1])) end--;
+            _trimmedTextContent = sb.ToString(start, end - start);
             return _trimmedTextContent;
         }
     }
 
-    private static void AppendDescendantText(MiniNode node, StringBuilder sb)
+    internal static void AppendDescendantText(MiniNode node, StringBuilder sb)
     {
         switch (node)
         {

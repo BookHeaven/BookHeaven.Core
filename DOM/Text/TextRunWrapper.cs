@@ -59,7 +59,7 @@ public static partial class TextRunWrapper
 
         if (tokens.Count == 0)
         {
-            return new TextMeasurementResult { Lines = lines, LineCount = 0, LineHeights = lineHeights, LineHeightPx = fallbackLineHeight, TotalHeightPx = 0f };
+            return new TextMeasurementResult { Lines = lines, LineCount = 0, LineHeightPx = fallbackLineHeight, TotalHeightPx = 0f };
         }
 
         float SpaceWidth(float size, FontStyle style) => probes.SpaceWidth(size, style) + (wordSpacingPx ?? 0f);
@@ -236,7 +236,7 @@ public static partial class TextRunWrapper
         {
             Lines = lines,
             LineCount = lineHeights.Count,
-            LineHeights = lineHeights,
+            LineHeights = lineHeights.Count > 0 ? lineHeights.ToArray() : [],
             LineHeightPx = maxHeight,
             TotalHeightPx = total
         };

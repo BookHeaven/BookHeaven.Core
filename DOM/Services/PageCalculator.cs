@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.DOM.Engine;
 using BookHeaven.Core.DOM.Services.Abstractions;
@@ -46,7 +47,7 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
 
         // Chapter CSS depends only on the chapter, so build it all up front
         // (it used to be rebuilt inside the loop, once per chapter).
-        var chapterCss = new Dictionary<int, List<string>>();
+        var chapterCss = new List<string>[chapters.Count];
         var stylesheets = ebook.Content.Stylesheets;
         for (var i = 0; i < chapters.Count; i++)
         {
@@ -58,9 +59,12 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
                 styles.Add($"body p.{chapter.ParagraphClassName} {{ margin-block: calc(var(--paragraph-spacing) * 1pt) !important; }}");
             }
 
+            // Book-stylesheet order is the cascade order; a set makes the
+            // membership test O(1) instead of O(stylesheets) per chapter.
+            var chapterStylesheetIds = new HashSet<string>(chapter.Stylesheets);
             foreach (var stylesheet in stylesheets)
             {
-                if(chapter.Stylesheets.Contains(stylesheet.Identifier))
+                if (chapterStylesheetIds.Contains(stylesheet.Identifier))
                 {
                     styles.Add(stylesheet.Content);
                 }
@@ -80,26 +84,34 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
             : TextMeasurerFactory.CreateMeasurer(coreOptions.Value.DefaultFontDirectory);
         try
         {
-            using var throttled = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount, 1, MaxParallelChapters));
+            // A bounded channel of chapter indices feeds a fixed pool of workers:
+            // at most `workerCount` engines are alive at once, and no per-chapter
+            // Task is created (a SemaphoreSlim + one Task per chapter spawned a
+            // task for every chapter just to queue it).
+            var workerCount = Math.Clamp(Environment.ProcessorCount, 1, MaxParallelChapters);
+            var queue = Channel.CreateBounded<int>(workerCount);
 
-            await Task.WhenAll(chapters.Select((chapter, i) => Task.Run(async () =>
+            // Workers must be running before the producer writes: the channel is
+            // bounded, so a producer ahead of the workers would deadlock.
+            var workers = Enumerable.Range(0, workerCount).Select(_ => Task.Run(async () =>
             {
-                await throttled.WaitAsync(cancellationToken);
-                try
+                await foreach (var i in queue.Reader.ReadAllAsync(cancellationToken))
                 {
                     // Generate layout blocks and split them into pages (block-based path).
                     using var engine = new MiniLayoutEngine(normalized, coreOptions, sharedMeasurer);
-                    var blocks = await engine.GenerateLayoutBlocksAsync(chapter.Content, chapterCss[i], cancellationToken);
+                    var blocks = await engine.GenerateLayoutBlocksAsync(chapters[i].Content, chapterCss[i], cancellationToken);
                     var map = BlockPageSplitter.SplitToPages(blocks, normalized.PageHeightPx);
 
                     // Indexed write: output is identical to a sequential run, no locking needed.
                     results[i] = map.Pages.Count;
                 }
-                finally
-                {
-                    throttled.Release();
-                }
-            }, cancellationToken)));
+            }, cancellationToken)).ToArray();
+
+            for (var i = 0; i < chapters.Count; i++)
+                await queue.Writer.WriteAsync(i, cancellationToken);
+            queue.Writer.Complete();
+
+            await Task.WhenAll(workers);
         }
         finally
         {
