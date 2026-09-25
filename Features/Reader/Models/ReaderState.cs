@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using BookHeaven.Core.Entities;
 using BookHeaven.EbookManager.Entities;
 
 namespace BookHeaven.Core.Features.Reader.Models;
