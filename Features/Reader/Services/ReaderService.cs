@@ -91,7 +91,6 @@ public class ReaderService(
             ebook = await reader.ReadMetadataAsync(ebookFilePath);
             ebook.Content = content;
         }
-        reader.Dispose();
         return ebook;
     }
     
