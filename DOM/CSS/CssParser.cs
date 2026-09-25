@@ -47,7 +47,7 @@ public sealed class MiniCompound
 /// declarations with <c>!important</c>. Flattens <c>@media</c> blocks and skips
 /// at-rules that do not affect layout (<c>@font-face</c>, <c>@keyframes</c>, ...).
 /// </summary>
-public static class MiniCssParser
+public static class CssParser
 {
     // Parsed rules are immutable after parsing, so identical CSS text (the injected
     // global stylesheet is re-parsed once per chapter; shared chapter stylesheets are

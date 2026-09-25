@@ -62,7 +62,7 @@ namespace BookHeaven.Core.DOM.Engine;
 /// is measured with a DRY RUN of the child placement — the exact same rules,
 /// no slices recorded.
 /// </summary>
-public static class BlockPageSplitter
+public static class PageSplitter
 {
     public static BlockPageMap SplitToPages(IReadOnlyList<LayoutBlock> blocks, int pageHeight)
     {

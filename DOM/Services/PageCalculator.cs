@@ -98,9 +98,9 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
                 await foreach (var i in queue.Reader.ReadAllAsync(cancellationToken))
                 {
                     // Generate layout blocks and split them into pages (block-based path).
-                    using var engine = new MiniLayoutEngine(normalized, coreOptions, sharedMeasurer);
+                    using var engine = new LayoutEngine(normalized, coreOptions, sharedMeasurer);
                     var blocks = await engine.GenerateLayoutBlocksAsync(chapters[i].Content, chapterCss[i], cancellationToken);
-                    var map = BlockPageSplitter.SplitToPages(blocks, normalized.PageHeightPx);
+                    var map = PageSplitter.SplitToPages(blocks, normalized.PageHeightPx);
 
                     // Indexed write: output is identical to a sequential run, no locking needed.
                     results[i] = map.Pages.Count;

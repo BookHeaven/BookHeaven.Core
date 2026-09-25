@@ -11,17 +11,16 @@ using BookHeaven.Core.DOM.Text.Measurers;
 using Microsoft.Extensions.Options;
 using SkiaSharp;
 using FontStyle = BookHeaven.Core.DOM.Text.Abstractions.FontStyle;
-using MiniLengthParser = BookHeaven.Core.DOM.CSS.MiniLengthParser;
 
 namespace BookHeaven.Core.DOM.Engine;
 
 /// <summary>
 /// The block layout engine on top of the lightweight Mini pipeline
-/// (<see cref="MiniHtmlParser"/> + <see cref="MiniCssParser"/> +
-/// <see cref="MiniStyleResolver"/> + <see cref="MiniLengthParser"/>): the
+/// (<see cref="HtmlParser"/> + <see cref="CssParser"/> +
+/// <see cref="StyleResolver"/> + <see cref="CssLengthParser"/>): the
 /// browser-style block model (one <see cref="LayoutBlock"/> per top-level
 /// element, explicit margins/paddings, children measured independently for
-/// <see cref="BlockPageSplitter"/>), but
+/// <see cref="PageSplitter"/>), but
 /// without AngleSharp — the HTML is parsed in a single pass and the CSS cascade
 /// (specificity, source order, !important, inheritance, var()) is resolved
 /// in-house.
@@ -30,7 +29,7 @@ namespace BookHeaven.Core.DOM.Engine;
 /// same global stylesheet is injected, logical margins are expanded to physical
 /// longhands before parsing, and chapter stylesheets are appended after it.
 /// </summary>
-public sealed partial class MiniLayoutEngine : IDisposable
+public sealed partial class LayoutEngine : IDisposable
 {
     private const string BlockSelector = "p,div,h1,h2,h3,h4,h5,h6,li,ul,ol,table,blockquote,pre,section,article,header,footer,main,aside,nav,dl,dt,dd,figure,img,svg,image,picture,object,canvas,hr";
 
@@ -43,11 +42,11 @@ public sealed partial class MiniLayoutEngine : IDisposable
     private readonly ITextMeasurer _measurer;
     private readonly bool _ownsMeasurer;
     private readonly MiniRenderDevice _device;
-    private readonly MiniHtmlParser _parser;
+    private readonly HtmlParser _parser;
 
     // Per-document state, cleared per call.
     private readonly Dictionary<(string Tag, string Attrs, string? Inline, MiniStyle? Parent), StyleEntry> _styleMemo = [];
-    private Dictionary<MiniElement, float>? _contentWidthMemo;
+    private Dictionary<Element, float>? _contentWidthMemo;
     private List<MiniCssRule> _rules = [];
     private int[] _specificities = [];
 
@@ -64,7 +63,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         public required bool Hidden;
     }
 
-    public MiniLayoutEngine(
+    public LayoutEngine(
         PageCalculatorOptions options,
         IOptions<CoreOptions> coreOptions,
         ITextMeasurer? sharedMeasurer = null)
@@ -81,7 +80,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
 
         // The parser owns the HTML construction (global + chapter stylesheets injected
         // around the fragment); the engine only passes the fragment and styles down.
-        _parser = new MiniHtmlParser(_options);
+        _parser = new HtmlParser(_options);
 
         // A shared measurer (one per book, used by several parallel engines) is not
         // disposed by the engines using it; only the caller that created it owns it.
@@ -119,7 +118,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
             return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
         }
 
-        var matchedSet = new HashSet<MiniElement>(all);
+        var matchedSet = new HashSet<Element>(all);
         var topLevel = all.Where(e => !HasAncestorInSet(e, matchedSet)).ToList();
 
         foreach (var element in topLevel)
@@ -136,14 +135,14 @@ public sealed partial class MiniLayoutEngine : IDisposable
         BlockSelector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Collects every element in the subtree (pre-order) whose tag is in the comma-separated selector.</summary>
-    private static List<MiniElement> QueryAll(MiniElement root, string selector)
+    private static List<Element> QueryAll(Element root, string selector)
     {
         var tags = selector == BlockSelector ? BlockTagSet : selector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var result = new List<MiniElement>();
+        var result = new List<Element>();
         Collect(root, result);
         return result;
 
-        void Collect(MiniElement el, List<MiniElement> sink)
+        void Collect(Element el, List<Element> sink)
         {
             if (tags.Contains(el.TagName)) sink.Add(el);
             foreach (var child in el.Children) Collect(child, sink);
@@ -155,7 +154,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     {
         var specs = new int[rules.Count];
         for (var i = 0; i < rules.Count; i++)
-            specs[i] = MiniStyleResolver.Specificity(rules[i].Selector);
+            specs[i] = StyleResolver.Specificity(rules[i].Selector);
         return specs;
     }
 
@@ -165,24 +164,24 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// style, so every element sharing a signature reuses one resolution. The parent
     /// is resolved first (top-down), and its memoized style is part of the key.
     /// </summary>
-    private StyleEntry GetStyleEntry(MiniElement el)
+    private StyleEntry GetStyleEntry(Element el)
     {
         var parent = el.ParentElement is { } p ? GetStyleEntry(p).Style : null;
         var key = (el.TagName, el.AttributeSignature, el.Style, parent);
         if (_styleMemo.TryGetValue(key, out var entry))
             return entry;
-        var style = MiniStyleResolver.Resolve(el, _rules, _specificities, parent);
+        var style = StyleResolver.Resolve(el, _rules, _specificities, parent);
         entry = new StyleEntry { Style = style, Hidden = ComputeHidden(el, style) };
         _styleMemo[key] = entry;
         return entry;
     }
 
     /// <summary>Computed style, memoized per (signature, parent style) — see <see cref="GetStyleEntry"/>.</summary>
-    private MiniStyle GetComputedStyle(MiniElement el) => GetStyleEntry(el).Style;
+    private MiniStyle GetComputedStyle(Element el) => GetStyleEntry(el).Style;
 
-    private bool IsHidden(MiniElement el) => GetStyleEntry(el).Hidden;
+    private bool IsHidden(Element el) => GetStyleEntry(el).Hidden;
 
-    private static bool ComputeHidden(MiniElement el, MiniStyle style)
+    private static bool ComputeHidden(Element el, MiniStyle style)
     {
         if (el.HasAttribute("hidden")) return true;
         var inline = el.Style;
@@ -194,7 +193,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
 
     private static bool IsBlockLevelTag(string tagName) => BlockTags.Contains(tagName);
 
-    private static bool HasAncestorInSet(MiniElement el, HashSet<MiniElement> set)
+    private static bool HasAncestorInSet(Element el, HashSet<Element> set)
     {
         var p = el.ParentElement;
         while (p != null)
@@ -210,7 +209,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// element and its ancestor chain, so siblings (and repeated lookups of the same
     /// parent) reuse one computation.
     /// </summary>
-    private float GetContainingBlockContentWidth(MiniElement el)
+    private float GetContainingBlockContentWidth(Element el)
     {
         if (el.ParentElement is not { } parent) return _options.PageWidthPx;
         if (_contentWidthMemo is not null && _contentWidthMemo.TryGetValue(parent, out var cached))
@@ -220,9 +219,9 @@ public sealed partial class MiniLayoutEngine : IDisposable
         return Math.Min(_options.PageWidthPx, value > 0 ? value : _options.PageWidthPx);
     }
 
-    private float ResolveAncestorContentWidth(MiniElement parent)
+    private float ResolveAncestorContentWidth(Element parent)
     {
-        var chain = new List<MiniElement>();
+        var chain = new List<Element>();
         for (var p = parent; p != null; p = p.ParentElement) chain.Add(p);
 
         // The containing block of a static element is its parent's content box. Walk
@@ -250,7 +249,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     }
 
     private float? ParseLengthToPx(string? s, float reference, float? emReference = null)
-        => MiniLengthParser.ParseLengthToPx(s, _device, reference, emReference);
+        => CssLengthParser.ParseLengthToPx(s, _device, reference, emReference);
 
     /// <summary>
     /// Recursively measures a block element, appending its block to <paramref name="sink"/>.
@@ -258,7 +257,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// margins/paddings, flags, children in document order); it does NOT place
     /// blocks or collapse margins — that is the page splitter's job.
     /// </summary>
-    private void ProcessElement(MiniElement el, List<LayoutBlock> sink, CancellationToken ct)
+    private void ProcessElement(Element el, List<LayoutBlock> sink, CancellationToken ct)
     {
         if (IsHidden(el)) return;
 
@@ -356,7 +355,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// INTRINSIC geometry. Returns null when the element is hidden, or when it has
     /// no content AND occupies no space.
     /// </summary>
-    private LayoutBlock? BuildLeafBlock(string text, MiniElement el)
+    private LayoutBlock? BuildLeafBlock(string text, Element el)
     {
         var computed = GetComputedStyle(el);
         if (IsHidden(el)) return null;
@@ -680,7 +679,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
             {
                 var parsed = ParseLengthToPx(lhTrim, fontSize, fontSize);
                 if (parsed.HasValue) lengthPx = parsed.Value;
-                else if (MiniLengthParser.ParseUnitless(lhTrim) is { } unitless) multiplier = unitless;
+                else if (CssLengthParser.ParseUnitless(lhTrim) is { } unitless) multiplier = unitless;
             }
         }
         return (lengthPx, multiplier);
@@ -690,7 +689,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// The space a text-less element occupies as CONTENT: an explicit CSS
     /// <c>height</c> when declared; otherwise one line per <c>&lt;br&gt;</c> child.
     /// </summary>
-    private (float ContentHeight, int LineCount, float LineHeightPx) ResolveSpacerGeometry(MiniElement el)
+    private (float ContentHeight, int LineCount, float LineHeightPx) ResolveSpacerGeometry(Element el)
     {
         var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
@@ -717,16 +716,16 @@ public sealed partial class MiniLayoutEngine : IDisposable
         return (lineBreaks * lineHeight, lineBreaks, lineHeight);
     }
 
-    private static bool HasNonCollapsibleContent(MiniElement el)
+    private static bool HasNonCollapsibleContent(Element el)
     {
         foreach (var node in el.ChildNodes)
         {
-            if (node.NodeType == MiniNodeType.Text)
+            if (node.NodeType == NodeType.Text)
             {
                 if (node.TextContent.Any(c => c is not (' ' or '\t' or '\n' or '\r' or '\f')))
                     return true;
             }
-            else if (node is MiniElement childEl && HasNonCollapsibleContent(childEl))
+            else if (node is Element childEl && HasNonCollapsibleContent(childEl))
             {
                 return true;
             }
@@ -735,7 +734,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         return false;
     }
 
-    private static int CountDescendants(MiniElement root, string tag)
+    private static int CountDescendants(Element root, string tag)
     {
         var count = 0;
         foreach (var child in root.Children)
@@ -773,7 +772,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// Computes the element's own vertical layout properties exactly as the style
     /// sheet declares them. The flow applies the CSS margin collapse on top.
     /// </summary>
-    private (float MarginTop, float MarginBottom, float PaddingTop, float PaddingBottom) ComputeVerticalLayout(MiniElement el)
+    private (float MarginTop, float MarginBottom, float PaddingTop, float PaddingBottom) ComputeVerticalLayout(Element el)
     {
         var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
@@ -788,7 +787,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
         return (marginTop, marginBottom, paddingTop, paddingBottom);
     }
 
-    private float ResolveFontSize(MiniElement el)
+    private float ResolveFontSize(Element el)
     {
         var computed = GetComputedStyle(el);
         var fs = computed.GetPropertyValue("font-size");
@@ -810,19 +809,19 @@ public sealed partial class MiniLayoutEngine : IDisposable
     }
 
     /// <summary>Extracts text content that belongs directly to the element (not inside block-level children).</summary>
-    private static string GetOwnInlineText(MiniElement el, List<MiniElement> blockChildren)
+    private static string GetOwnInlineText(Element el, List<Element> blockChildren)
     {
         var sb = new StringBuilder();
         foreach (var node in el.ChildNodes)
         {
-            if (node.NodeType == MiniNodeType.Text)
+            if (node.NodeType == NodeType.Text)
             {
                 sb.Append(node.TextContent);
             }
-            else if (node is MiniElement childEl && !blockChildren.Contains(childEl))
+            else if (node is Element childEl && !blockChildren.Contains(childEl))
             {
                 // Inline element (span, em, strong, a, etc.) - include its text.
-                MiniElement.AppendDescendantText(childEl, sb);
+                Element.AppendDescendantText(childEl, sb);
             }
             // Block children are skipped (their text is handled by recursion).
         }
@@ -838,7 +837,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// Splits the element's inline content into <see cref="TextRun"/>s at their effective
     /// font size and style. Consecutive runs at the same size AND style are merged.
     /// </summary>
-    private List<TextRun> BuildTextRuns(MiniElement el, float ownFontSize, bool ownBold, bool ownItalic)
+    private List<TextRun> BuildTextRuns(Element el, float ownFontSize, bool ownBold, bool ownItalic)
     {
         if (IsUniformInline(el, ownFontSize, ownBold, ownItalic))
         {
@@ -856,11 +855,11 @@ public sealed partial class MiniLayoutEngine : IDisposable
     /// True when every inline descendant renders at the inherited size and style, so the
     /// whole element is a single run and the run walk can be skipped.
     /// </summary>
-    private bool IsUniformInline(MiniElement element, float inheritedSize, bool inheritedBold, bool inheritedItalic)
+    private bool IsUniformInline(Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic)
     {
         foreach (var node in element.ChildNodes)
         {
-            if (node is not MiniElement childEl || IsBlockLevelTag(childEl.TagName)) continue;
+            if (node is not Element childEl || IsBlockLevelTag(childEl.TagName)) continue;
 
             var childSize = inheritedSize;
             var childBold = inheritedBold;
@@ -887,20 +886,20 @@ public sealed partial class MiniLayoutEngine : IDisposable
         return true;
     }
 
-    private void WalkInlineRuns(MiniElement element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs)
+    private void WalkInlineRuns(Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs)
     {
         foreach (var node in element.ChildNodes)
         {
-            if (node.NodeType == MiniNodeType.Text)
+            if (node.NodeType == NodeType.Text)
             {
                 AppendRun(runs, node.TextContent, inheritedSize, inheritedBold, inheritedItalic);
             }
-            else if (node is MiniElement childEl && IsBlockLevelTag(childEl.TagName))
+            else if (node is Element childEl && IsBlockLevelTag(childEl.TagName))
             {
                 // Defensive: leaf blocks have no block children; a container's block
                 // children become sibling blocks, not part of its own inline text.
             }
-            else if (node is MiniElement inline)
+            else if (node is Element inline)
             {
                 var childSize = inheritedSize;
                 var childBold = inheritedBold;
@@ -988,7 +987,7 @@ public sealed partial class MiniLayoutEngine : IDisposable
     private float? TryGetComputedPaddingPx(MiniStyle computed, string name, float reference, float? emReference)
         => ParseLengthToPx(computed.GetPropertyValue(name), reference, emReference);
 
-    private static bool IsImageElement(MiniElement el)
+    private static bool IsImageElement(Element el)
     {
         return el.TagName.ToUpperInvariant() switch
         {

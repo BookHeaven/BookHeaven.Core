@@ -88,7 +88,7 @@ public sealed class MiniStyle
 /// matching, specificity, source order, <c>!important</c>, inheritance, and
 /// <c>var()</c> resolution.
 /// </summary>
-public static class MiniStyleResolver
+public static class StyleResolver
 {
     /// <summary>Properties that inherit from the parent when not set on the element.</summary>
     private static readonly HashSet<string> Inheritable = new(StringComparer.OrdinalIgnoreCase)
@@ -103,7 +103,7 @@ public static class MiniStyleResolver
     /// is a parallel array of precomputed selector specificities (one per rule) — the
     /// engine computes it once per document instead of per (rule × element) pair.
     /// </summary>
-    public static MiniStyle Resolve(MiniElement el, List<MiniCssRule> rules, int[] specificities, MiniStyle? parent)
+    public static MiniStyle Resolve(Element el, List<MiniCssRule> rules, int[] specificities, MiniStyle? parent)
     {
         var style = new MiniStyle();
         // Pre-sized: a typical element matches a handful of declarations, so the
@@ -311,7 +311,7 @@ public static class MiniStyleResolver
     }
 
     /// <summary>Matches a descendant selector: last compound on the element, earlier ones on ancestors.</summary>
-    private static bool Matches(MiniSelector selector, MiniElement el)
+    private static bool Matches(MiniSelector selector, Element el)
     {
         var compounds = selector.Compounds;
         if (!CompoundMatches(compounds[^1], el))
@@ -338,7 +338,7 @@ public static class MiniStyleResolver
         return true;
     }
 
-    private static bool CompoundMatches(MiniCompound c, MiniElement el)
+    private static bool CompoundMatches(MiniCompound c, Element el)
     {
         if (c.Element is not null && !string.Equals(c.Element, el.TagName, StringComparison.OrdinalIgnoreCase))
             return false;
@@ -357,7 +357,7 @@ public static class MiniStyleResolver
         return true;
     }
 
-    private static bool AttributeMatches(MiniAttribute attr, MiniElement el)
+    private static bool AttributeMatches(MiniAttribute attr, Element el)
     {
         var value = el.GetAttribute(attr.Name);
         if (attr.Operator is null)

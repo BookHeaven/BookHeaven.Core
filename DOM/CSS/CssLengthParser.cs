@@ -16,7 +16,7 @@ public readonly record struct MiniRenderDevice(float ViewPortWidth, float ViewPo
 /// multipliers, e.g. line-height). <c>var()</c> is resolved by the style resolver
 /// BEFORE this parser sees the value, so it is not handled here.
 /// </summary>
-public static partial class MiniLengthParser
+public static partial class CssLengthParser
 {
     // A length's pixel value is a pure function of (raw string, reference, emReference,
     // device). In a book those repeat heavily (every paragraph shares the same calc/length

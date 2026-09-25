@@ -8,7 +8,7 @@ namespace BookHeaven.Core.DOM.HTML;
 
 /// <summary>
 /// A minimal, fast HTML-to-DOM parser for the block layout engine. It builds the
-/// <see cref="MiniDocument"/> tree the engine needs (elements, attributes, text) in a
+/// <see cref="DomDocument"/> tree the engine needs (elements, attributes, text) in a
 /// single pass, with none of AngleSharp's HTML5 tree-construction, namespace or
 /// error-recovery machinery.
 ///
@@ -21,11 +21,11 @@ namespace BookHeaven.Core.DOM.HTML;
 /// malformations (unclosed tags, stray close tags). Void elements are recognised,
 /// entities are decoded, and comments/DOCTYPE/processing instructions are dropped.
 /// </summary>
-public sealed class MiniHtmlParser
+public sealed class HtmlParser
 {
     private readonly PageCalculatorOptions _options;
 
-    public MiniHtmlParser(PageCalculatorOptions options)
+    public HtmlParser(PageCalculatorOptions options)
     {
         _options = options ?? new PageCalculatorOptions();
     }
@@ -59,7 +59,7 @@ public sealed class MiniHtmlParser
     /// properties, font-size) match the wrapping elements and <c>var()</c> references
     /// resolve through inheritance.
     /// </summary>
-    public (MiniDocument Doc, List<MiniCssRule> Rules) Parse(string htmlFragment, IReadOnlyList<string>? css = null)
+    public (DomDocument Doc, List<MiniCssRule> Rules) Parse(string htmlFragment, IReadOnlyList<string>? css = null)
     {
         var doc = BuildDocument(htmlFragment, css);
 
@@ -71,7 +71,7 @@ public sealed class MiniHtmlParser
         {
             var text = styleEl.TextContent;
             if (string.IsNullOrWhiteSpace(text)) continue;
-            rules.AddRange(MiniCssParser.Parse(text));
+            rules.AddRange(CssParser.Parse(text));
         }
         return (doc, rules);
     }
@@ -82,30 +82,30 @@ public sealed class MiniHtmlParser
     /// global stylesheet declares custom properties and font-size on it, which
     /// <c>body</c> inherits.
     /// </summary>
-    private MiniDocument BuildDocument(string htmlFragment, IReadOnlyList<string>? css = null)
+    private DomDocument BuildDocument(string htmlFragment, IReadOnlyList<string>? css = null)
     {
-        var htmlEl = new MiniElement("html");
-        var head = new MiniElement("head") { Parent = htmlEl };
+        var htmlEl = new Element("html");
+        var head = new Element("head") { Parent = htmlEl };
         
         var defaultCss = BuildGlobalCss(_options);
-        var injectedCssStyle = new MiniElement("style") { Parent = head };
-        injectedCssStyle.ChildNodes.Add(new MiniText(defaultCss) { Parent = injectedCssStyle });
+        var injectedCssStyle = new Element("style") { Parent = head };
+        injectedCssStyle.ChildNodes.Add(new Models.Text(defaultCss) { Parent = injectedCssStyle });
         head.ChildNodes.Add(injectedCssStyle);
         if (css?.Count > 0)
         {
             foreach (var style in css ?? [])
             {
-                var styleElement = new MiniElement("style") { Parent = head };
-                styleElement.ChildNodes.Add(new MiniText(style) { Parent = styleElement });
+                var styleElement = new Element("style") { Parent = head };
+                styleElement.ChildNodes.Add(new Models.Text(style) { Parent = styleElement });
                 head.ChildNodes.Add(styleElement);
             }
         }
         htmlEl.ChildNodes.Add(head);
         
-        var body = new MiniElement("body") { Parent = htmlEl };
+        var body = new Element("body") { Parent = htmlEl };
         
         htmlEl.ChildNodes.Add(body);
-        var stack = new Stack<MiniElement>(64);
+        var stack = new Stack<Element>(64);
         stack.Push(body);
 
         var n = htmlFragment.Length;
@@ -164,7 +164,7 @@ public sealed class MiniHtmlParser
                 continue;
             }
 
-            var el = new MiniElement(tag);
+            var el = new Element(tag);
             ParseAttributes(tagSpan, bodyStart, el, out var selfClosing);
 
             var parent = stack.Peek();
@@ -180,7 +180,7 @@ public sealed class MiniHtmlParser
         if (textStart >= 0)
             AppendText(htmlFragment, textStart, n, stack.Peek());
 
-        return new MiniDocument(htmlEl);
+        return new DomDocument(htmlEl);
     }
 
     /// <summary>
@@ -282,13 +282,13 @@ public sealed class MiniHtmlParser
     }
 
     /// <summary>Collects every <c>style</c> element in the subtree (pre-order).</summary>
-    private static List<MiniElement> CollectStyleElements(MiniElement root)
+    private static List<Element> CollectStyleElements(Element root)
     {
-        var result = new List<MiniElement>();
+        var result = new List<Element>();
         Collect(root);
         return result;
 
-        void Collect(MiniElement el)
+        void Collect(Element el)
         {
             if (el.TagName == "style") result.Add(el);
             foreach (var child in el.Children) Collect(child);
@@ -300,7 +300,7 @@ public sealed class MiniHtmlParser
     /// on the stack (stray/mismatched close), it is ignored — the open elements stay put,
     /// so the tree degrades gracefully instead of corrupting.
     /// </summary>
-    private static void PopToMatch(Stack<MiniElement> stack, MiniElement body, string tag)
+    private static void PopToMatch(Stack<Element> stack, Element body, string tag)
     {
         while (stack.Count > 1)
         {
@@ -342,7 +342,7 @@ public sealed class MiniHtmlParser
     /// (no intermediate list). Attribute names are lowercased; values are entity-decoded.
     /// A trailing '/' sets <paramref name="selfClosing"/>.
     /// </summary>
-    private static void ParseAttributes(ReadOnlySpan<char> span, int start, MiniElement el, out bool selfClosing)
+    private static void ParseAttributes(ReadOnlySpan<char> span, int start, Element el, out bool selfClosing)
     {
         var n = span.Length;
         var i = start;
@@ -400,12 +400,12 @@ public sealed class MiniHtmlParser
     }
 
     /// <summary>Appends the text span [start, end) to <paramref name="parent"/>, decoding entities.</summary>
-    private static void AppendText(string html, int start, int end, MiniElement parent)
+    private static void AppendText(string html, int start, int end, Element parent)
     {
         if (end <= start) return;
         var text = DecodeEntities(html.AsSpan(start, end - start));
         if (text.Length == 0) return;
-        var node = new MiniText(text);
+        var node = new Models.Text(text);
         node.Parent = parent;
         parent.ChildNodes.Add(node);
     }
