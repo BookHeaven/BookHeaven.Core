@@ -56,7 +56,6 @@ public class ReaderCacheService(
         var bookFormat = FormatExtensions.GetFormat(extension);
         var reader = ebookManagerProvider.GetReader(bookFormat);
         var ebook = await reader.ReadAllAsync(ebookPath);
-        reader.Dispose();
         
         await CacheContentAsync(bookId, ebook.Content);
     }
