@@ -105,7 +105,7 @@ public static class StyleResolver
     /// is a parallel array of precomputed selector specificities (one per rule) — the
     /// engine computes it once per document instead of per (rule × element) pair.
     /// </summary>
-    public static MiniStyle Resolve(Element el, List<MiniCssRule> rules, int[] specificities, MiniStyle? parent)
+    public static MiniStyle Resolve(Element el, List<CssRule> rules, int[] specificities, MiniStyle? parent)
     {
         var style = new MiniStyle();
         // Pre-sized: a typical element matches a handful of declarations, so the
@@ -197,7 +197,7 @@ public static class StyleResolver
             v = v.Trim();
             if (isLength && float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
                 v += "px";
-            ConsiderDecl(best, new MiniDeclaration(prop, v, false), 0, 0, order);
+            ConsiderDecl(best, new CssDeclaration(prop, v, false), 0, 0, order);
         }
 
         switch (el.TagName.ToLowerInvariant())
@@ -269,7 +269,7 @@ public static class StyleResolver
     /// </summary>
     private static void ConsiderDecl(
         Dictionary<string, (int Importance, int Spec, int Order, string Value)> best,
-        MiniDeclaration decl, int importance, int spec, int order)
+        CssDeclaration decl, int importance, int spec, int order)
     {
         if (BoxShorthands.TryGetValue(decl.Property, out var longhands))
         {
@@ -348,7 +348,7 @@ public static class StyleResolver
     }
 
     /// <summary>Approximate specificity: 10000 per id, 100 per class/attribute, 1 per element.</summary>
-    public static int Specificity(MiniSelector selector)
+    public static int Specificity(CssSelector selector)
     {
         var spec = 0;
         foreach (var c in selector.Compounds)
@@ -356,7 +356,7 @@ public static class StyleResolver
         return spec;
     }
 
-    private static int CompoundSpecificity(MiniCompound c)
+    private static int CompoundSpecificity(SelectorCompound c)
     {
         var spec = c.Ids.Count * 10_000 + c.Classes.Count * 100 + (c.Element is null ? 0 : 1);
         spec += c.Attributes.Count * 100; // attribute selectors are class-level
@@ -369,7 +369,7 @@ public static class StyleResolver
     /// Matches a selector: the last compound on the element, earlier compounds on
     /// ancestors or siblings according to the combinator between them.
     /// </summary>
-    private static bool Matches(MiniSelector selector, Element el)
+    private static bool Matches(CssSelector selector, Element el)
     {
         var compounds = selector.Compounds;
         if (!CompoundMatches(compounds[^1], el))
@@ -395,7 +395,7 @@ public static class StyleResolver
     }
 
     /// <summary>Nearest ancestor matching <paramref name="target"/>, or null.</summary>
-    private static Element? MatchDescendant(MiniCompound target, Element el)
+    private static Element? MatchDescendant(SelectorCompound target, Element el)
     {
         var ancestor = el.ParentElement;
         while (ancestor is not null)
@@ -408,21 +408,21 @@ public static class StyleResolver
     }
 
     /// <summary>The parent, when it matches <paramref name="target"/>; otherwise null.</summary>
-    private static Element? MatchChild(MiniCompound target, Element el)
+    private static Element? MatchChild(SelectorCompound target, Element el)
     {
         var parent = el.ParentElement;
         return parent is not null && CompoundMatches(target, parent) ? parent : null;
     }
 
     /// <summary>The immediately preceding element sibling, when it matches; otherwise null.</summary>
-    private static Element? MatchAdjacentSibling(MiniCompound target, Element el)
+    private static Element? MatchAdjacentSibling(SelectorCompound target, Element el)
     {
         var sibling = PreviousSiblingElement(el);
         return sibling is not null && CompoundMatches(target, sibling) ? sibling : null;
     }
 
     /// <summary>Nearest preceding element sibling matching <paramref name="target"/>, or null.</summary>
-    private static Element? MatchGeneralSibling(MiniCompound target, Element el)
+    private static Element? MatchGeneralSibling(SelectorCompound target, Element el)
     {
         var sibling = PreviousSiblingElement(el);
         while (sibling is not null)
@@ -454,7 +454,7 @@ public static class StyleResolver
         return null;
     }
 
-    private static bool CompoundMatches(MiniCompound c, Element el)
+    private static bool CompoundMatches(SelectorCompound c, Element el)
     {
         if (c.Element is not null && !string.Equals(c.Element, el.TagName, StringComparison.OrdinalIgnoreCase))
             return false;
@@ -473,7 +473,7 @@ public static class StyleResolver
         return true;
     }
 
-    private static bool AttributeMatches(MiniAttribute attr, Element el)
+    private static bool AttributeMatches(CssAttribute attr, Element el)
     {
         var value = el.GetAttribute(attr.Name);
         if (attr.Operator is null)
@@ -494,9 +494,9 @@ public static class StyleResolver
     }
 
     /// <summary>Parses an inline <c>style="a: b; c: d"</c> attribute into declarations.</summary>
-    private static List<MiniDeclaration> ParseInline(string style)
+    private static List<CssDeclaration> ParseInline(string style)
     {
-        var declarations = new List<MiniDeclaration>();
+        var declarations = new List<CssDeclaration>();
         foreach (var part in style.Split(';', StringSplitOptions.RemoveEmptyEntries))
         {
             var colon = part.IndexOf(':');
@@ -511,7 +511,7 @@ public static class StyleResolver
                 value = value[..^10].Trim();
             }
             if (property.Length > 0 && value.Length > 0)
-                declarations.Add(new MiniDeclaration(property, value, important));
+                declarations.Add(new CssDeclaration(property, value, important));
         }
         return declarations;
     }

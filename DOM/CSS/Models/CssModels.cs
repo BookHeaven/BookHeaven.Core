@@ -1,14 +1,14 @@
 ﻿namespace BookHeaven.Core.DOM.CSS.Models;
 
 /// <summary>A parsed CSS rule: a selector plus its declarations.</summary>
-public sealed class MiniCssRule
+public sealed class CssRule
 {
-    public required MiniSelector Selector { get; init; }
-    public required List<MiniDeclaration> Declarations { get; init; }
+    public required CssSelector Selector { get; init; }
+    public required List<CssDeclaration> Declarations { get; init; }
 }
 
 /// <summary>A single declaration: property, raw value, and the <c>!important</c> flag.</summary>
-public sealed record MiniDeclaration(string Property, string Value, bool Important);
+public sealed record CssDeclaration(string Property, string Value, bool Important);
 
 /// <summary>
 /// A parsed selector: a list of compounds joined by combinators.
@@ -16,16 +16,16 @@ public sealed record MiniDeclaration(string Property, string Value, bool Importa
 /// combinator between <c>Compounds[i]</c> and <c>Compounds[i+1]</c> (' ', '&gt;', '+' or '~'),
 /// where ' ' is the descendant combinator.
 /// </summary>
-public sealed class MiniSelector
+public sealed class CssSelector
 {
-    public required List<MiniCompound> Compounds { get; init; }
+    public required List<SelectorCompound> Compounds { get; init; }
     public char[] Combinators { get; init; } = [];
     /// <summary>True when the selector targets a <c>::first-letter</c> pseudo-element.</summary>
     public bool FirstLetter { get; init; }
 }
 
 /// <summary>An attribute selector: <c>[name]</c>, <c>[name=value]</c>, <c>[name~=value]</c>, ...</summary>
-public sealed class MiniAttribute
+public sealed class CssAttribute
 {
     public required string Name { get; init; }
     /// <summary>Comparison operator, or <c>null</c> for a bare presence test <c>[name]</c>.</summary>
@@ -38,15 +38,15 @@ public sealed class MiniAttribute
 /// <c>:not()</c> negations. All positive parts must match; every <c>:not()</c> part must
 /// NOT match.
 /// </summary>
-public sealed class MiniCompound
+public sealed class SelectorCompound
 {
     /// <summary>Element name, or <c>null</c> for the universal selector.</summary>
     public string? Element { get; init; }
     public List<string> Classes { get; init; } = [];
     public List<string> Ids { get; init; } = [];
-    public List<MiniAttribute> Attributes { get; init; } = [];
+    public List<CssAttribute> Attributes { get; init; } = [];
     /// <summary>Compounds from <c>:not(...)</c>; the element must match NONE of them.</summary>
-    public List<MiniCompound> Not { get; init; } = [];
+    public List<SelectorCompound> Not { get; init; } = [];
     /// <summary>True when this compound is a <c>::first-letter</c> pseudo-element.</summary>
     public bool FirstLetter { get; init; }
 }

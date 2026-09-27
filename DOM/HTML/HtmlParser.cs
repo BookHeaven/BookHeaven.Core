@@ -62,14 +62,14 @@ public sealed class HtmlParser
     /// properties, font-size) match the wrapping elements and <c>var()</c> references
     /// resolve through inheritance.
     /// </summary>
-    public (DomDocument Doc, List<MiniCssRule> Rules) Parse(string htmlFragment, IReadOnlyList<string>? css = null)
+    public (DomDocument Doc, List<CssRule> Rules) Parse(string htmlFragment, IReadOnlyList<string>? css = null)
     {
         var doc = BuildDocument(htmlFragment, css);
 
         // Collect <style> from the whole document, not just the head: a full-document
         // fragment has its head foster-parented into the body, so its inline styles
         // (and the injected global/chapter sheets) can live anywhere in the tree.
-        var rules = new List<MiniCssRule>();
+        var rules = new List<CssRule>();
         foreach (var styleEl in CollectStyleElements(doc.Root))
         {
             var text = styleEl.TextContent;

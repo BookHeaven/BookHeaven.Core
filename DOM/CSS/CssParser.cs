@@ -16,9 +16,9 @@ public sealed class CssParser
     // reused across chapters) can be parsed once per parser instance. The cache is
     // per-instance, not global: each PageCalculator session owns its parser and its
     // cache, so concurrent users never share (or grow) a process-wide cache.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<MiniCssRule>> _ruleCache = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<CssRule>> _ruleCache = [];
 
-    public List<MiniCssRule> Parse(string css)
+    public List<CssRule> Parse(string css)
     {
         if (string.IsNullOrWhiteSpace(css))
             return [];
@@ -26,7 +26,7 @@ public sealed class CssParser
         if (_ruleCache.TryGetValue(css, out var cached))
             return cached;
 
-        var rules = new List<MiniCssRule>();
+        var rules = new List<CssRule>();
         var text = css.Contains("/*", StringComparison.Ordinal) ? StripComments(css) : css;
         ParseBlock(text, 0, text.Length, rules, inMedia: false);
         _ruleCache[css] = rules;
@@ -57,7 +57,7 @@ public sealed class CssParser
     /// Parses rules within <c>text[start..end)</c>. When inside a <c>@media</c>
     /// block, nested rules are flattened into the same list.
     /// </summary>
-    private static void ParseBlock(string text, int start, int end, List<MiniCssRule> rules, bool inMedia)
+    private static void ParseBlock(string text, int start, int end, List<CssRule> rules, bool inMedia)
     {
         var i = start;
         while (i < end)
@@ -124,7 +124,7 @@ public sealed class CssParser
         return true;
     }
 
-    private static void ParseRule(string selectorText, string text, int bodyStart, int bodyEnd, List<MiniCssRule> rules)
+    private static void ParseRule(string selectorText, string text, int bodyStart, int bodyEnd, List<CssRule> rules)
     {
         var declarations = ParseDeclarations(text, bodyStart, bodyEnd);
         if (declarations.Count == 0)
@@ -144,14 +144,14 @@ public sealed class CssParser
                 : declarations;
             if (decls.Count == 0)
                 continue;
-            rules.Add(new MiniCssRule { Selector = selector, Declarations = decls });
+            rules.Add(new CssRule { Selector = selector, Declarations = decls });
         }
     }
 
     /// <summary>Parses the declaration block body into declarations.</summary>
-    private static List<MiniDeclaration> ParseDeclarations(string text, int start, int end)
+    private static List<CssDeclaration> ParseDeclarations(string text, int start, int end)
     {
-        var declarations = new List<MiniDeclaration>();
+        var declarations = new List<CssDeclaration>();
         var i = start;
         while (i < end)
         {
@@ -177,7 +177,7 @@ public sealed class CssParser
             }
             if (property.Length == 0 || value.Length == 0)
                 continue;
-            declarations.Add(new MiniDeclaration(property, value, important));
+            declarations.Add(new CssDeclaration(property, value, important));
         }
         return declarations;
     }
@@ -186,12 +186,12 @@ public sealed class CssParser
     /// Parses a single selector into compounds and combinators. Returns <c>null</c> if
     /// the selector uses syntax this parser does not support.
     /// </summary>
-    private static MiniSelector? ParseSelector(string selector)
+    private static CssSelector? ParseSelector(string selector)
     {
         if (selector.Length == 0)
             return null;
 
-        var compounds = new List<MiniCompound>();
+        var compounds = new List<SelectorCompound>();
         var combinatorGaps = new List<(int Gap, char C)>();
         var pendingCombinator = false;
         var firstLetter = false;
@@ -223,7 +223,7 @@ public sealed class CssParser
         combinators.AsSpan().Fill(' ');
         foreach (var (gap, c) in combinatorGaps)
             combinators[gap] = c;
-        return new MiniSelector { Compounds = compounds, Combinators = combinators, FirstLetter = firstLetter };
+        return new CssSelector { Compounds = compounds, Combinators = combinators, FirstLetter = firstLetter };
     }
 
     /// <summary>
@@ -256,7 +256,7 @@ public sealed class CssParser
     /// Parses a compound selector like <c>p.foo#bar</c>, <c>*</c>, <c>p:not([class])</c>
     /// or <c>[class]</c>. Returns <c>null</c> for syntax this parser does not support.
     /// </summary>
-    private static MiniCompound? ParseCompound(string token)
+    private static SelectorCompound? ParseCompound(string token)
     {
         if (token.Length == 0)
             return null;
@@ -264,8 +264,8 @@ public sealed class CssParser
         var element = (string?)null;
         var classes = new List<string>();
         var ids = new List<string>();
-        var attributes = new List<MiniAttribute>();
-        var nots = new List<MiniCompound>();
+        var attributes = new List<CssAttribute>();
+        var nots = new List<SelectorCompound>();
         var isFirstLetter = false;
 
         var i = 0;
@@ -359,11 +359,11 @@ public sealed class CssParser
             }
         }
 
-        return new MiniCompound { Element = element, Classes = classes, Ids = ids, Attributes = attributes, Not = nots, FirstLetter = isFirstLetter };
+        return new SelectorCompound { Element = element, Classes = classes, Ids = ids, Attributes = attributes, Not = nots, FirstLetter = isFirstLetter };
     }
 
     /// <summary>Parses an attribute selector body: <c>name</c>, <c>name=value</c>, <c>name~=value</c>, ...</summary>
-    private static MiniAttribute? ParseAttribute(string text)
+    private static CssAttribute? ParseAttribute(string text)
     {
         text = text.Trim();
         if (text.Length == 0)
@@ -381,7 +381,7 @@ public sealed class CssParser
         }
 
         if (opStart < 0)
-            return new MiniAttribute { Name = text.ToLowerInvariant() };
+            return new CssAttribute { Name = text.ToLowerInvariant() };
 
         var name = text[..opStart].Trim().ToLowerInvariant();
         if (name.Length == 0)
@@ -390,7 +390,7 @@ public sealed class CssParser
         var value = text[(opStart + opLen)..].Trim();
         if (value.Length >= 2 && ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\'')))
             value = value[1..^1];
-        return new MiniAttribute { Name = name, Operator = op, Value = value };
+        return new CssAttribute { Name = name, Operator = op, Value = value };
     }
 
     /// <summary>Index of the <c>)</c> matching the <c>(</c> at <paramref name="openIndex"/>, or -1.</summary>

@@ -48,7 +48,7 @@ public sealed partial class LayoutEngine : IDisposable
     // Per-document state, cleared per call.
     private readonly Dictionary<(string Tag, string Attrs, string? Inline, MiniStyle? Parent), StyleEntry> _styleMemo = [];
     private Dictionary<Element, float>? _contentWidthMemo;
-    private List<MiniCssRule> _rules = [];
+    private List<CssRule> _rules = [];
     private int[] _specificities = [];
 
     /// <summary>
@@ -171,7 +171,7 @@ public sealed partial class LayoutEngine : IDisposable
     }
 
     /// <summary>Precomputes each rule's selector specificity once per document (the cascade used to recompute it per rule × element pair).</summary>
-    private static int[] PrecomputeSpecificities(List<MiniCssRule> rules)
+    private static int[] PrecomputeSpecificities(List<CssRule> rules)
     {
         var specs = new int[rules.Count];
         for (var i = 0; i < rules.Count; i++)
