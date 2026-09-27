@@ -42,7 +42,7 @@ public sealed partial class LayoutEngine : IDisposable
     private readonly CoreOptions _coreOptions;
     private readonly ITextMeasurer _measurer;
     private readonly bool _ownsMeasurer;
-    private readonly MiniRenderDevice _device;
+    private readonly RenderContext _context;
     private readonly HtmlParser _parser;
 
     // Per-document state, cleared per call.
@@ -74,7 +74,7 @@ public sealed partial class LayoutEngine : IDisposable
         _coreOptions = coreOptions.Value;
 
         // Positive dimensions and font size, otherwise em/rem/% resolution breaks.
-        _device = new MiniRenderDevice(
+        _context = new RenderContext(
             ClampPositive(_options.PageWidthPx, PageCalculatorOptions.DefaultPageWidthPx),
             ClampPositive(_options.PageHeightPx, PageCalculatorOptions.DefaultPageHeightPx),
             ClampPositive(_options.RootFontSizePx, PageCalculatorOptions.DefaultRootFontSizePx));
@@ -270,7 +270,7 @@ public sealed partial class LayoutEngine : IDisposable
     }
 
     private float? ParseLengthToPx(string? s, float reference, float? emReference = null)
-        => CssLengthParser.ParseLengthToPx(s, _device, reference, emReference);
+        => CssLengthParser.ParseLengthToPx(s, _context, reference, emReference);
 
     /// <summary>
     /// Recursively measures a block element, appending its block to <paramref name="sink"/>.
@@ -408,7 +408,7 @@ public sealed partial class LayoutEngine : IDisposable
             ResolveFontSize,
             _measurer,
             _options,
-            _device);
+            _context);
         if (result is null) return null;
 
         var marginTop = TryGetComputedMarginPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;

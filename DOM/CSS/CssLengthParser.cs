@@ -7,7 +7,7 @@ namespace BookHeaven.Core.DOM.CSS;
 /// The viewport/font context a length resolves against. Plain data (no AngleSharp
 /// <c>IRenderDevice</c>): positive dimensions and font size, clamped by the engine.
 /// </summary>
-public readonly record struct MiniRenderDevice(float ViewPortWidth, float ViewPortHeight, float FontSize);
+public readonly record struct RenderContext(float ViewPortWidth, float ViewPortHeight, float FontSize);
 
 /// <summary>
 /// Resolves a CSS length string to pixels: px/em/rem/%/pt/in/vh/vw/vmin/vmax,
@@ -24,21 +24,21 @@ public static partial class CssLengthParser
     // lifetime. The key is a struct (no boxing); reference/emReference are rounded to 3
     // decimals so "equal" layout values share an entry (sub-pixel, invisible). device is
     // included so vw/vh/vmin/vmax stay correct across different viewports.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, float, float, MiniRenderDevice), float?> LengthCache = [];
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, float, float, RenderContext), float?> LengthCache = [];
 
-    public static float? ParseLengthToPx(string? s, MiniRenderDevice device, float reference, float? emReference = null)
+    public static float? ParseLengthToPx(string? s, RenderContext context, float reference, float? emReference = null)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
-        var emRef = emReference ?? device.FontSize;
-        var key = (s, MathF.Round(reference, 3), MathF.Round(emRef, 3), device);
+        var emRef = emReference ?? context.FontSize;
+        var key = (s, MathF.Round(reference, 3), MathF.Round(emRef, 3), device: context);
         if (LengthCache.TryGetValue(key, out var cached))
             return cached;
-        var result = ParseLengthToPxCore(s, device, reference, emReference);
+        var result = ParseLengthToPxCore(s, context, reference, emReference);
         LengthCache[key] = result;
         return result;
     }
 
-    private static float? ParseLengthToPxCore(string? s, MiniRenderDevice device, float reference, float? emReference = null)
+    private static float? ParseLengthToPxCore(string? s, RenderContext context, float reference, float? emReference = null)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
         var cur = s.Trim();
@@ -48,24 +48,24 @@ public static partial class CssLengthParser
 
         // max() / min() / clamp() over comma-separated arguments.
         if (cur.Contains("max(", StringComparison.OrdinalIgnoreCase))
-            return EvaluateFunction(cur, "max", device, reference, emReference, Math.Max);
+            return EvaluateFunction(cur, "max", context, reference, emReference, Math.Max);
         if (cur.Contains("min(", StringComparison.OrdinalIgnoreCase))
-            return EvaluateFunction(cur, "min", device, reference, emReference, Math.Min);
+            return EvaluateFunction(cur, "min", context, reference, emReference, Math.Min);
         if (cur.Contains("clamp(", StringComparison.OrdinalIgnoreCase))
-            return EvaluateClamp(cur, device, reference, emReference);
+            return EvaluateClamp(cur, context, reference, emReference);
 
         if (cur.Contains("calc(", StringComparison.OrdinalIgnoreCase))
         {
             var inner = ExtractFunctionInner(cur, "calc");
             if (inner.Length > 0)
-                return EvaluateCalcExpression(inner, device, reference, emReference);
+                return EvaluateCalcExpression(inner, context, reference, emReference);
         }
 
         if (cur.EndsWith("rem", StringComparison.OrdinalIgnoreCase))
-            return TryNumber(cur, 3, out var v) ? v * device.FontSize : null;
+            return TryNumber(cur, 3, out var v) ? v * context.FontSize : null;
 
         if (cur.EndsWith("em", StringComparison.OrdinalIgnoreCase))
-            return TryNumber(cur, 2, out var v2) ? v2 * (emReference ?? device.FontSize) : null;
+            return TryNumber(cur, 2, out var v2) ? v2 * (emReference ?? context.FontSize) : null;
 
         if (cur.EndsWith('%'))
             return TryNumber(cur, 1, out var pct) ? (pct / 100f) * reference : null;
@@ -92,10 +92,10 @@ public static partial class CssLengthParser
                 return null;
             return unit switch
             {
-                "vh" => (v5 / 100f) * device.ViewPortHeight,
-                "vw" => (v5 / 100f) * device.ViewPortWidth,
-                "vmin" => (v5 / 100f) * Math.Min(device.ViewPortWidth, device.ViewPortHeight),
-                _ => (v5 / 100f) * Math.Max(device.ViewPortWidth, device.ViewPortHeight)
+                "vh" => (v5 / 100f) * context.ViewPortHeight,
+                "vw" => (v5 / 100f) * context.ViewPortWidth,
+                "vmin" => (v5 / 100f) * Math.Min(context.ViewPortWidth, context.ViewPortHeight),
+                _ => (v5 / 100f) * Math.Max(context.ViewPortWidth, context.ViewPortHeight)
             };
         }
 
@@ -113,28 +113,28 @@ public static partial class CssLengthParser
         return float.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
-    private static float? EvaluateFunction(string cur, string name, MiniRenderDevice device, float reference, float? emReference, Func<float, float, float> combine)
+    private static float? EvaluateFunction(string cur, string name, RenderContext context, float reference, float? emReference, Func<float, float, float> combine)
     {
         var inner = ExtractFunctionInner(cur, name);
         if (inner.Length == 0) return null;
         float? best = null;
         foreach (var part in SplitTopLevelCommas(inner))
         {
-            var v = ParseLengthToPx(part, device, reference, emReference);
+            var v = ParseLengthToPx(part, context, reference, emReference);
             if (v.HasValue) best = best.HasValue ? combine(best.Value, v.Value) : v.Value;
         }
         return best;
     }
 
-    private static float? EvaluateClamp(string cur, MiniRenderDevice device, float reference, float? emReference)
+    private static float? EvaluateClamp(string cur, RenderContext context, float reference, float? emReference)
     {
         var inner = ExtractFunctionInner(cur, "clamp");
         if (inner.Length == 0) return null;
         var parts = SplitTopLevelCommas(inner);
         if (parts.Count != 3) return null;
-        var minv = ParseLengthToPx(parts[0], device, reference, emReference);
-        var valv = ParseLengthToPx(parts[1], device, reference, emReference);
-        var maxv = ParseLengthToPx(parts[2], device, reference, emReference);
+        var minv = ParseLengthToPx(parts[0], context, reference, emReference);
+        var valv = ParseLengthToPx(parts[1], context, reference, emReference);
+        var maxv = ParseLengthToPx(parts[2], context, reference, emReference);
         if (!valv.HasValue) return null;
         var v = valv.Value;
         if (minv.HasValue) v = Math.Max(v, minv.Value);
@@ -186,9 +186,9 @@ public static partial class CssLengthParser
     /// length (only 0 is), so it returns null — callers use <see cref="ParseUnitless"/>
     /// for multiplier values such as line-height.
     /// </summary>
-    private static float? EvaluateCalcExpression(string expr, MiniRenderDevice device, float reference, float? emReference)
+    private static float? EvaluateCalcExpression(string expr, RenderContext context, float reference, float? emReference)
     {
-        var result = EvaluateCalc(expr, device, reference, emReference);
+        var result = EvaluateCalc(expr, context, reference, emReference);
         if (result is not { } final) return null;
         if (!final.IsLength && final.Value != 0) return null;
         return (float)final.Value;
@@ -255,7 +255,7 @@ public static partial class CssLengthParser
     /// unitless numbers are tracked separately so mixed-unit arithmetic (e.g.
     /// <c>100% - 2em</c>) is rejected, matching CSS.
     /// </summary>
-    private static (double Value, bool IsLength)? EvaluateCalc(string expr, MiniRenderDevice device, float reference, float? emReference)
+    private static (double Value, bool IsLength)? EvaluateCalc(string expr, RenderContext context, float reference, float? emReference)
     {
         if (string.IsNullOrWhiteSpace(expr)) return null;
 
@@ -364,20 +364,20 @@ public static partial class CssLengthParser
                 {
                     case "px": px = v; break;
                     case "%": px = (v / 100.0) * reference; break;
-                    case "em": px = v * (emReference ?? device.FontSize); break;
-                    case "rem": px = v * device.FontSize; break;
+                    case "em": px = v * (emReference ?? context.FontSize); break;
+                    case "rem": px = v * context.FontSize; break;
                     case "pt": px = v * (96.0 / 72.0); break;
                     case "in": px = v * 96.0; break;
-                    case "vh": px = (v / 100.0) * device.ViewPortHeight; break;
-                    case "vw": px = (v / 100.0) * device.ViewPortWidth; break;
-                    case "vmin": px = (v / 100.0) * Math.Min(device.ViewPortHeight, device.ViewPortWidth); break;
-                    case "vmax": px = (v / 100.0) * Math.Max(device.ViewPortHeight, device.ViewPortWidth); break;
+                    case "vh": px = (v / 100.0) * context.ViewPortHeight; break;
+                    case "vw": px = (v / 100.0) * context.ViewPortWidth; break;
+                    case "vmin": px = (v / 100.0) * Math.Min(context.ViewPortHeight, context.ViewPortWidth); break;
+                    case "vmax": px = (v / 100.0) * Math.Max(context.ViewPortHeight, context.ViewPortWidth); break;
                     default: return false;
                 }
                 operand = (px, true);
                 return true;
             }
-            var pxv = ParseLengthToPx(token, device, reference, emReference);
+            var pxv = ParseLengthToPx(token, context, reference, emReference);
             if (pxv.HasValue)
             {
                 operand = (pxv.Value, true);
