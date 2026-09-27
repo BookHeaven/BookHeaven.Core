@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using BookHeaven.Core.DOM.CSS;
+using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Text.Abstractions;

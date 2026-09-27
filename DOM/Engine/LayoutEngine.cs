@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using BookHeaven.Core.DOM.CSS;
+using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.Engine.Models;
 using BookHeaven.Core.DOM.HTML;
 using BookHeaven.Core.DOM.HTML.Models;

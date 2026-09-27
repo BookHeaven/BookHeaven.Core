@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
 
 namespace BookHeaven.Core.DOM.CSS;
