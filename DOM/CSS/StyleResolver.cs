@@ -6,86 +6,6 @@ using BookHeaven.Core.DOM.HTML.Models;
 namespace BookHeaven.Core.DOM.CSS;
 
 /// <summary>
-/// A resolved style: the cascaded value (as a string) for each property. The layout
-/// engine reads values via <see cref="GetPropertyValue"/> and parses lengths itself,
-/// so this only needs to produce the winning raw value per property.
-///
-/// Properties are a small fixed list (typically &lt; 20), read by name a handful of
-/// times per element — a linear scan beats a Dictionary's per-entry overhead. The
-/// style is also SHARED across every element with the same signature (the engine
-/// memoizes resolutions per document), so it must stay immutable after resolution.
-/// </summary>
-public sealed class MiniStyle
-{
-    // (name, value, explicit) triples. The explicit flag marks properties set by a
-    // rule/inline style (as opposed to inherited): relative units in an inherited
-    // value (e.g. an inherited `font-size: 2.42em`) must NOT be re-resolved against
-    // the parent's resolved size — that would apply the unit twice.
-    internal List<(string Name, string Value, bool Explicit)> Props { get; } = [];
-
-    public string GetPropertyValue(string name)
-    {
-        var props = Props;
-        for (var i = 0; i < props.Count; i++)
-            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
-                return props[i].Value;
-        return string.Empty;
-    }
-
-    /// <summary>Sets a property as an EXPLICIT declaration (rule/inline style wins the cascade).</summary>
-    internal void Set(string name, string value)
-    {
-        var props = Props;
-        for (var i = 0; i < props.Count; i++)
-        {
-            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
-            {
-                var p = props[i];
-                props[i] = (p.Name, value, true);
-                return;
-            }
-        }
-        props.Add((name, value, true));
-    }
-
-    /// <summary>Sets a property as INHERITED (the explicit flag is cleared, so relative units are not re-resolved).</summary>
-    internal void SetInherited(string name, string value)
-    {
-        var props = Props;
-        for (var i = 0; i < props.Count; i++)
-        {
-            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
-            {
-                props[i] = (name, value, false);
-                return;
-            }
-        }
-        props.Add((name, value, false));
-    }
-
-    /// <summary>True when <paramref name="name"/> was set by a rule/inline style, not inherited.</summary>
-    internal bool IsExplicit(string name)
-    {
-        var props = Props;
-        for (var i = 0; i < props.Count; i++)
-            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
-                return props[i].Explicit;
-        return false;
-    }
-
-    internal void Remove(string name)
-    {
-        var props = Props;
-        for (var i = 0; i < props.Count; i++)
-            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
-            {
-                props.RemoveAt(i);
-                return;
-            }
-    }
-}
-
-/// <summary>
 /// Computes an element's style by resolving the CSS cascade in-house: selector
 /// matching, specificity, source order, <c>!important</c>, inheritance, and
 /// <c>var()</c> resolution.
@@ -105,9 +25,9 @@ public static class StyleResolver
     /// is a parallel array of precomputed selector specificities (one per rule) — the
     /// engine computes it once per document instead of per (rule × element) pair.
     /// </summary>
-    public static MiniStyle Resolve(Element el, List<CssRule> rules, int[] specificities, MiniStyle? parent)
+    public static CssStyle Resolve(Element el, List<CssRule> rules, int[] specificities, CssStyle? parent)
     {
-        var style = new MiniStyle();
+        var style = new CssStyle();
         // Pre-sized: a typical element matches a handful of declarations, so the
         // default-capacity dictionary would grow (and re-allocate) on every Consider.
         var best = new Dictionary<string, (int Importance, int Spec, int Order, string Value)>();
@@ -227,7 +147,7 @@ public static class StyleResolver
 
     private const int InlineSpecificity = 1_000_000;
 
-    private static void InheritIfAbsent(MiniStyle style, Dictionary<string, (int, int, int, string)> best, string prop, MiniStyle parent)
+    private static void InheritIfAbsent(CssStyle style, Dictionary<string, (int, int, int, string)> best, string prop, CssStyle parent)
     {
         if (best.ContainsKey(prop))
             return;
@@ -517,7 +437,7 @@ public static class StyleResolver
     }
 
     /// <summary>Resolves <c>var(--name, fallback)</c> references against the element's custom properties.</summary>
-    private static void ResolveVars(MiniStyle style)
+    private static void ResolveVars(CssStyle style)
     {
         var props = style.Props;
         for (var i = 0; i < props.Count; i++)

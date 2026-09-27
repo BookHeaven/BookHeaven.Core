@@ -1,5 +1,6 @@
 using System.Globalization;
 using BookHeaven.Core.DOM.CSS;
+using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Text.Abstractions;
@@ -77,7 +78,7 @@ internal static class TableLayout
     public static Result? Compute(
         Element table,
         float containingBlockContentWidth,
-        Func<Element, MiniStyle> getStyle,
+        Func<Element, CssStyle> getStyle,
         Func<Element, float> getFontSize,
         ITextMeasurer measurer,
         PageCalculatorOptions options,
@@ -245,7 +246,7 @@ internal static class TableLayout
 
     private static Cell ParseCell(
         Element el, int row, int column,
-        Func<Element, MiniStyle> getStyle, Func<Element, float> getFontSize,
+        Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
         ITextMeasurer measurer, PageCalculatorOptions options, RenderContext context)
     {
         var style = getStyle(el);
@@ -621,7 +622,7 @@ internal static class TableLayout
     // Table used width
     // ------------------------------------------------------------------
 
-    private static float ResolveTableUsedWidth(MiniStyle style, Column[] columns, float available, RenderContext context)
+    private static float ResolveTableUsedWidth(CssStyle style, Column[] columns, float available, RenderContext context)
     {
         var width = style.GetPropertyValue("width");
         if (!string.IsNullOrWhiteSpace(width) && !width.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
@@ -687,10 +688,10 @@ internal static class TableLayout
     // Small parsing helpers (self-contained; use the public length parser).
     // ------------------------------------------------------------------
 
-    private static float? ParseLength(MiniStyle style, string name, float reference, float emReference)
+    private static float? ParseLength(CssStyle style, string name, float reference, float emReference)
         => CssLengthParser.ParseLengthToPx(style.GetPropertyValue(name), new RenderContext(reference, reference, emReference), reference, emReference);
 
-    private static (float Spacing, bool Collapsed) ParseBorderSpacing(MiniStyle style, RenderContext context)
+    private static (float Spacing, bool Collapsed) ParseBorderSpacing(CssStyle style, RenderContext context)
     {
         var collapse = style.GetPropertyValue("border-collapse");
         var isCollapsed = collapse.Trim().Equals("collapse", StringComparison.OrdinalIgnoreCase);

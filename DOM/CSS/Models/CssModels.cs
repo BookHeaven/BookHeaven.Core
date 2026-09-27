@@ -50,3 +50,83 @@ public sealed class SelectorCompound
     /// <summary>True when this compound is a <c>::first-letter</c> pseudo-element.</summary>
     public bool FirstLetter { get; init; }
 }
+
+/// <summary>
+/// A resolved style: the cascaded value (as a string) for each property. The layout
+/// engine reads values via <see cref="GetPropertyValue"/> and parses lengths itself,
+/// so this only needs to produce the winning raw value per property.
+///
+/// Properties are a small fixed list (typically &lt; 20), read by name a handful of
+/// times per element — a linear scan beats a Dictionary's per-entry overhead. The
+/// style is also SHARED across every element with the same signature (the engine
+/// memoizes resolutions per document), so it must stay immutable after resolution.
+/// </summary>
+public sealed class CssStyle
+{
+    // (name, value, explicit) triples. The explicit flag marks properties set by a
+    // rule/inline style (as opposed to inherited): relative units in an inherited
+    // value (e.g. an inherited `font-size: 2.42em`) must NOT be re-resolved against
+    // the parent's resolved size — that would apply the unit twice.
+    internal List<(string Name, string Value, bool Explicit)> Props { get; } = [];
+
+    public string GetPropertyValue(string name)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+                return props[i].Value;
+        return string.Empty;
+    }
+
+    /// <summary>Sets a property as an EXPLICIT declaration (rule/inline style wins the cascade).</summary>
+    internal void Set(string name, string value)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+        {
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+            {
+                var p = props[i];
+                props[i] = (p.Name, value, true);
+                return;
+            }
+        }
+        props.Add((name, value, true));
+    }
+
+    /// <summary>Sets a property as INHERITED (the explicit flag is cleared, so relative units are not re-resolved).</summary>
+    internal void SetInherited(string name, string value)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+        {
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+            {
+                props[i] = (name, value, false);
+                return;
+            }
+        }
+        props.Add((name, value, false));
+    }
+
+    /// <summary>True when <paramref name="name"/> was set by a rule/inline style, not inherited.</summary>
+    internal bool IsExplicit(string name)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+                return props[i].Explicit;
+        return false;
+    }
+
+    internal void Remove(string name)
+    {
+        var props = Props;
+        for (var i = 0; i < props.Count; i++)
+            if (string.Equals(props[i].Name, name, StringComparison.Ordinal))
+            {
+                props.RemoveAt(i);
+                return;
+            }
+    }
+}

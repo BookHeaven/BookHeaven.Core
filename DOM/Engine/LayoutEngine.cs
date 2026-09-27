@@ -46,7 +46,7 @@ public sealed partial class LayoutEngine : IDisposable
     private readonly HtmlParser _parser;
 
     // Per-document state, cleared per call.
-    private readonly Dictionary<(string Tag, string Attrs, string? Inline, MiniStyle? Parent), StyleEntry> _styleMemo = [];
+    private readonly Dictionary<(string Tag, string Attrs, string? Inline, CssStyle? Parent), StyleEntry> _styleMemo = [];
     private Dictionary<Element, float>? _contentWidthMemo;
     private List<CssRule> _rules = [];
     private int[] _specificities = [];
@@ -60,7 +60,7 @@ public sealed partial class LayoutEngine : IDisposable
     /// </summary>
     private sealed class StyleEntry
     {
-        public required MiniStyle Style;
+        public required CssStyle Style;
         public required bool Hidden;
     }
 
@@ -198,11 +198,11 @@ public sealed partial class LayoutEngine : IDisposable
     }
 
     /// <summary>Computed style, memoized per (signature, parent style) — see <see cref="GetStyleEntry"/>.</summary>
-    private MiniStyle GetComputedStyle(Element el) => GetStyleEntry(el).Style;
+    private CssStyle GetComputedStyle(Element el) => GetStyleEntry(el).Style;
 
     private bool IsHidden(Element el) => GetStyleEntry(el).Hidden;
 
-    private static bool ComputeHidden(Element el, MiniStyle style)
+    private static bool ComputeHidden(Element el, CssStyle style)
     {
         if (el.HasAttribute("hidden")) return true;
         var inline = el.Style;
@@ -985,7 +985,7 @@ public sealed partial class LayoutEngine : IDisposable
     /// Parses the <c>line-height</c> keeping the LENGTH and UNITLESS forms separate:
     /// a unitless line-height multiplies each inline's OWN font size (browser model).
     /// </summary>
-    private (float? LengthPx, float? Multiplier) ResolveLineHeightForm(MiniStyle computed, float fontSize)
+    private (float? LengthPx, float? Multiplier) ResolveLineHeightForm(CssStyle computed, float fontSize)
     {
         float? lengthPx = null;
         float? multiplier = null;
@@ -1051,7 +1051,7 @@ public sealed partial class LayoutEngine : IDisposable
     }
 
     /// <summary>Parses the CSS page-break properties into <see cref="LayoutBlockFlags"/>.</summary>
-    private static LayoutBlockFlags ParseBreakFlags(MiniStyle computed)
+    private static LayoutBlockFlags ParseBreakFlags(CssStyle computed)
     {
         LayoutBlockFlags flags = 0;
 
@@ -1291,10 +1291,10 @@ public sealed partial class LayoutEngine : IDisposable
     // The resolver expands every logical property (margin-block, margin-block-start,
     // margin-inline, ...) into physical longhands at cascade time, so the engine reads
     // the physical longhand directly — no per-property fallback chain is needed.
-    private float? TryGetComputedMarginPx(MiniStyle computed, string name, float reference, float? emReference)
+    private float? TryGetComputedMarginPx(CssStyle computed, string name, float reference, float? emReference)
         => ParseLengthToPx(computed.GetPropertyValue(name), reference, emReference);
 
-    private float? TryGetComputedPaddingPx(MiniStyle computed, string name, float reference, float? emReference)
+    private float? TryGetComputedPaddingPx(CssStyle computed, string name, float reference, float? emReference)
         => ParseLengthToPx(computed.GetPropertyValue(name), reference, emReference);
 
     private static bool IsImageElement(Element el)
