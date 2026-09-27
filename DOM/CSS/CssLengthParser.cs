@@ -16,29 +16,31 @@ public readonly record struct RenderContext(float ViewPortWidth, float ViewPortH
 /// multipliers, e.g. line-height). <c>var()</c> is resolved by the style resolver
 /// BEFORE this parser sees the value, so it is not handled here.
 /// </summary>
-public static partial class CssLengthParser
+public sealed partial class CssLengthParser
 {
     // A length's pixel value is a pure function of (raw string, reference, emReference,
     // device). In a book those repeat heavily (every paragraph shares the same calc/length
-    // and a handful of widths/font-sizes), so the result is memoized for the process
-    // lifetime. The key is a struct (no boxing); reference/emReference are rounded to 3
+    // and a handful of widths/font-sizes), so the result is memoized per parser
+    // instance. The cache is per-instance, not global: each PageCalculator session owns
+    // its parser and its cache, so concurrent users never share (or grow) a process-wide
+    // cache. The key is a struct (no boxing); reference/emReference are rounded to 3
     // decimals so "equal" layout values share an entry (sub-pixel, invisible). device is
     // included so vw/vh/vmin/vmax stay correct across different viewports.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, float, float, RenderContext), float?> LengthCache = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string, float, float, RenderContext), float?> _lengthCache = [];
 
-    public static float? ParseLengthToPx(string? s, RenderContext context, float reference, float? emReference = null)
+    public float? ParseLengthToPx(string? s, RenderContext context, float reference, float? emReference = null)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
         var emRef = emReference ?? context.FontSize;
         var key = (s, MathF.Round(reference, 3), MathF.Round(emRef, 3), device: context);
-        if (LengthCache.TryGetValue(key, out var cached))
+        if (_lengthCache.TryGetValue(key, out var cached))
             return cached;
         var result = ParseLengthToPxCore(s, context, reference, emReference);
-        LengthCache[key] = result;
+        _lengthCache[key] = result;
         return result;
     }
 
-    private static float? ParseLengthToPxCore(string? s, RenderContext context, float reference, float? emReference = null)
+    private float? ParseLengthToPxCore(string? s, RenderContext context, float reference, float? emReference = null)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
         var cur = s.Trim();
@@ -113,7 +115,7 @@ public static partial class CssLengthParser
         return float.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
-    private static float? EvaluateFunction(string cur, string name, RenderContext context, float reference, float? emReference, Func<float, float, float> combine)
+    private float? EvaluateFunction(string cur, string name, RenderContext context, float reference, float? emReference, Func<float, float, float> combine)
     {
         var inner = ExtractFunctionInner(cur, name);
         if (inner.Length == 0) return null;
@@ -126,7 +128,7 @@ public static partial class CssLengthParser
         return best;
     }
 
-    private static float? EvaluateClamp(string cur, RenderContext context, float reference, float? emReference)
+    private float? EvaluateClamp(string cur, RenderContext context, float reference, float? emReference)
     {
         var inner = ExtractFunctionInner(cur, "clamp");
         if (inner.Length == 0) return null;
@@ -186,7 +188,7 @@ public static partial class CssLengthParser
     /// length (only 0 is), so it returns null — callers use <see cref="ParseUnitless"/>
     /// for multiplier values such as line-height.
     /// </summary>
-    private static float? EvaluateCalcExpression(string expr, RenderContext context, float reference, float? emReference)
+    private float? EvaluateCalcExpression(string expr, RenderContext context, float reference, float? emReference)
     {
         var result = EvaluateCalc(expr, context, reference, emReference);
         if (result is not { } final) return null;
@@ -199,7 +201,7 @@ public static partial class CssLengthParser
     /// unitless <c>calc()</c>, and unitless <c>min()</c>/<c>max()</c>/<c>clamp()</c>.
     /// Returns null for lengths and unparseable values.
     /// </summary>
-    public static float? ParseUnitless(string? s)
+    public float? ParseUnitless(string? s)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
         var cur = s.Trim();
@@ -237,7 +239,7 @@ public static partial class CssLengthParser
         return null;
     }
 
-    private static float? EvaluateUnitlessFunction(string cur, string name, Func<float, float, float> combine)
+    private float? EvaluateUnitlessFunction(string cur, string name, Func<float, float, float> combine)
     {
         var inner = ExtractFunctionInner(cur, name);
         if (inner.Length == 0) return null;
@@ -255,7 +257,7 @@ public static partial class CssLengthParser
     /// unitless numbers are tracked separately so mixed-unit arithmetic (e.g.
     /// <c>100% - 2em</c>) is rejected, matching CSS.
     /// </summary>
-    private static (double Value, bool IsLength)? EvaluateCalc(string expr, RenderContext context, float reference, float? emReference)
+    private (double Value, bool IsLength)? EvaluateCalc(string expr, RenderContext context, float reference, float? emReference)
     {
         if (string.IsNullOrWhiteSpace(expr)) return null;
 

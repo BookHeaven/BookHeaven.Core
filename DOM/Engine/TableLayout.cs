@@ -82,7 +82,8 @@ internal static class TableLayout
         Func<Element, float> getFontSize,
         ITextMeasurer measurer,
         PageCalculatorOptions options,
-        RenderContext context)
+        RenderContext context,
+        CssLengthParser parser)
     {
         // --- Collect rows and cells into a grid (colspan + rowspan aware). ---
         // Rows may be direct children of the table OR wrapped in <thead>/<tbody>/<tfoot>;
@@ -110,7 +111,7 @@ internal static class TableLayout
                 while (col < columnCount && occupied[r, col]) col++;
                 if (col >= columnCount) break;
 
-                var cell = ParseCell(cellEl, r, col, getStyle, getFontSize, measurer, options, context);
+                var cell = ParseCell(cellEl, r, col, getStyle, getFontSize, measurer, options, context, parser);
                 cells.Add(cell);
                 for (var dr = 0; dr < cell.RowSpan && r + dr < rowElements.Count; dr++)
                     for (var dc = 0; dc < cell.ColSpan && col + dc < columnCount; dc++)
@@ -144,15 +145,15 @@ internal static class TableLayout
         // --- Table box metrics (border-spacing, padding, border). ---
         var tableStyle = getStyle(table);
         var tableFontSize = getFontSize(table);
-        var (borderSpacing, isCollapsed) = ParseBorderSpacing(tableStyle, context);
-        var tablePadL = ParseLength(tableStyle, "padding-left", containingBlockContentWidth, tableFontSize) ?? 0f;
-        var tablePadR = ParseLength(tableStyle, "padding-right", containingBlockContentWidth, tableFontSize) ?? 0f;
-        var tablePadT = ParseLength(tableStyle, "padding-top", containingBlockContentWidth, tableFontSize) ?? 0f;
-        var tablePadB = ParseLength(tableStyle, "padding-bottom", containingBlockContentWidth, tableFontSize) ?? 0f;
-        var tableBorderL = ParseLength(tableStyle, "border-left-width", containingBlockContentWidth, tableFontSize) ?? 0f;
-        var tableBorderR = ParseLength(tableStyle, "border-right-width", containingBlockContentWidth, tableFontSize) ?? 0f;
-        var tableBorderT = ParseLength(tableStyle, "border-top-width", containingBlockContentWidth, tableFontSize) ?? 0f;
-        var tableBorderB = ParseLength(tableStyle, "border-bottom-width", containingBlockContentWidth, tableFontSize) ?? 0f;
+        var (borderSpacing, isCollapsed) = ParseBorderSpacing(tableStyle, context, parser);
+        var tablePadL = ParseLength(tableStyle, "padding-left", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tablePadR = ParseLength(tableStyle, "padding-right", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tablePadT = ParseLength(tableStyle, "padding-top", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tablePadB = ParseLength(tableStyle, "padding-bottom", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tableBorderL = ParseLength(tableStyle, "border-left-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tableBorderR = ParseLength(tableStyle, "border-right-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tableBorderT = ParseLength(tableStyle, "border-top-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tableBorderB = ParseLength(tableStyle, "border-bottom-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
 
         // --- Process colspan cells (percent-surplus, then min/max distribution). ---
         foreach (var cell in cells.Where(c => c.ColSpan > 1))
@@ -171,7 +172,7 @@ internal static class TableLayout
         }
 
         // --- Table used width (explicit, or shrink-to-fit with the percent-aware model). ---
-        var usedWidth = ResolveTableUsedWidth(tableStyle, columns.ToArray(), containingBlockContentWidth, context);
+        var usedWidth = ResolveTableUsedWidth(tableStyle, columns.ToArray(), containingBlockContentWidth, context, parser);
 
         // --- Assignable width = used width − undistributable space. ---
         var undistributable = (tableBorderL + tableBorderR + tablePadL + tablePadR)
@@ -247,7 +248,8 @@ internal static class TableLayout
     private static Cell ParseCell(
         Element el, int row, int column,
         Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
-        ITextMeasurer measurer, PageCalculatorOptions options, RenderContext context)
+        ITextMeasurer measurer, PageCalculatorOptions options, RenderContext context,
+        CssLengthParser parser)
     {
         var style = getStyle(el);
         var fontSize = getFontSize(el);
@@ -262,14 +264,14 @@ internal static class TableLayout
             Text = el.TrimmedTextContent,
             FontSize = fontSize,
             Style = styleEnum,
-            PaddingLeft = ParseLength(style, "padding-left", 0f, fontSize) ?? 0f,
-            PaddingRight = ParseLength(style, "padding-right", 0f, fontSize) ?? 0f,
-            PaddingTop = ParseLength(style, "padding-top", 0f, fontSize) ?? 0f,
-            PaddingBottom = ParseLength(style, "padding-bottom", 0f, fontSize) ?? 0f,
-            BorderLeft = ParseLength(style, "border-left-width", 0f, fontSize) ?? 0f,
-            BorderRight = ParseLength(style, "border-right-width", 0f, fontSize) ?? 0f,
-            BorderTop = ParseLength(style, "border-top-width", 0f, fontSize) ?? 0f,
-            BorderBottom = ParseLength(style, "border-bottom-width", 0f, fontSize) ?? 0f,
+            PaddingLeft = ParseLength(style, "padding-left", 0f, fontSize, parser) ?? 0f,
+            PaddingRight = ParseLength(style, "padding-right", 0f, fontSize, parser) ?? 0f,
+            PaddingTop = ParseLength(style, "padding-top", 0f, fontSize, parser) ?? 0f,
+            PaddingBottom = ParseLength(style, "padding-bottom", 0f, fontSize, parser) ?? 0f,
+            BorderLeft = ParseLength(style, "border-left-width", 0f, fontSize, parser) ?? 0f,
+            BorderRight = ParseLength(style, "border-right-width", 0f, fontSize, parser) ?? 0f,
+            BorderTop = ParseLength(style, "border-top-width", 0f, fontSize, parser) ?? 0f,
+            BorderBottom = ParseLength(style, "border-bottom-width", 0f, fontSize, parser) ?? 0f,
             LineHeightLengthPx = null,
             LineHeightMultiplier = null
         };
@@ -278,11 +280,11 @@ internal static class TableLayout
         var lh = style.GetPropertyValue("line-height");
         if (!string.IsNullOrWhiteSpace(lh) && !lh.Trim().Equals("normal", StringComparison.OrdinalIgnoreCase))
         {
-            var len = ParseLength(style, "line-height", 0f, fontSize);
+            var len = ParseLength(style, "line-height", 0f, fontSize, parser);
             if (len is > 0) cell.LineHeightLengthPx = len;
             else
             {
-                var mult = CssLengthParser.ParseUnitless(lh);
+                var mult = parser.ParseUnitless(lh);
                 if (mult is > 0) cell.LineHeightMultiplier = mult;
             }
         }
@@ -299,7 +301,7 @@ internal static class TableLayout
             }
             else if (!t.Equals("auto", StringComparison.OrdinalIgnoreCase))
             {
-                var px = ParseLength(style, "width", 0f, fontSize);
+                var px = ParseLength(style, "width", 0f, fontSize, parser);
                 if (px is > 0) cell.FixedWidthPx = px;
             }
         }
@@ -622,12 +624,12 @@ internal static class TableLayout
     // Table used width
     // ------------------------------------------------------------------
 
-    private static float ResolveTableUsedWidth(CssStyle style, Column[] columns, float available, RenderContext context)
+    private static float ResolveTableUsedWidth(CssStyle style, Column[] columns, float available, RenderContext context, CssLengthParser parser)
     {
         var width = style.GetPropertyValue("width");
         if (!string.IsNullOrWhiteSpace(width) && !width.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
-            var px = ParseLength(style, "width", available, 0f);
+            var px = ParseLength(style, "width", available, 0f, parser);
             if (px is > 0) return Math.Min(px.Value, available);
         }
 
@@ -688,10 +690,10 @@ internal static class TableLayout
     // Small parsing helpers (self-contained; use the public length parser).
     // ------------------------------------------------------------------
 
-    private static float? ParseLength(CssStyle style, string name, float reference, float emReference)
-        => CssLengthParser.ParseLengthToPx(style.GetPropertyValue(name), new RenderContext(reference, reference, emReference), reference, emReference);
+    private static float? ParseLength(CssStyle style, string name, float reference, float emReference, CssLengthParser parser)
+        => parser.ParseLengthToPx(style.GetPropertyValue(name), new RenderContext(reference, reference, emReference), reference, emReference);
 
-    private static (float Spacing, bool Collapsed) ParseBorderSpacing(CssStyle style, RenderContext context)
+    private static (float Spacing, bool Collapsed) ParseBorderSpacing(CssStyle style, RenderContext context, CssLengthParser parser)
     {
         var collapse = style.GetPropertyValue("border-collapse");
         var isCollapsed = collapse.Trim().Equals("collapse", StringComparison.OrdinalIgnoreCase);
@@ -700,7 +702,7 @@ internal static class TableLayout
         if (!string.IsNullOrWhiteSpace(raw))
         {
             var first = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
-            var px = CssLengthParser.ParseLengthToPx(first, context, 0f);
+            var px = parser.ParseLengthToPx(first, context, 0f);
             if (px is > 0) spacing = px.Value;
         }
         return (spacing, isCollapsed);

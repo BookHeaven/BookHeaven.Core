@@ -44,6 +44,7 @@ public sealed partial class LayoutEngine : IDisposable
     private readonly bool _ownsMeasurer;
     private readonly RenderContext _context;
     private readonly HtmlParser _parser;
+    private readonly CssLengthParser _lengthParser = new();
 
     // Per-document state, cleared per call.
     private readonly Dictionary<(string Tag, string Attrs, string? Inline, CssStyle? Parent), StyleEntry> _styleMemo = [];
@@ -270,7 +271,7 @@ public sealed partial class LayoutEngine : IDisposable
     }
 
     private float? ParseLengthToPx(string? s, float reference, float? emReference = null)
-        => CssLengthParser.ParseLengthToPx(s, _context, reference, emReference);
+        => _lengthParser.ParseLengthToPx(s, _context, reference, emReference);
 
     /// <summary>
     /// Recursively measures a block element, appending its block to <paramref name="sink"/>.
@@ -408,7 +409,8 @@ public sealed partial class LayoutEngine : IDisposable
             ResolveFontSize,
             _measurer,
             _options,
-            _context);
+            _context,
+            _lengthParser);
         if (result is null) return null;
 
         var marginTop = TryGetComputedMarginPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
@@ -999,7 +1001,7 @@ public sealed partial class LayoutEngine : IDisposable
             {
                 var parsed = ParseLengthToPx(lhTrim, fontSize, fontSize);
                 if (parsed.HasValue) lengthPx = parsed.Value;
-                else if (CssLengthParser.ParseUnitless(lhTrim) is { } unitless) multiplier = unitless;
+                else if (_lengthParser.ParseUnitless(lhTrim) is { } unitless) multiplier = unitless;
             }
         }
         return (lengthPx, multiplier);
