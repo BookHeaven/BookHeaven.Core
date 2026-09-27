@@ -198,13 +198,40 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         var lineCount = 0;
         var lineEmpty = true;
 
-        TextRunWrapper.ForEachSegment(text, w =>
+        TextRunWrapper.ForEachSegment(text, part =>
         {
-            if (w.Length == 0)
+            if (part.Length == 0)
             {
                 // Leading/trailing whitespace: a browser collapses and drops it.
                 return;
             }
+            var segments = part.Split('\uFFFC');
+            for (var i = 0; i < segments.Length; i++)
+            {
+                if (i > 0) ForceBreak();
+                if (segments[i].Length == 0) continue;
+                PlaceWord(segments[i]);
+            }
+        });
+        if (!lineEmpty)
+        {
+            if (sb is not null)
+            {
+                lines.Add(sb.ToString());
+            }
+            lineCount++;
+        }
+        var total = lineHeight * lineCount;
+        return new TextMeasurementResult
+        {
+            Lines = lines,
+            LineCount = lineCount,
+            LineHeightPx = lineHeight,
+            TotalHeightPx = total
+        };
+
+        void PlaceWord(string w)
+        {
             var limit = ((lineCount == 0 && firstLineWidthPx.HasValue) ? firstLineWidthPx.Value : maxWidthPx);
             var wWidth = GetWordWidth(w, fontSizePx, style);
             if (letterSpacingPx.HasValue && w.Length > 1)
@@ -265,23 +292,22 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     lineEmpty = false;
                 }
             }
-        });
-        if (!lineEmpty)
+        }
+
+        // A <br> (U+FFFC) materializes the current line — even an empty one — and
+        // starts a new line; a trailing break at the end of the text adds nothing
+        // (the final flush below skips an empty line).
+        void ForceBreak()
         {
             if (sb is not null)
             {
                 lines.Add(sb.ToString());
+                sb.Clear();
             }
             lineCount++;
+            currentWidth = 0f;
+            lineEmpty = true;
         }
-        var total = lineHeight * lineCount;
-        return new TextMeasurementResult
-        {
-            Lines = lines,
-            LineCount = lineCount,
-            LineHeightPx = lineHeight,
-            TotalHeightPx = total
-        };
     }
 
     /// <summary>
@@ -328,12 +354,37 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             maxWidthPx, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx, includeLineText);
     }
 
+    public SKFontMetrics GetFontMetrics(float fontSizePx, FontStyle style)
+    {
+        return _shapers[(int)style].GetFont(fontSizePx).Metrics;
+    }
+
+    public float GetNaturalLineHeight(float fontSizePx, FontStyle style)
+    {
+        var metrics = _shapers[(int)style].GetFont(fontSizePx).Metrics;
+        // Skia reports ascent as negative; the natural line height includes the leading.
+        return -metrics.Ascent + metrics.Descent + metrics.Leading;
+    }
+
     private float GetWordWidth(string word, float fontSizePx, FontStyle style)
     {
         if (_wordWidthCache.TryGetValue((word, fontSizePx, style), out var width)) return width;
 
         var result = MeasureShapedTextWidth(word, fontSizePx, style);
         _wordWidthCache.TryAdd((word, fontSizePx, style), result);
+        return result;
+    }
+
+    public float MeasureTextWidth(string text, float fontSizePx, FontStyle style)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return 0f;
+        }
+        if (_wordWidthCache.TryGetValue((text, fontSizePx, style), out var width)) return width;
+
+        var result = MeasureShapedTextWidth(text, fontSizePx, style);
+        _wordWidthCache.TryAdd((text, fontSizePx, style), result);
         return result;
     }
 

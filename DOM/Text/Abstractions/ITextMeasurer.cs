@@ -1,3 +1,5 @@
+using SkiaSharp;
+
 namespace BookHeaven.Core.DOM.Text.Abstractions;
 
 /// <summary>
@@ -40,6 +42,27 @@ public interface ITextMeasurer
     /// meaning as in <see cref="Measure"/>.
     /// </summary>
     TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true);
+
+    /// <summary>
+    /// The font's ascent and descent (in px, both positive) at the given size: the
+    /// distances from the baseline to the top and bottom of the font's em box. The
+    /// layout engine uses them to compute the strut (the line box a line occupies)
+    /// when sizing lines that contain inline images (baseline model).
+    /// </summary>
+    SKFontMetrics GetFontMetrics(float fontSizePx, FontStyle style);
+
+    /// <summary>
+    /// The full natural line height (ascent + descent + leading) for a font at the given size.
+    /// Unlike <see cref="GetFontMetrics"/>, this includes the font's leading, matching how browsers
+    /// compute the height of a line box (e.g. for <c>initial-letter</c> drop caps).
+    /// </summary>
+    float GetNaturalLineHeight(float fontSizePx, FontStyle style);
+
+    /// <summary>
+    /// Measures the width of a text run on a single line (no wrapping) in pixels.
+    /// Used for table cell min/max-content sizing.
+    /// </summary>
+    float MeasureTextWidth(string text, float fontSizePx, FontStyle style);
 }
 
 public sealed class TextMeasurementResult

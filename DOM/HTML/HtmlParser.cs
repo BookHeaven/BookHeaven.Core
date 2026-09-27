@@ -3,6 +3,7 @@ using System.Text;
 using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Services;
+using BookHeaven.Core.DOM.Text.Abstractions;
 
 namespace BookHeaven.Core.DOM.HTML;
 
@@ -187,11 +188,21 @@ public sealed class HtmlParser
     /// The global stylesheet injected before the chapter stylesheets. It declares the
     /// custom properties the chapter CSS references via <c>var()</c> and the page box
     /// geometry. Moved here from the engine so the parser owns the full HTML.
+    ///
+    /// Public so browser-based validation tests can render chapters with the exact
+    /// same CSS the engine lays out with.
     /// </summary>
-    private static string BuildGlobalCss(PageCalculatorOptions o)
+    public static string BuildGlobalCss(PageCalculatorOptions o)
     {
         var ci = CultureInfo.InvariantCulture;
         return $$"""
+                 
+                 *, :after, :before, ::backdrop {
+                    box-sizing: border-box;
+                    border: 0 solid;
+                    margin: 0;
+                    padding: 0;
+                 }
                  html {
                      --font-size: {{o.FontSize.ToString("0.00", ci)}};
                      --line-height: {{o.LineHeight.ToString("0.00", ci)}};
@@ -206,11 +217,11 @@ public sealed class HtmlParser
                      --page-width: calc({{o.PageWidthPx}} * 1px);
 
                      font-size: calc({{o.RootFontSizePx.ToString("0.00", ci)}} * 1px);
+                     line-height: {{ITextMeasurer.NormalLineHeightMultiplier.ToString("0.00", ci)}};
                      height: var(--page-height);
                      width: var(--page-width);
                      margin: calc(var(--margin-vertical) * 1rem) calc(var(--margin-horizontal) * 1rem);
                      padding: 0 !important;
-                     overflow: hidden;
                      display: flex;
                  }
 
@@ -231,7 +242,6 @@ public sealed class HtmlParser
                  }
 
                  p {
-                     word-break: auto-phrase !important;
                      hyphens: none !important;
                  }
 
@@ -263,6 +273,7 @@ public sealed class HtmlParser
                      font-size: 0.6em;
                      line-height: normal;
                      font-weight: bold;
+                     vertical-align: baseline !important;
                  }
 
                  .drop-cap {

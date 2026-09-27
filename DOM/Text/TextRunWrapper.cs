@@ -34,8 +34,8 @@ public static partial class TextRunWrapper
     // "normal" line-height approximation, same factor the single-size measurers use.
     private const float NormalLineHeightMultiplier = ITextMeasurer.NormalLineHeightMultiplier;
 
-    /// <summary>One word plus the font size and style it renders at and the size/style of the run that owns the collapsed space before it (null = no space in the source). <see cref="PrecomputedWidth"/> is set when the token is a glued unit of several original tokens (a word plus punctuation that follows it with no space); it then overrides the per-word width probe.</summary>
-    private readonly record struct Token(string Word, float FontSize, FontStyle Style, float? SpaceOwnerSize, FontStyle? SpaceOwnerStyle, float? PrecomputedWidth = null);
+    /// <summary>One word plus the font size and style it renders at and the size/style of the run that owns the collapsed space before it (null = no space in the source). <see cref="PrecomputedWidth"/> is set when the token is a glued unit of several original tokens (a word plus punctuation that follows it with no space); it then overrides the per-word width probe. <see cref="ForcedBreak"/> marks a <c>&lt;br&gt;</c> (U+FFFC): it materializes the current line — even an empty one — and starts a new line.</summary>
+    private readonly record struct Token(string Word, float FontSize, FontStyle Style, float? SpaceOwnerSize, FontStyle? SpaceOwnerStyle, float? PrecomputedWidth = null, bool ForcedBreak = false);
 
     /// <summary>
     /// <paramref name="includeLineText"/>: when false the per-line strings are not
@@ -74,8 +74,10 @@ public static partial class TextRunWrapper
         // A browser does not break between a word and punctuation that immediately follows
         // it with no space (e.g. "word,"), even across run/style boundaries. Glue such
         // tokens into one unbreakable unit so the fit test uses the combined width.
+        // Break tokens are never glued: they are line boundaries, not words.
         for (var i = tokens.Count - 1; i > 0; i--)
         {
+            if (tokens[i].ForcedBreak || tokens[i - 1].ForcedBreak) continue;
             if (tokens[i].SpaceOwnerSize.HasValue) continue;
             var prev = tokens[i - 1];
             var glued = tokens[i];
@@ -89,9 +91,20 @@ public static partial class TextRunWrapper
         var currentText = includeLineText ? new StringBuilder() : null;
         var currentWidth = 0f;
 
-        void FlushLine()
+        // <paramref name="materializeEmpty"/>: a <c>&lt;br&gt;</c> flushes the current
+        // line even when it is empty (an empty line of the break's own box height);
+        // the final flush and wrap flushes only materialize non-empty lines.
+        void FlushLine(bool materializeEmpty, float emptyLineHeight)
         {
-            if (current.Count == 0) return;
+            if (current.Count == 0)
+            {
+                if (materializeEmpty)
+                {
+                    if (currentText is not null) lines.Add(string.Empty);
+                    lineHeights.Add(emptyLineHeight);
+                }
+                return;
+            }
             if (currentText is not null)
             {
                 lines.Add(currentText.ToString());
@@ -164,6 +177,14 @@ public static partial class TextRunWrapper
 
         foreach (var token in tokens)
         {
+            if (token.ForcedBreak)
+            {
+                // A <br> materializes the current line (even an empty one) and starts
+                // a new line; the empty line's height is the break's own box height.
+                FlushLine(true, BoxHeight(token.FontSize));
+                continue;
+            }
+
             var wWidth = token.PrecomputedWidth ?? WordWidth(token.Word, token.FontSize, token.Style);
 
             if (current.Count > 0)
@@ -192,7 +213,7 @@ public static partial class TextRunWrapper
                     currentText?.Append(' ').Append(head);
                     currentWidth += spaceW + WordWidth(head, token.FontSize, token.Style);
                     current.Add(new Token(head, token.FontSize, token.Style, token.SpaceOwnerSize, token.SpaceOwnerStyle));
-                    FlushLine();
+                    FlushLine(false, 0f);
                     var tailToken = new Token(tail, token.FontSize, token.Style, null, null);
                     var tailWidth = WordWidth(tail, token.FontSize, token.Style);
                     if (tailWidth <= maxWidthPx)
@@ -208,7 +229,7 @@ public static partial class TextRunWrapper
                     continue;
                 }
 
-                FlushLine();
+                FlushLine(false, 0f);
             }
 
             // Token starts a fresh line.
@@ -226,7 +247,8 @@ public static partial class TextRunWrapper
             }
         }
 
-        FlushLine();
+        // A trailing <br> adds nothing: the final flush skips an empty line.
+        FlushLine(false, 0f);
 
         var maxHeight = 0f;
         var total = 0f;
@@ -279,15 +301,30 @@ public static partial class TextRunWrapper
                     }
                     return;
                 }
-                // A word. The space before it is internal (owned by this run) for any
-                // word after the first, otherwise it's a boundary space carried over
-                // from a previous run (or absent).
-                var space = sawWord ? run.FontSizePx : pendingSpace;
-                var spaceStyle = sawWord ? run.Style : pendingSpaceStyle;
-                tokens.Add(new Token(part, run.FontSizePx, run.Style, space, spaceStyle));
-                sawWord = true;
-                pendingSpace = null;
-                pendingSpaceStyle = null;
+                // A <br> (U+FFFC) inside the segment is a forced break: it emits a
+                // break token and resets the space state (no space after a break).
+                var segments = part.Split('\uFFFC');
+                for (var i = 0; i < segments.Length; i++)
+                {
+                    if (i > 0)
+                    {
+                        tokens.Add(new Token(string.Empty, run.FontSizePx, run.Style, null, null, null, true));
+                        sawWord = false;
+                        pendingSpace = null;
+                        pendingSpaceStyle = null;
+                    }
+                    var seg = segments[i];
+                    if (seg.Length == 0) continue;
+                    // A word. The space before it is internal (owned by this run) for
+                    // any word after the first, otherwise it's a boundary space carried
+                    // over from a previous run (or absent).
+                    var space = sawWord ? run.FontSizePx : pendingSpace;
+                    var spaceStyle = sawWord ? run.Style : pendingSpaceStyle;
+                    tokens.Add(new Token(seg, run.FontSizePx, run.Style, space, spaceStyle));
+                    sawWord = true;
+                    pendingSpace = null;
+                    pendingSpaceStyle = null;
+                }
             });
         }
         return tokens;

@@ -14,6 +14,8 @@ public sealed record MiniDeclaration(string Property, string Value, bool Importa
 public sealed class MiniSelector
 {
     public required List<MiniCompound> Compounds { get; init; }
+    /// <summary>True when the selector targets a <c>::first-letter</c> pseudo-element.</summary>
+    public bool FirstLetter { get; init; }
 }
 
 /// <summary>An attribute selector: <c>[name]</c>, <c>[name=value]</c>, <c>[name~=value]</c>, ...</summary>
@@ -39,6 +41,8 @@ public sealed class MiniCompound
     public List<MiniAttribute> Attributes { get; init; } = [];
     /// <summary>Compounds from <c>:not(...)</c>; the element must match NONE of them.</summary>
     public List<MiniCompound> Not { get; init; } = [];
+    /// <summary>True when this compound is a <c>::first-letter</c> pseudo-element.</summary>
+    public bool FirstLetter { get; init; }
 }
 
 /// <summary>
@@ -172,7 +176,15 @@ public static class CssParser
             var selector = ParseSelector(part.Trim());
             if (selector is null)
                 continue;
-            rules.Add(new MiniCssRule { Selector = selector, Declarations = declarations });
+            // ::first-letter rules: only initial-letter* properties affect layout;
+            // the rest (font, color, margins) style the drop-cap glyph, which the
+            // engine does not render specially.
+            var decls = selector.FirstLetter
+                ? declarations.Where(d => d.Property is "initial-letter" or "initial-letter-align").ToList()
+                : declarations;
+            if (decls.Count == 0)
+                continue;
+            rules.Add(new MiniCssRule { Selector = selector, Declarations = decls });
         }
     }
 
@@ -220,14 +232,16 @@ public static class CssParser
             return null;
 
         var compounds = new List<MiniCompound>();
+        var firstLetter = false;
         foreach (var token in selector.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var compound = ParseCompound(token);
             if (compound is null)
                 return null;
             compounds.Add(compound);
+            if (compound.FirstLetter) firstLetter = true;
         }
-        return compounds.Count > 0 ? new MiniSelector { Compounds = compounds } : null;
+        return compounds.Count > 0 ? new MiniSelector { Compounds = compounds, FirstLetter = firstLetter } : null;
     }
 
     /// <summary>
@@ -244,6 +258,7 @@ public static class CssParser
         var ids = new List<string>();
         var attributes = new List<MiniAttribute>();
         var nots = new List<MiniCompound>();
+        var isFirstLetter = false;
 
         var i = 0;
         // Element name (or universal '*'). A leading '[', ':' or '.' means no element name.
@@ -299,10 +314,21 @@ public static class CssParser
             else if (c == ':')
             {
                 var start = ++i;
+                // Pseudo-element (::name): skip the second colon so the name is clean.
+                if (i < token.Length && token[i] == ':')
+                {
+                    i++;
+                    start = i;
+                }
                 while (i < token.Length && token[i] is not '(' and not '[')
                     i++;
                 var name = token[start..i].ToLowerInvariant();
-                if (name == "not" && i < token.Length && token[i] == '(')
+                if (name == "first-letter")
+                {
+                    // ::first-letter — the declarations apply to the base element.
+                    isFirstLetter = true;
+                }
+                else if (name == "not" && i < token.Length && token[i] == '(')
                 {
                     var close = FindMatchingParen(token, i);
                     if (close < 0) return null;
@@ -316,7 +342,7 @@ public static class CssParser
                 }
                 else
                 {
-                    return null; // Unsupported pseudo-class.
+                    return null; // Unsupported pseudo.
                 }
             }
             else
@@ -325,7 +351,7 @@ public static class CssParser
             }
         }
 
-        return new MiniCompound { Element = element, Classes = classes, Ids = ids, Attributes = attributes, Not = nots };
+        return new MiniCompound { Element = element, Classes = classes, Ids = ids, Attributes = attributes, Not = nots, FirstLetter = isFirstLetter };
     }
 
     /// <summary>Parses an attribute selector body: <c>name</c>, <c>name=value</c>, <c>name~=value</c>, ...</summary>

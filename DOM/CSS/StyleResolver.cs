@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using BookHeaven.Core.DOM.HTML.Models;
 
 namespace BookHeaven.Core.DOM.CSS;
@@ -110,6 +111,10 @@ public static class StyleResolver
         // default-capacity dictionary would grow (and re-allocate) on every Consider.
         var best = new Dictionary<string, (int Importance, int Spec, int Order, string Value)>();
 
+        // Presentational hints (HTML attributes → CSS) are the lowest-priority cascade
+        // layer: applied first with order -1 so every stylesheet rule overrides them.
+        ApplyPresentationalHints(el, best);
+
         // Stylesheet rules.
         for (var r = 0; r < rules.Count; r++)
         {
@@ -171,6 +176,52 @@ public static class StyleResolver
 
         ResolveVars(style);
         return style;
+    }
+
+    /// <summary>
+    /// Maps HTML presentational-hint attributes to CSS declarations at the lowest cascade
+    /// priority (importance 0, specificity 0, order -1), so any stylesheet rule wins. Per
+    /// the HTML spec, unitless numeric length hints (width, height, border, cellspacing,
+    /// cellpadding) are pixels; keyword/color hints pass through unchanged.
+    /// </summary>
+    private static void ApplyPresentationalHints(
+        Element el, Dictionary<string, (int Importance, int Spec, int Order, string Value)> best)
+    {
+        const int order = -1;
+
+        void Hint(string attr, string prop, bool isLength)
+        {
+            var v = el.GetAttribute(attr);
+            if (string.IsNullOrWhiteSpace(v)) return;
+            v = v.Trim();
+            if (isLength && float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                v += "px";
+            ConsiderDecl(best, new MiniDeclaration(prop, v, false), 0, 0, order);
+        }
+
+        switch (el.TagName.ToLowerInvariant())
+        {
+            case "table":
+                Hint("cellspacing", "border-spacing", isLength: true);
+                Hint("cellpadding", "padding", isLength: true);
+                Hint("border", "border-width", isLength: true);
+                Hint("width", "width", isLength: true);
+                Hint("height", "height", isLength: true);
+                Hint("align", "text-align", isLength: false);
+                break;
+            case "td":
+            case "th":
+                Hint("width", "width", isLength: true);
+                Hint("height", "height", isLength: true);
+                Hint("align", "text-align", isLength: false);
+                Hint("valign", "vertical-align", isLength: false);
+                Hint("bgcolor", "background-color", isLength: false);
+                break;
+            case "img":
+                Hint("width", "width", isLength: true);
+                Hint("height", "height", isLength: true);
+                break;
+        }
     }
 
     private const int InlineSpecificity = 1_000_000;

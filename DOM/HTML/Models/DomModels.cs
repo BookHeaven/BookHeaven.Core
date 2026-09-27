@@ -225,6 +225,12 @@ public sealed class Element : Node
             case Text t:
                 sb.Append(t.Value);
                 break;
+            case Element e when e.TagName == "br":
+                // A <br> is a forced line break: the object replacement character
+                // (U+FFFC) marks it in the text stream. It is not whitespace, so
+                // trimming keeps it and the measurers/wrapper turn it into a break.
+                sb.Append('\uFFFC');
+                break;
             case Element e:
                 foreach (var child in e.ChildNodes)
                     AppendDescendantText(child, sb);

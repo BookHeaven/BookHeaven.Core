@@ -31,10 +31,12 @@ namespace BookHeaven.Core.DOM.Engine;
 ///     even at the page top; if it does not fit below the previous content the block
 ///     (with its padding) starts on a new page.
 ///  4. Content:
-///     - Text blocks split at LINE boundaries (whole lines only; a single line taller
-///       than a page is pixel-sliced, a pathological case).
+///     - Text blocks split at LINE boundaries (whole lines only; a single line
+///       taller than a page is kept in place at the top of a page — or moved to
+///       a fresh page mid-page — and the overflow is clipped, as in a browser).
 ///     - Image blocks: if they fit on a fresh page they move whole; if they are
-///       taller than a page they fill the remainder and are pixel-sliced.
+///       taller than a page they are kept in place (or moved to a fresh page
+///       mid-page) and the overflow is clipped.
 ///     - Container blocks behave like a browser: they are NOT one indivisible box.
 ///       Each child is placed individually in the shared page flow, with its own
 ///       margins and paddings (and recursively if the child is a container); the
@@ -46,7 +48,7 @@ namespace BookHeaven.Core.DOM.Engine;
 ///       (consumed by the next sibling's gap). WITH padding-bottom it stays
 ///       inside the content box and is consumed after the children, before the
 ///       container's PaddingBottom. A container with no measured children falls
-///       back to whole-move / pixel-slice of its content height.
+///       back to whole-move / clip of its content height.
 ///  5. PaddingBottom: consumed after the last fragment; if it does not fit the page
 ///     remainder it is clipped at the page edge (a browser clips the overflow rather
 ///     than leaving the remainder blank).
@@ -395,9 +397,9 @@ public static class PageSplitter
         private void PlaceText(LayoutBlock block, int blockIdx, int childIdx)
         {
             var lineHeight = block.LineHeightPx;
-            if (lineHeight <= 0f || lineHeight > PageHeight)
+            if (lineHeight <= 0f)
             {
-                // A single line taller than a page is pathological: pixel-slice the content.
+                // Degenerate zero-height lines: fall back to box placement.
                 PlaceBox(block, blockIdx, childIdx);
                 return;
             }
@@ -434,9 +436,24 @@ public static class PageSplitter
 
                 if (fit <= 0)
                 {
-                    // No whole line fits here: the lines move whole to the next page.
-                    NewPage();
-                    continue;
+                    var nextLineHeight = havePerLine ? perLine![placed] : lineHeight;
+                    if (nextLineHeight > PageHeight)
+                    {
+                        // A line taller than a whole page fits no page. Browser: at
+                        // the top of a page it stays in place and the overflow is
+                        // clipped; mid-page it moves to a fresh page, clipped there.
+                        if (UsedOnPage > 0f) NewPage();
+                        RecordSlice(block, blockIdx, childIdx, placed, 1, UsedOnPage, nextLineHeight, firstPiece: placed == 0);
+                        UsedOnPage = PageHeight;
+                        remaining--;
+                        placed++;
+                    }
+                    else
+                    {
+                        // No whole line fits here: the lines move whole to the next page.
+                        NewPage();
+                        continue;
+                    }
                 }
 
                 if (fit >= remaining)
@@ -487,21 +504,13 @@ public static class PageSplitter
                 return;
             }
 
-            // Taller than a page: fill the remainder of the current page, then slice.
-            var remaining = h;
-            var firstSlice = true;
-            while (remaining > 0f)
-            {
-                var take = Math.Min(remaining, PageHeight - UsedOnPage);
-                if (take > 0f)
-                {
-                    RecordSlice(block, blockIdx, childIdx, 0, 0, UsedOnPage, take, firstPiece: firstSlice);
-                    UsedOnPage += take;
-                    remaining -= take;
-                    firstSlice = false;
-                }
-                if (UsedOnPage >= PageHeight) NewPage();
-            }
+            // Taller than a page: the browser keeps the (unbreakable) box in
+            // place when it starts at the top of a page and clips the overflow;
+            // mid-page it moves to a fresh page, clipped there.
+            if (UsedOnPage > 0f) NewPage();
+            RecordSlice(block, blockIdx, childIdx, 0, 0, UsedOnPage, h, firstPiece: true);
+            UsedOnPage = PageHeight;
+            if (UsedOnPage >= PageHeight) NewPage();
         }
     }
 }
