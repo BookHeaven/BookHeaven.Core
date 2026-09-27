@@ -10,10 +10,16 @@ public sealed class MiniCssRule
 /// <summary>A single declaration: property, raw value, and the <c>!important</c> flag.</summary>
 public sealed record MiniDeclaration(string Property, string Value, bool Important);
 
-/// <summary>A parsed selector: a list of compounds joined by descendant combinators.</summary>
+/// <summary>
+/// A parsed selector: a list of compounds joined by combinators.
+/// <see cref="Combinators"/> has <c>Compounds.Count - 1</c> entries; entry <c>i</c> is the
+/// combinator between <c>Compounds[i]</c> and <c>Compounds[i+1]</c> (' ', '&gt;', '+' or '~'),
+/// where ' ' is the descendant combinator.
+/// </summary>
 public sealed class MiniSelector
 {
     public required List<MiniCompound> Compounds { get; init; }
+    public char[] Combinators { get; init; } = [];
     /// <summary>True when the selector targets a <c>::first-letter</c> pseudo-element.</summary>
     public bool FirstLetter { get; init; }
 }
@@ -47,29 +53,32 @@ public sealed class MiniCompound
 
 /// <summary>
 /// A minimal CSS parser for ebook styling. Parses rules, simple selectors
-/// (element / class / id / universal / compound / descendant / comma), and
-/// declarations with <c>!important</c>. Flattens <c>@media</c> blocks and skips
-/// at-rules that do not affect layout (<c>@font-face</c>, <c>@keyframes</c>, ...).
+/// (element / class / id / universal / compound / attribute / <c>:not()</c>) with the
+/// descendant, child ('&gt;'), adjacent ('+') and general ('~') combinators and comma
+/// lists, and declarations with <c>!important</c>. Flattens <c>@media</c> blocks and
+/// skips at-rules that do not affect layout (<c>@font-face</c>, <c>@keyframes</c>, ...).
 /// </summary>
-public static class CssParser
+public sealed class CssParser
 {
     // Parsed rules are immutable after parsing, so identical CSS text (the injected
     // global stylesheet is re-parsed once per chapter; shared chapter stylesheets are
-    // reused across chapters) can be parsed once and cached for the process lifetime.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<MiniCssRule>> RuleCache = [];
+    // reused across chapters) can be parsed once per parser instance. The cache is
+    // per-instance, not global: each PageCalculator session owns its parser and its
+    // cache, so concurrent users never share (or grow) a process-wide cache.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<MiniCssRule>> _ruleCache = [];
 
-    public static List<MiniCssRule> Parse(string css)
+    public List<MiniCssRule> Parse(string css)
     {
         if (string.IsNullOrWhiteSpace(css))
             return [];
 
-        if (RuleCache.TryGetValue(css, out var cached))
+        if (_ruleCache.TryGetValue(css, out var cached))
             return cached;
 
         var rules = new List<MiniCssRule>();
         var text = css.Contains("/*", StringComparison.Ordinal) ? StripComments(css) : css;
         ParseBlock(text, 0, text.Length, rules, inMedia: false);
-        RuleCache[css] = rules;
+        _ruleCache[css] = rules;
         return rules;
     }
 
@@ -223,8 +232,8 @@ public static class CssParser
     }
 
     /// <summary>
-    /// Parses a single selector into compounds. Returns <c>null</c> if the
-    /// selector uses combinators/pseudos this parser does not support.
+    /// Parses a single selector into compounds and combinators. Returns <c>null</c> if
+    /// the selector uses syntax this parser does not support.
     /// </summary>
     private static MiniSelector? ParseSelector(string selector)
     {
@@ -232,16 +241,64 @@ public static class CssParser
             return null;
 
         var compounds = new List<MiniCompound>();
+        var combinatorGaps = new List<(int Gap, char C)>();
+        var pendingCombinator = false;
         var firstLetter = false;
-        foreach (var token in selector.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var token in NormalizeCombinators(selector).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
+            if (token is ">" or "+" or "~")
+            {
+                // A combinator must follow a compound and must not be doubled
+                // (rejects leading and doubled combinators; a trailing one is
+                // rejected below). It joins the last compound with the next one.
+                if (compounds.Count == 0 || pendingCombinator)
+                    return null;
+                combinatorGaps.Add((compounds.Count - 1, token[0]));
+                pendingCombinator = true;
+                continue;
+            }
             var compound = ParseCompound(token);
             if (compound is null)
                 return null;
             compounds.Add(compound);
+            pendingCombinator = false;
             if (compound.FirstLetter) firstLetter = true;
         }
-        return compounds.Count > 0 ? new MiniSelector { Compounds = compounds, FirstLetter = firstLetter } : null;
+        // A trailing combinator (e.g. "p >") leaves a pending combinator with no
+        // compound after it. Gaps without an explicit combinator are descendants.
+        if (compounds.Count == 0 || pendingCombinator)
+            return null;
+        var combinators = new char[Math.Max(0, compounds.Count - 1)];
+        combinators.AsSpan().Fill(' ');
+        foreach (var (gap, c) in combinatorGaps)
+            combinators[gap] = c;
+        return new MiniSelector { Compounds = compounds, Combinators = combinators, FirstLetter = firstLetter };
+    }
+
+    /// <summary>
+    /// Inserts spaces around the combinator characters '&gt;', '+' and '~' so they
+    /// tokenize as standalone tokens, leaving them untouched inside parentheses
+    /// (e.g. <c>:not()</c>) and brackets (e.g. attribute values like <c>[title=a~b]</c>).
+    /// </summary>
+    private static string NormalizeCombinators(string selector)
+    {
+        var result = new System.Text.StringBuilder(selector.Length + 4);
+        var depth = 0;
+        for (var i = 0; i < selector.Length; i++)
+        {
+            var c = selector[i];
+            if (c is '(' or '[') depth++;
+            else if (c is ')' or ']') depth = Math.Max(0, depth - 1);
+            if (depth == 0 && c is '>' or '+' or '~')
+            {
+                result.Append(' ');
+                result.Append(c);
+                result.Append(' ');
+                continue;
+            }
+            result.Append(c);
+        }
+        return result.ToString();
     }
 
     /// <summary>
@@ -366,7 +423,7 @@ public static class CssParser
         for (var i = 0; i < text.Length; i++)
         {
             if (text[i] == '=') { opStart = i; opLen = 1; break; }
-            if (text[i] is '~' or '|' or '^' or '$' or '*' && i + 1 < text.Length && text[i + 1] == '=')
+            if ((text[i] is '~' or '|' or '^' or '$' or '*') && i + 1 < text.Length && text[i + 1] == '=')
             {
                 opStart = i; opLen = 2; break;
             }

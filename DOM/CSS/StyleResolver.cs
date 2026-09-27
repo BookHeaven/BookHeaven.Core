@@ -364,32 +364,93 @@ public static class StyleResolver
         return spec;
     }
 
-    /// <summary>Matches a descendant selector: last compound on the element, earlier ones on ancestors.</summary>
+    /// <summary>
+    /// Matches a selector: the last compound on the element, earlier compounds on
+    /// ancestors or siblings according to the combinator between them.
+    /// </summary>
     private static bool Matches(MiniSelector selector, Element el)
     {
         var compounds = selector.Compounds;
         if (!CompoundMatches(compounds[^1], el))
             return false;
 
-        var ancestor = el.ParentElement;
+        var current = el;
         for (var i = compounds.Count - 2; i >= 0; i--)
         {
             var target = compounds[i];
-            var found = false;
-            while (ancestor is not null)
+            var combinator = selector.Combinators[i];
+            var matched = combinator switch
             {
-                if (CompoundMatches(target, ancestor))
-                {
-                    found = true;
-                    ancestor = ancestor.ParentElement;
-                    break;
-                }
-                ancestor = ancestor.ParentElement;
-            }
-            if (!found)
+                '>' => MatchChild(target, current),
+                '+' => MatchAdjacentSibling(target, current),
+                '~' => MatchGeneralSibling(target, current),
+                _ => MatchDescendant(target, current),
+            };
+            if (matched is null)
                 return false;
+            current = matched;
         }
         return true;
+    }
+
+    /// <summary>Nearest ancestor matching <paramref name="target"/>, or null.</summary>
+    private static Element? MatchDescendant(MiniCompound target, Element el)
+    {
+        var ancestor = el.ParentElement;
+        while (ancestor is not null)
+        {
+            if (CompoundMatches(target, ancestor))
+                return ancestor;
+            ancestor = ancestor.ParentElement;
+        }
+        return null;
+    }
+
+    /// <summary>The parent, when it matches <paramref name="target"/>; otherwise null.</summary>
+    private static Element? MatchChild(MiniCompound target, Element el)
+    {
+        var parent = el.ParentElement;
+        return parent is not null && CompoundMatches(target, parent) ? parent : null;
+    }
+
+    /// <summary>The immediately preceding element sibling, when it matches; otherwise null.</summary>
+    private static Element? MatchAdjacentSibling(MiniCompound target, Element el)
+    {
+        var sibling = PreviousSiblingElement(el);
+        return sibling is not null && CompoundMatches(target, sibling) ? sibling : null;
+    }
+
+    /// <summary>Nearest preceding element sibling matching <paramref name="target"/>, or null.</summary>
+    private static Element? MatchGeneralSibling(MiniCompound target, Element el)
+    {
+        var sibling = PreviousSiblingElement(el);
+        while (sibling is not null)
+        {
+            if (CompoundMatches(target, sibling))
+                return sibling;
+            sibling = PreviousSiblingElement(sibling);
+        }
+        return null;
+    }
+
+    /// <summary>The nearest preceding element sibling of <paramref name="el"/>, or null.</summary>
+    private static Element? PreviousSiblingElement(Element el)
+    {
+        var parent = el.ParentElement;
+        if (parent is null)
+            return null;
+        var nodes = parent.ChildNodes;
+        for (var i = nodes.Count - 1; i >= 0; i--)
+        {
+            if (nodes[i] == el)
+            {
+                for (var j = i - 1; j >= 0; j--)
+                    if (nodes[j] is Element element)
+                        return element;
+                return null;
+            }
+        }
+        return null;
     }
 
     private static bool CompoundMatches(MiniCompound c, Element el)

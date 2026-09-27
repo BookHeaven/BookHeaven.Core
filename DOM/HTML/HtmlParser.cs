@@ -25,6 +25,7 @@ namespace BookHeaven.Core.DOM.HTML;
 public sealed class HtmlParser
 {
     private readonly PageCalculatorOptions _options;
+    private readonly CssParser _cssParser = new();
 
     public HtmlParser(PageCalculatorOptions options)
     {
@@ -72,7 +73,7 @@ public sealed class HtmlParser
         {
             var text = styleEl.TextContent;
             if (string.IsNullOrWhiteSpace(text)) continue;
-            rules.AddRange(CssParser.Parse(text));
+            rules.AddRange(_cssParser.Parse(text));
         }
         return (doc, rules);
     }
