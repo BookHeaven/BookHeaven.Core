@@ -51,6 +51,10 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     private readonly Lock _shapeLock = new();
     private readonly ConcurrentDictionary<(string Word, float FontSize, FontStyle Style), float> _wordWidthCache = [];
     private readonly ConcurrentDictionary<(string Text, FontStyle Style), float> _wordAdvanceSumCache = [];
+    // One reusable line builder per shaping thread: Measure is called thousands of
+    // times per book, and a fresh StringBuilder per call was a steady allocation
+    // source. Lines are copied out via ToString before the buffer is reused.
+    private readonly ThreadLocal<StringBuilder> _lineBuilder = new(() => new StringBuilder(512));
 
     /// <summary>
     /// Creates a measurer with one font file per style variant. Missing or
@@ -193,7 +197,8 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             spaceWidth += wordSpacingPx.Value;
         }
 
-        var sb = includeLineText ? new StringBuilder(text.Length) : null;
+        var sb = includeLineText ? _lineBuilder.Value : null;
+        sb?.Clear();
         var currentWidth = 0f;
         var lineCount = 0;
         var lineEmpty = true;
