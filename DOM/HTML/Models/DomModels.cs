@@ -208,6 +208,21 @@ public sealed class Element : Node
 
     private void ComputeText()
     {
+        // Fast path: a single text child (plain paragraphs, injected <style> tags)
+        // needs no walk and no copy — the child's value IS the content.
+        if (ChildNodes.Count == 1 && ChildNodes[0] is Text only)
+        {
+            _textContent = only.Value;
+            var tStart = 0;
+            var tEnd = only.Value.Length;
+            while (tStart < tEnd && char.IsWhiteSpace(only.Value[tStart])) tStart++;
+            while (tEnd > tStart && char.IsWhiteSpace(only.Value[tEnd - 1])) tEnd--;
+            _trimmedTextContent = tStart == 0 && tEnd == only.Value.Length
+                ? only.Value
+                : only.Value.AsSpan(tStart, tEnd - tStart).ToString();
+            return;
+        }
+
         var sb = new StringBuilder();
         AppendDescendantText(this, sb);
         var start = 0;
