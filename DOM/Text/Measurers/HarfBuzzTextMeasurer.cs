@@ -205,12 +205,22 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                 // Leading/trailing whitespace: a browser collapses and drops it.
                 return;
             }
-            var segments = part.Split('\uFFFC');
-            for (var i = 0; i < segments.Length; i++)
+            // Fast path: the vast majority of segments contain no embedded
+            // object placeholder, so skip the Split array allocation entirely.
+            var objIndex = part.IndexOf('\uFFFC');
+            if (objIndex < 0)
             {
-                if (i > 0) ForceBreak();
-                if (segments[i].Length == 0) continue;
-                PlaceWord(segments[i]);
+                PlaceWord(part);
+            }
+            else
+            {
+                var segments = part.Split('\uFFFC');
+                for (var i = 0; i < segments.Length; i++)
+                {
+                    if (i > 0) ForceBreak();
+                    if (segments[i].Length == 0) continue;
+                    PlaceWord(segments[i]);
+                }
             }
         });
         if (!lineEmpty)
