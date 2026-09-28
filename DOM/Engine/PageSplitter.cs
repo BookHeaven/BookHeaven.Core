@@ -80,6 +80,12 @@ public static class PageSplitter
 
         for (var i = 0; i < blocks.Count; i++)
         {
+            // Top-level blocks are direct children of the body (a flex container), so
+            // their top margins do NOT collapse through the body: the first block's
+            // margin is consumed on the first page, and on following pages it is
+            // trimmed at the page boundary (handled by the gap logic in PlaceBlock).
+            // childIdx -1 keeps the margin; only a container's first child (childIdx 0,
+            // no padding-top) is trimmed to 0 because its margin collapsed through it.
             context.PlaceBlock(blocks[i], i, childIdx: -1, parentPaddingTop: 0f,
                 ref context.PrevBottomMargin, ref context.PrevZeroHeightMargin);
         }
@@ -173,7 +179,12 @@ public static class PageSplitter
             // same point, and the spacer's margins are consumed as a single gap rather than
             // stacked on top of the next sibling's top margin.
             var isZeroHeightSpacer = block.Kind == BlockKind.Text && block is { LineCount: 0, ContentHeight: <= 0f, PaddingTop: <= 0f, PaddingBottom: <= 0f };
-            var ownTopMargin = isZeroHeightSpacer ? Math.Max(block.MarginTop, block.MarginBottom) : topMargin;
+            // A spacer whose top margin was already trimmed (first child of a
+            // padding-less container) must not re-introduce it via the combined
+            // spacer margin — that would consume the collapsed margin twice.
+            var ownTopMargin = isZeroHeightSpacer && topMargin > 0f
+                ? Math.Max(block.MarginTop, block.MarginBottom)
+                : topMargin;
             var gap = prevZeroHeightMargin > 0f
                 ? Math.Max(0f, ownTopMargin - prevZeroHeightMargin)
                 : Math.Max(prevBottomMargin, ownTopMargin);
