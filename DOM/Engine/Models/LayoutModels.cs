@@ -182,16 +182,4 @@ public class BlockPageInfo
     public List<PageBlockSlice> Blocks = [];
 }
 
-public class BlockPageMap
-{
-    public List<BlockPageInfo> Pages = [];
-
-    public BlockPageMap()
-    {
-    }
-
-    public BlockPageMap(List<BlockPageInfo> pages)
-    {
-        Pages = pages;
-    }
-}
+public record BlockPageMap(List<BlockPageInfo> Pages);

@@ -131,7 +131,7 @@ public static class PageSplitter
     {
         private int PageHeight { get; } = pageHeight;
 
-        public bool DryRun { get; } = dryRun;
+        private bool DryRun { get; } = dryRun;
 
         public List<List<PageBlockSlice>> PageBlocks { get; } = [];
 
@@ -141,10 +141,8 @@ public static class PageSplitter
 
         private float UsedOnPage { get; set; }
 
-        private bool _paged;
-
         /// <summary>True once the dry run needed more than one page.</summary>
-        public bool Paged => _paged;
+        private bool Paged { get; set; }
 
         public float PrevBottomMargin;
 
@@ -400,7 +398,7 @@ public static class PageSplitter
 
         private void NewPage()
         {
-            if (DryRun) _paged = true;
+            if (DryRun) Paged = true;
             CurrentPage++;
             UsedOnPage = 0f;
         }

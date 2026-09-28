@@ -1,8 +1,6 @@
-using System.Globalization;
-using System.Text;
-using System.Text.RegularExpressions;
 using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.CSS.Models;
+using BookHeaven.Core.DOM.Engine.Helpers;
 using BookHeaven.Core.DOM.Engine.Models;
 using BookHeaven.Core.DOM.HTML;
 using BookHeaven.Core.DOM.HTML.Models;
@@ -10,8 +8,6 @@ using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Text.Abstractions;
 using BookHeaven.Core.DOM.Text.Measurers;
 using Microsoft.Extensions.Options;
-using SkiaSharp;
-using FontStyle = BookHeaven.Core.DOM.Text.Abstractions.FontStyle;
 
 namespace BookHeaven.Core.DOM.Engine;
 
@@ -29,14 +25,20 @@ namespace BookHeaven.Core.DOM.Engine;
 /// The CSS pipeline mirrors the AngleSharp one so results stay comparable: the
 /// same global stylesheet is injected, logical margins are expanded to physical
 /// longhands before parsing, and chapter stylesheets are appended after it.
+///
+/// Pure CSS value parsing lives in <see cref="CssValueParser"/>; image geometry
+/// in <see cref="ImageHelpers"/>; inline text-run building in
+/// <see cref="TextRunBuilder"/>. This class owns the block model and the
+/// per-document memoization.
 /// </summary>
-public sealed partial class LayoutEngine : IDisposable
+public sealed class LayoutEngine : IDisposable
 {
     private const string BlockSelector = "p,div,h1,h2,h3,h4,h5,h6,li,ul,ol,table,blockquote,pre,section,article,header,footer,main,aside,nav,dl,dt,dd,figure,img,svg,image,picture,object,canvas,hr";
 
-    // Derived from BlockSelector so the two lists can never drift apart.
-    private static readonly HashSet<string> BlockTags =
-        BlockSelector.Split(',').Select(t => t.Trim().ToUpperInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    // Derived from BlockSelector so the list can never drift apart. Tag names are
+    // stored lowercase; the comparer makes the lookup case-insensitive.
+    private static readonly HashSet<string> BlockTagSet =
+        BlockSelector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private readonly PageCalculatorOptions _options;
     private readonly CoreOptions _coreOptions;
@@ -157,10 +159,6 @@ public sealed partial class LayoutEngine : IDisposable
         return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
     }
 
-    // Precomputed from BlockSelector so QueryAll doesn't split/allocate per call.
-    private static readonly HashSet<string> BlockTagSet =
-        BlockSelector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
     /// <summary>Collects every element in the subtree (pre-order) whose tag is in the comma-separated selector.</summary>
     private static List<Element> QueryAll(Element root, string selector)
     {
@@ -198,7 +196,11 @@ public sealed partial class LayoutEngine : IDisposable
         if (_styleMemo.TryGetValue(key, out var entry))
             return entry;
         var style = StyleResolver.Resolve(el, _rules, _specificities, parent, _scope);
-        entry = new StyleEntry { Style = style, Hidden = ComputeHidden(el, style) };
+        entry = new StyleEntry
+        {
+            Style = style,
+            Hidden = CssValueParser.IsHidden(el.HasAttribute("hidden"), el.Style, style.GetPropertyValue("display"))
+        };
         _styleMemo[key] = entry;
         return entry;
     }
@@ -208,17 +210,7 @@ public sealed partial class LayoutEngine : IDisposable
 
     private bool IsHidden(Element el) => GetStyleEntry(el).Hidden;
 
-    private static bool ComputeHidden(Element el, CssStyle style)
-    {
-        if (el.HasAttribute("hidden")) return true;
-        var inline = el.Style;
-        if (!string.IsNullOrWhiteSpace(inline) && DisplayNoneRegex().IsMatch(inline))
-            return true;
-        var display = style.GetPropertyValue("display");
-        return !string.IsNullOrWhiteSpace(display) && display.Trim().Equals("none", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsBlockLevelTag(string tagName) => BlockTags.Contains(tagName);
+    private static bool IsBlockLevelTag(string tagName) => BlockTagSet.Contains(tagName);
 
     private static bool HasAncestorInSet(Element el, HashSet<Element> set)
     {
@@ -291,7 +283,7 @@ public sealed partial class LayoutEngine : IDisposable
         // Image elements: a BLOCK-display image is a block box (replaced element);
         // an inline image (the UA default) is part of the parent's inline content
         // and is measured there (baseline model), so it emits nothing here.
-        if (IsImageElement(el))
+        if (ImageHelpers.IsImageElement(el))
         {
             if (IsBlockDisplay(el))
             {
@@ -333,7 +325,7 @@ public sealed partial class LayoutEngine : IDisposable
 
         // Measure own inline text (text nodes not inside block children) and own
         // inline images. It is an anonymous box: no margins of its own.
-        var ownText = GetOwnInlineText(el, blockChildren);
+        var ownText = TextRunBuilder.GetOwnInlineText(el, blockChildren);
         var ownImages = CollectInlineImages(el, blockChildren);
         if (!string.IsNullOrEmpty(ownText) || ownImages.Count > 0)
         {
@@ -382,7 +374,7 @@ public sealed partial class LayoutEngine : IDisposable
             LineHeightPx = 0f,
             Links = [],
             Children = childSink,
-            Flags = ParseBreakFlags(GetComputedStyle(el))
+            Flags = ToBreakFlags(GetComputedStyle(el))
         };
 
         if (childSink.Count > 0)
@@ -407,7 +399,7 @@ public sealed partial class LayoutEngine : IDisposable
         var containerRefWidth = GetContainingBlockContentWidth(el);
         var fontSize = ResolveFontSize(el);
 
-        var result = TableLayout.Compute(
+        var result = TableHelpers.Compute(
             el,
             containerRefWidth,
             GetComputedStyle,
@@ -418,8 +410,8 @@ public sealed partial class LayoutEngine : IDisposable
             _lengthParser);
         if (result is null) return null;
 
-        var marginTop = TryGetComputedMarginPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
-        var marginBottom = TryGetComputedMarginPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
+        var marginTop = TryGetComputedBoxPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
+        var marginBottom = TryGetComputedBoxPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
 
         return new LayoutBlock
         {
@@ -434,7 +426,7 @@ public sealed partial class LayoutEngine : IDisposable
             LineHeightPx = 0f,
             Links = [],
             Children = [],
-            Flags = ParseBreakFlags(computed)
+            Flags = ToBreakFlags(computed)
         };
     }
 
@@ -453,28 +445,28 @@ public sealed partial class LayoutEngine : IDisposable
         var images = inlineImages ?? CollectInlineImages(el);
 
         var fontSize = ResolveFontSize(el);
-        var bold = IsBoldWeight(computed.GetPropertyValue("font-weight"));
-        var italic = IsItalicStyle(computed.GetPropertyValue("font-style"));
+        var bold = CssValueParser.IsBoldWeight(computed.GetPropertyValue("font-weight"));
+        var italic = CssValueParser.IsItalicStyle(computed.GetPropertyValue("font-style"));
         var containerRefWidth = GetContainingBlockContentWidth(el);
 
-        var flags = ParseBreakFlags(computed);
+        var flags = ToBreakFlags(computed);
 
-        var marginTop = TryGetComputedMarginPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
-        var marginBottom = TryGetComputedMarginPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
-        var marginLeft = TryGetComputedMarginPx(computed, "margin-left", containerRefWidth, fontSize) ?? 0f;
-        var marginRight = TryGetComputedMarginPx(computed, "margin-right", containerRefWidth, fontSize) ?? 0f;
+        var marginTop = TryGetComputedBoxPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
+        var marginBottom = TryGetComputedBoxPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
+        var marginLeft = TryGetComputedBoxPx(computed, "margin-left", containerRefWidth, fontSize) ?? 0f;
+        var marginRight = TryGetComputedBoxPx(computed, "margin-right", containerRefWidth, fontSize) ?? 0f;
 
-        var paddingTop = TryGetComputedPaddingPx(computed, "padding-top", containerRefWidth, fontSize) ?? 0f;
-        var paddingBottom = TryGetComputedPaddingPx(computed, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
-        var paddingLeft = TryGetComputedPaddingPx(computed, "padding-left", containerRefWidth, fontSize) ?? 0f;
-        var paddingRight = TryGetComputedPaddingPx(computed, "padding-right", containerRefWidth, fontSize) ?? 0f;
+        var paddingTop = TryGetComputedBoxPx(computed, "padding-top", containerRefWidth, fontSize) ?? 0f;
+        var paddingBottom = TryGetComputedBoxPx(computed, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
+        var paddingLeft = TryGetComputedBoxPx(computed, "padding-left", containerRefWidth, fontSize) ?? 0f;
+        var paddingRight = TryGetComputedBoxPx(computed, "padding-right", containerRefWidth, fontSize) ?? 0f;
 
         // Empty leaf (no text, no inline images, not an image element): it
         // occupies space only through an explicit CSS height, padding or margins.
         var spacerHeight = 0f;
         var spacerLines = 0;
         var spacerLineHeight = 0f;
-        var isSpacerLeaf = string.IsNullOrEmpty(text) && !IsImageElement(el) && images.Count == 0;
+        var isSpacerLeaf = string.IsNullOrEmpty(text) && !ImageHelpers.IsImageElement(el) && images.Count == 0;
         if (isSpacerLeaf)
         {
             // Empty elements occupy space through explicit height, padding, or margins.
@@ -501,36 +493,14 @@ public sealed partial class LayoutEngine : IDisposable
         if (availableWidth < 0) availableWidth = 0f;
 
         // Line-height: keep the LENGTH and UNITLESS forms separate (browser model).
-        var (lineHeightLengthPx, lineHeightMultiplier) = ResolveLineHeightForm(computed, fontSize);
+        var (lineHeightLengthPx, lineHeightMultiplier) =
+            CssValueParser.ResolveLineHeightForm(computed.GetPropertyValue("line-height"), fontSize, ParseLengthToPx, _lengthParser.ParseUnitless);
         var lineHeightPx = lineHeightLengthPx ?? lineHeightMultiplier * fontSize;
         if (lineHeightPx.HasValue) lineHeightPx = ITextMeasurer.QuantizeLineHeight(lineHeightPx.Value);
 
         // Letter-spacing and word-spacing.
-        float? letterSpacingPx = null;
-        var ls = computed.GetPropertyValue("letter-spacing");
-        if (!string.IsNullOrWhiteSpace(ls))
-        {
-            var t = ls.Trim();
-            if (t.Equals("normal", StringComparison.OrdinalIgnoreCase)) letterSpacingPx = 0f;
-            else
-            {
-                var parsed = ParseLengthToPx(ls, containerRefWidth, fontSize);
-                if (parsed.HasValue) letterSpacingPx = parsed.Value;
-            }
-        }
-
-        float? wordSpacingPx = null;
-        var ws = computed.GetPropertyValue("word-spacing");
-        if (!string.IsNullOrWhiteSpace(ws))
-        {
-            var t = ws.Trim();
-            if (t.Equals("normal", StringComparison.OrdinalIgnoreCase)) wordSpacingPx = 0f;
-            else
-            {
-                var parsed = ParseLengthToPx(ws, containerRefWidth, fontSize);
-                if (parsed.HasValue) wordSpacingPx = parsed.Value;
-            }
-        }
+        var letterSpacingPx = CssValueParser.TryParseSpacing(computed.GetPropertyValue("letter-spacing"), containerRefWidth, fontSize, ParseLengthToPx);
+        var wordSpacingPx = CssValueParser.TryParseSpacing(computed.GetPropertyValue("word-spacing"), containerRefWidth, fontSize, ParseLengthToPx);
 
         // text-indent narrows the first line.
         float? firstLineWidthPx = null;
@@ -552,9 +522,9 @@ public sealed partial class LayoutEngine : IDisposable
         var contentHeight = 0f;
 
         // BLOCK-display image: a block-level replaced element, placed whole.
-        if (IsImageElement(el))
+        if (ImageHelpers.IsImageElement(el))
         {
-            var (_, imgHeight) = MeasureImageSize(el, availableWidth, containerRefWidth, fontSize);
+            var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
             contentHeight = imgHeight;
 
             return new LayoutBlock
@@ -585,8 +555,8 @@ public sealed partial class LayoutEngine : IDisposable
         {
             var resolvedLineHeight = ITextMeasurer.QuantizeLineHeight(lineHeightLengthPx
                 ?? (lineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize);
-            var metrics = _measurer.GetFontMetrics(fontSize, ToFontStyle(bold, italic));
-            var strutDescent = ChromiumStrutDescent(resolvedLineHeight, metrics);
+            var metrics = _measurer.GetFontMetrics(fontSize, TextRunBuilder.ToFontStyle(bold, italic));
+            var strutDescent = ImageHelpers.ChromiumStrutDescent(resolvedLineHeight, metrics);
 
             var imgLineHeights = new List<float>();
             if (!string.IsNullOrEmpty(text))
@@ -594,7 +564,7 @@ public sealed partial class LayoutEngine : IDisposable
                 // Mixed text + images: measure the text, then the images follow
                 // on their own lines (documented approximation: the surveyed
                 // epubs have no paragraph mixing text and images).
-                var textRuns = BuildTextRuns(el, fontSize, bold, italic);
+                var textRuns = TextRunBuilder.Build(el, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockLevelTag);
                 var textMeas = textRuns.Count == 1
                     ? _measurer.Measure(textRuns[0].Text, textRuns[0].FontSizePx, availableWidth,
                         lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * textRuns[0].FontSizePx),
@@ -604,8 +574,16 @@ public sealed partial class LayoutEngine : IDisposable
                     imgLineHeights.Add(textMeas.LineHeights.Length > 0 ? textMeas.LineHeights[li] : textMeas.LineHeightPx);
             }
 
-            imgLineHeights.AddRange(BuildImageLines(images, availableWidth, containerRefWidth, fontSize,
-                resolvedLineHeight, strutDescent, startOnNewLine: !string.IsNullOrEmpty(text)));
+            var imageBoxes = new List<(float Width, float Height, string? VerticalAlign)>(images.Count);
+            foreach (var img in images)
+            {
+                var imgStyle = GetComputedStyle(img);
+                var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
+                imageBoxes.Add((imgWidth, imgHeight, imgStyle.GetPropertyValue("vertical-align")));
+            }
+
+            imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight, strutDescent, fontSize,
+                startOnNewLine: !string.IsNullOrEmpty(text)));
 
             contentHeight = imgLineHeights.Sum();
             return new LayoutBlock
@@ -649,7 +627,7 @@ public sealed partial class LayoutEngine : IDisposable
         }
 
         // Split the inline content into runs at their own font sizes (browser model).
-        var runs = BuildTextRuns(el, fontSize, bold, italic);
+        var runs = TextRunBuilder.Build(el, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockLevelTag);
         var meas = runs.Count == 1
             ? _measurer.Measure(runs[0].Text, runs[0].FontSizePx, availableWidth,
                 lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
@@ -664,12 +642,12 @@ public sealed partial class LayoutEngine : IDisposable
 
         // Drop-cap (initial-letter): the first letter spans N lines, so the paragraph
         // is at least N natural lines tall.
-        var initialLetter = ParseInitialLetter(computed.GetPropertyValue("initial-letter"));
+        var initialLetter = CssValueParser.ParseInitialLetter(computed.GetPropertyValue("initial-letter"));
         if (initialLetter is > 0)
         {
-            var metrics = _measurer.GetFontMetrics(fontSize, ToFontStyle(bold, italic));
+            var metrics = _measurer.GetFontMetrics(fontSize, TextRunBuilder.ToFontStyle(bold, italic));
             var capheightRatio = metrics.CapHeight / fontSize;
-            var naturalLineHeight = (int)_measurer.GetNaturalLineHeight(fontSize, ToFontStyle(bold, italic));
+            var naturalLineHeight = (int)_measurer.GetNaturalLineHeight(fontSize, TextRunBuilder.ToFontStyle(bold, italic));
             var letterCapHeight = (initialLetter.Value - 1) * lineHeightPx!.Value + metrics.CapHeight;
             var letterFontSize = letterCapHeight / capheightRatio;
             var dropCapHeight = lineHeightPx!.Value + naturalLineHeight - (initialLetter.Value - 1);
@@ -700,319 +678,6 @@ public sealed partial class LayoutEngine : IDisposable
         };
     }
 
-    /// <summary>Parses an <c>initial-letter</c> value into a line count, or null.</summary>
-    private static int? ParseInitialLetter(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        if (float.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v > 0f)
-            return (int)Math.Ceiling(v);
-        return null;
-    }
-
-    /// <summary>
-    /// Computes the strut descent the way Chromium does for a line of height
-    /// <paramref name="lineHeightPx"/>. Chromium rounds the font's natural
-    /// metrics to integers (A = round(ascent), D = round(descent)), then
-    /// distributes the line height as strutAscent = floor(L/2 + (A-D)/2) with
-    /// the descent taking the remainder. A baseline-aligned image of height H
-    /// then grows the line to max(strutAscent, H) + strutDescent.
-    ///
-    /// The symmetric "split the extra lead evenly" model the engine used before
-    /// undershoots Chromium by up to ~1px on tall images, which is enough to
-    /// shift a whole page of text. The rule here was derived empirically from
-    /// headless-Chromium measurements:
-    /// 25+ line-height/font-size data points all match it exactly.
-    /// </summary>
-    private static float ChromiumStrutDescent(float lineHeightPx, SKFontMetrics metrics)
-    {
-        var a = MathF.Round(-metrics.Ascent);
-        var d = MathF.Round(metrics.Descent);
-        var strutAscent = MathF.Floor(lineHeightPx / 2f + (a - d) / 2f);
-        return lineHeightPx - strutAscent;
-    }
-
-    /// <summary>
-    /// Greedily wraps inline image boxes into lines. Each line gets height
-    /// max(lineHeight, tallest image contribution on the line): baseline-aligned
-    /// images contribute height + strutDescent, bottom/top/middle-aligned images
-    /// contribute their height alone. Adjacent images are separated by an
-    /// approximate gap (0.25 × font size); the surveyed epubs have at most one
-    /// image per paragraph, so the gap only matters in theory.
-    /// </summary>
-    private List<float> BuildImageLines(
-        IReadOnlyList<Element> images, float availableWidth, float containerRefWidth, float fontSize,
-        float lineHeightPx, float strutDescent, bool startOnNewLine)
-    {
-        var lineHeights = new List<float>(images.Count);
-        var currentLine = 0f;
-        // After text, the first image starts on a fresh line (documented
-        // approximation: an image following text wraps to the next line).
-        var currentLineWidth = startOnNewLine ? availableWidth : 0f;
-        var imageGap = 0.25f * fontSize;
-
-        foreach (var img in images)
-        {
-            var (iw, ih) = MeasureImageSize(img, availableWidth, containerRefWidth, fontSize);
-            if (currentLineWidth > 0 && currentLineWidth + imageGap + iw > availableWidth)
-            {
-                lineHeights.Add(Math.Max(lineHeightPx, currentLine));
-                currentLine = 0f;
-                currentLineWidth = 0f;
-            }
-            currentLineWidth += (currentLineWidth > 0 ? imageGap : 0f) + iw;
-            currentLine = Math.Max(currentLine, ImageLineContribution(img, ih, strutDescent));
-        }
-
-        lineHeights.Add(Math.Max(lineHeightPx, currentLine));
-        return lineHeights;
-    }
-
-    /// <summary>
-    /// How much an image of height <paramref name="ih"/> grows the line box that
-    /// contains it, per its <c>vertical-align</c>: baseline (the default) adds
-    /// the font's strut descent, bottom/top/middle do not.
-    /// </summary>
-    private float ImageLineContribution(Element img, float ih, float strutDescent)
-    {
-        var va = GetComputedStyle(img).GetPropertyValue("vertical-align");
-        var baseline = string.IsNullOrWhiteSpace(va)
-            || va.Trim().Equals("baseline", StringComparison.OrdinalIgnoreCase);
-        return baseline ? ih + strutDescent : ih;
-    }
-
-    /// <summary>
-    /// Computes the box size of an image element (CSS replaced-element model):
-    /// computed width/height, then attributes, then the intrinsic size from the
-    /// cached file, deriving the missing dimension from the aspect ratio.
-    /// </summary>
-    private (float Width, float Height) MeasureImageSize(Element el, float availableWidth, float containerRefWidth, float fontSize)
-    {
-        var computed = GetComputedStyle(el);
-        // A wrapper (e.g. <figure>) carries no src of its own: use the first
-        // descendant image that does.
-        var srcEl = el.GetAttribute("src") is { Length: > 0 } || el.GetAttribute("href") is { Length: > 0 }
-            ? el
-            : FindImageWithSrc(el) ?? el;
-
-        var imgWidth = float.NaN;
-        var imgHeight = float.NaN;
-
-        bool computedWidthParsed = false, computedHeightParsed = false;
-        bool attrWidthParsed = false, attrHeightParsed = false;
-        float parsedAttrWidth = 0f, parsedAttrHeight = 0f;
-        float computedWidth = 0f, computedHeight = 0f;
-
-        var wp = ParseLengthToPx(computed.GetPropertyValue("width"), containerRefWidth, fontSize);
-        var hp = ParseLengthToPx(computed.GetPropertyValue("height"), _options.PageHeightPx, fontSize);
-        if (wp is > 0) { imgWidth = wp.Value; computedWidthParsed = true; computedWidth = wp.Value; }
-        if (hp is > 0) { imgHeight = hp.Value; computedHeightParsed = true; computedHeight = hp.Value; }
-
-        if (srcEl.GetAttribute("width") is { } aw && !string.IsNullOrWhiteSpace(aw))
-        {
-            if (float.TryParse(aw, NumberStyles.Float, CultureInfo.InvariantCulture, out var aval))
-            {
-                attrWidthParsed = true;
-                parsedAttrWidth = aval;
-            }
-            else
-            {
-                var px = ParseLengthToPx(aw, containerRefWidth, fontSize);
-                if (px.HasValue) { attrWidthParsed = true; parsedAttrWidth = px.Value; }
-            }
-        }
-        if (srcEl.GetAttribute("height") is { } ah && !string.IsNullOrWhiteSpace(ah))
-        {
-            if (float.TryParse(ah, NumberStyles.Float, CultureInfo.InvariantCulture, out var aval))
-            {
-                attrHeightParsed = true;
-                parsedAttrHeight = aval;
-            }
-            else
-            {
-                var px = ParseLengthToPx(ah, _options.PageHeightPx, fontSize);
-                if (px.HasValue) { attrHeightParsed = true; parsedAttrHeight = px.Value; }
-            }
-        }
-
-        if (float.IsNaN(imgWidth) && attrWidthParsed) imgWidth = parsedAttrWidth;
-        if (float.IsNaN(imgHeight) && attrHeightParsed) imgHeight = parsedAttrHeight;
-
-        // Intrinsic image size from cache (a width-only or height-only
-        // declaration must keep the image's aspect ratio).
-        var intrinsicParsed = false;
-        int intrinsicW = 0, intrinsicH = 0;
-        if (float.IsNaN(imgWidth) || float.IsNaN(imgHeight))
-        {
-            try
-            {
-                var srcAttr = srcEl.GetAttribute("src") ?? srcEl.GetAttribute("href") ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(srcAttr))
-                {
-                    var clean = srcAttr.Split('#')[0].Split('?')[0].Trim();
-                    if (clean.StartsWith("/cache/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(_coreOptions.CachePath))
-                    {
-                        var relative = clean["/cache/".Length..].TrimStart('/', '\\');
-                        var parts = relative.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
-                        var pathParts = new List<string> { _coreOptions.CachePath };
-                        pathParts.AddRange(parts);
-                        var imagePath = Path.Combine(pathParts.ToArray());
-                        if (File.Exists(imagePath))
-                        {
-                            using var fileStream = File.OpenRead(imagePath);
-                            using var stream = new SKManagedStream(fileStream);
-                            using var codec = SKCodec.Create(stream);
-                            if (codec != null)
-                            {
-                                intrinsicW = codec.Info.Width;
-                                intrinsicH = codec.Info.Height;
-                                intrinsicParsed = intrinsicW > 0 && intrinsicH > 0;
-                            }
-                        }
-                    }
-                }
-            }
-            catch { }
-        }
-
-        var mw = ParseLengthToPx(computed.GetPropertyValue("max-width"), containerRefWidth, fontSize);
-        var maxW = mw is > 0 ? Math.Min(availableWidth, mw.Value) : availableWidth;
-        if (imgWidth > maxW) imgWidth = maxW;
-
-        // Derive the missing dimension from the intrinsic aspect ratio
-        // (CSS replaced-element model).
-        if (intrinsicParsed)
-        {
-            bool widthMissing = float.IsNaN(imgWidth) || imgWidth <= 0;
-            bool heightMissing = float.IsNaN(imgHeight) || imgHeight <= 0;
-            if (widthMissing && heightMissing)
-            {
-                imgWidth = Math.Min(intrinsicW, maxW);
-                imgHeight = imgWidth * (intrinsicH / (float)intrinsicW);
-            }
-            else if (heightMissing)
-            {
-                imgHeight = imgWidth * (intrinsicH / (float)intrinsicW);
-            }
-            else if (widthMissing)
-            {
-                imgWidth = imgHeight * (intrinsicW / (float)intrinsicH);
-                if (imgWidth > maxW)
-                {
-                    imgWidth = maxW;
-                    imgHeight = imgWidth * (intrinsicH / (float)intrinsicW);
-                }
-            }
-        }
-
-        if (attrWidthParsed && attrHeightParsed)
-        {
-            if (parsedAttrWidth > 0) imgHeight = imgWidth * (parsedAttrHeight / parsedAttrWidth);
-        }
-        else if (computedWidthParsed && computedHeightParsed)
-        {
-            if (computedWidth > 0)
-            {
-                if (Math.Abs(imgWidth - computedWidth) > 0.001f) imgHeight = imgWidth * (computedHeight / computedWidth);
-                else imgHeight = computedHeight;
-            }
-        }
-
-        if (float.IsNaN(imgHeight) || imgHeight <= 0)
-        {
-            if (_options.DefaultImageAspectRatio > 0) imgHeight = imgWidth / _options.DefaultImageAspectRatio;
-            else imgHeight = _options.DefaultImageHeightPx;
-        }
-
-        var mh = ParseLengthToPx(computed.GetPropertyValue("max-height"), _options.PageHeightPx, fontSize);
-        if (mh is > 0 && !float.IsNaN(imgHeight) && imgHeight > mh.Value) imgHeight = mh.Value;
-
-        return (imgWidth, imgHeight);
-    }
-
-    /// <summary>
-    /// True when the element's computed <c>display</c> is block-like. Images are
-    /// inline by UA default; <c>figure</c> is block.
-    /// </summary>
-    private bool IsBlockDisplay(Element el)
-    {
-        var display = GetComputedStyle(el).GetPropertyValue("display");
-        if (string.IsNullOrWhiteSpace(display))
-            return el.TagName.Equals("figure", StringComparison.OrdinalIgnoreCase);
-        return display.Trim().ToLowerInvariant() switch
-        {
-            "inline" or "inline-block" or "inline-flex" or "inline-grid" or "none" => false,
-            _ => true
-        };
-    }
-
-    /// <summary>An image element whose computed display is inline (the UA default).</summary>
-    private bool IsInlineImage(Element el) => IsImageElement(el) && !IsBlockDisplay(el);
-
-    /// <summary>
-    /// Collects the inline-display image descendants of <paramref name="el"/>,
-    /// skipping <paramref name="blockChildren"/> (their images belong to their
-    /// own block flow, not to this element's inline content).
-    /// </summary>
-    private List<Element> CollectInlineImages(Element el, List<Element>? blockChildren = null)
-    {
-        List<Element> result = [];
-        CollectInlineImagesRecursive(el, blockChildren, result);
-        return result;
-    }
-
-    private void CollectInlineImagesRecursive(Element el, List<Element>? blockChildren, List<Element> result)
-    {
-        foreach (var child in el.Children)
-        {
-            if (IsHidden(child)) continue;
-            if (blockChildren is { Count: > 0 } && blockChildren.Contains(child)) continue;
-            if (IsImageElement(child) && !IsBlockDisplay(child))
-            {
-                result.Add(child);
-                continue;
-            }
-            if (!IsBlockLevelTag(child.TagName))
-                CollectInlineImagesRecursive(child, null, result);
-        }
-    }
-
-    /// <summary>First descendant image element with a non-empty src/href, if any.</summary>
-    private static Element? FindImageWithSrc(Element el)
-    {
-        foreach (var child in el.Children)
-        {
-            if (IsImageElement(child) && (child.GetAttribute("src") is { Length: > 0 } || child.GetAttribute("href") is { Length: > 0 }))
-                return child;
-            var nested = FindImageWithSrc(child);
-            if (nested != null) return nested;
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// Parses the <c>line-height</c> keeping the LENGTH and UNITLESS forms separate:
-    /// a unitless line-height multiplies each inline's OWN font size (browser model).
-    /// </summary>
-    private (float? LengthPx, float? Multiplier) ResolveLineHeightForm(CssStyle computed, float fontSize)
-    {
-        float? lengthPx = null;
-        float? multiplier = null;
-        var lh = computed.GetPropertyValue("line-height");
-        if (!string.IsNullOrWhiteSpace(lh))
-        {
-            var lhTrim = lh.Trim();
-            if (float.TryParse(lhTrim, NumberStyles.Float, CultureInfo.InvariantCulture, out var lhMul))
-                multiplier = lhMul;
-            else
-            {
-                var parsed = ParseLengthToPx(lhTrim, fontSize, fontSize);
-                if (parsed.HasValue) lengthPx = parsed.Value;
-                else if (_lengthParser.ParseUnitless(lhTrim) is { } unitless) multiplier = unitless;
-            }
-        }
-        return (lengthPx, multiplier);
-    }
-
     /// <summary>
     /// The space a text-less element occupies as CONTENT: an explicit CSS
     /// <c>height</c> when declared; otherwise one line when the element contains
@@ -1035,7 +700,8 @@ public sealed partial class LayoutEngine : IDisposable
         if (!HasNonCollapsibleContent(el))
             return (0f, 0, 0f);
 
-        var (lhLengthPx, lhMultiplier) = ResolveLineHeightForm(computed, fontSize);
+        var (lhLengthPx, lhMultiplier) =
+            CssValueParser.ResolveLineHeightForm(computed.GetPropertyValue("line-height"), fontSize, ParseLengthToPx, _lengthParser.ParseUnitless);
         var lineHeight = ITextMeasurer.QuantizeLineHeight(lhLengthPx ?? (lhMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize);
         return (lineHeight, 1, lineHeight);
     }
@@ -1058,31 +724,14 @@ public sealed partial class LayoutEngine : IDisposable
         return false;
     }
 
-    /// <summary>Parses the CSS page-break properties into <see cref="LayoutBlockFlags"/>.</summary>
-    private static LayoutBlockFlags ParseBreakFlags(CssStyle computed)
+    /// <summary>Maps the parsed CSS break properties to <see cref="LayoutBlockFlags"/>.</summary>
+    private static LayoutBlockFlags ToBreakFlags(CssStyle style)
     {
+        var (pageBreakBefore, pageBreakAfter, avoidBreakInside) = CssValueParser.ParseBreaks(style);
         LayoutBlockFlags flags = 0;
-
-        // Break-before/after: only the COLUMN value is honored. The page count is
-        // derived from a CSS multi-column layout (column-fill: auto), and Chromium
-        // treats break-before/after: page (and the legacy page-break-*: always) as
-        // print-only — a no-op in columns, where content flows greedily (verified:
-        // 5 forced-break divs pack 2 per column, .browser-test/break_test.html).
-        // break-before/after: column IS honored (forces a new column,
-        // .browser-test/break_test2.html). Honoring the page value would inflate
-        // the count (e.g. arcanum ch146: 46 vs the browser's 21).
-        var bb = computed.GetPropertyValue("break-before");
-        if (!string.IsNullOrWhiteSpace(bb) && bb.Trim().Equals("column", StringComparison.OrdinalIgnoreCase)) flags |= LayoutBlockFlags.PageBreakBefore;
-
-        var ba = computed.GetPropertyValue("break-after");
-        if (!string.IsNullOrWhiteSpace(ba) && ba.Trim().Equals("column", StringComparison.OrdinalIgnoreCase)) flags |= LayoutBlockFlags.PageBreakAfter;
-
-        // break-inside: avoid IS honored (Chromium avoids breaking inside the box).
-        var pbi = computed.GetPropertyValue("page-break-inside");
-        var bi = computed.GetPropertyValue("break-inside");
-        if (!string.IsNullOrWhiteSpace(pbi) && pbi.Trim().Equals("avoid", StringComparison.OrdinalIgnoreCase)) flags |= LayoutBlockFlags.AvoidBreakInside;
-        if (!string.IsNullOrWhiteSpace(bi) && bi.Trim().Equals("avoid", StringComparison.OrdinalIgnoreCase)) flags |= LayoutBlockFlags.AvoidBreakInside;
-
+        if (pageBreakBefore) flags |= LayoutBlockFlags.PageBreakBefore;
+        if (pageBreakAfter) flags |= LayoutBlockFlags.PageBreakAfter;
+        if (avoidBreakInside) flags |= LayoutBlockFlags.AvoidBreakInside;
         return flags;
     }
 
@@ -1096,11 +745,11 @@ public sealed partial class LayoutEngine : IDisposable
         var fontSize = ResolveFontSize(el);
         var containerRefWidth = GetContainingBlockContentWidth(el);
 
-        var marginTop = TryGetComputedMarginPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
-        var marginBottom = TryGetComputedMarginPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
+        var marginTop = TryGetComputedBoxPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
+        var marginBottom = TryGetComputedBoxPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
 
-        var paddingTop = TryGetComputedPaddingPx(computed, "padding-top", containerRefWidth, fontSize) ?? 0f;
-        var paddingBottom = TryGetComputedPaddingPx(computed, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
+        var paddingTop = TryGetComputedBoxPx(computed, "padding-top", containerRefWidth, fontSize) ?? 0f;
+        var paddingBottom = TryGetComputedBoxPx(computed, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
 
         return (marginTop, marginBottom, paddingTop, paddingBottom);
     }
@@ -1126,195 +775,48 @@ public sealed partial class LayoutEngine : IDisposable
         return parsed ?? parentFontSize;
     }
 
-    /// <summary>Extracts text content that belongs directly to the element (not inside block-level children).</summary>
-    private static string GetOwnInlineText(Element el, List<Element> blockChildren)
-    {
-        var sb = new StringBuilder();
-        foreach (var node in el.ChildNodes)
-        {
-            if (node.NodeType == NodeType.Text)
-            {
-                sb.Append(node.TextContent);
-            }
-            else if (node is Element childEl && !blockChildren.Contains(childEl))
-            {
-                // Inline element (span, em, strong, a, etc.) - include its text.
-                Element.AppendDescendantText(childEl, sb);
-            }
-            // Block children are skipped (their text is handled by recursion).
-        }
-
-        var start = 0;
-        var end = sb.Length;
-        while (start < end && char.IsWhiteSpace(sb[start])) start++;
-        while (end > start && char.IsWhiteSpace(sb[end - 1])) end--;
-        return sb.ToString(start, end - start);
-    }
-
-    /// <summary>
-    /// Splits the element's inline content into <see cref="TextRun"/>s at their effective
-    /// font size and style. Consecutive runs at the same size AND style are merged.
-    /// </summary>
-    private List<TextRun> BuildTextRuns(Element el, float ownFontSize, bool ownBold, bool ownItalic)
-    {
-        if (IsUniformInline(el, ownFontSize, ownBold, ownItalic))
-        {
-            // TrimmedTextContent: the measurer collapses leading/trailing
-            // whitespace anyway, and reusing it avoids a second subtree walk
-            // (BuildLeafBlock already computed it for the same element).
-            return [new TextRun(el.TrimmedTextContent, ownFontSize, ToFontStyle(ownBold, ownItalic))];
-        }
-
-        var builders = new List<RunBuilder>();
-        WalkInlineRuns(el, ownFontSize, ownBold, ownItalic, builders);
-        var runs = new List<TextRun>(builders.Count);
-        foreach (var b in builders) runs.Add(b.Build());
-        return runs;
-    }
-
-    /// <summary>
-    /// True when every inline descendant renders at the inherited size and style, so the
-    /// whole element is a single run and the run walk can be skipped.
-    /// </summary>
-    private bool IsUniformInline(Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic)
-    {
-        foreach (var node in element.ChildNodes)
-        {
-            if (node is not Element childEl || IsBlockLevelTag(childEl.TagName)) continue;
-
-            var childSize = inheritedSize;
-            var childBold = inheritedBold;
-            var childItalic = inheritedItalic;
-            var cs = GetComputedStyle(childEl);
-            var fs = cs.GetPropertyValue("font-size");
-            if (!string.IsNullOrWhiteSpace(fs) && cs.IsExplicit("font-size"))
-            {
-                var parsed = ParseLengthToPx(fs, childSize, childSize);
-                if (parsed is > 0f) childSize = parsed.Value;
-            }
-            var fw = cs.GetPropertyValue("font-weight");
-            if (!string.IsNullOrWhiteSpace(fw)) childBold = IsBoldWeight(fw);
-            var fst = cs.GetPropertyValue("font-style");
-            if (!string.IsNullOrWhiteSpace(fst)) childItalic = IsItalicStyle(fst);
-
-            if (Math.Abs(childSize - inheritedSize) >= 0.001f || childBold != inheritedBold || childItalic != inheritedItalic)
-                return false;
-
-            if (!IsUniformInline(childEl, childSize, childBold, childItalic))
-                return false;
-        }
-
-        return true;
-    }
-
-    private void WalkInlineRuns(Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs)
-    {
-        foreach (var node in element.ChildNodes)
-        {
-            if (node.NodeType == NodeType.Text)
-            {
-                AppendRun(runs, node.TextContent, inheritedSize, inheritedBold, inheritedItalic);
-            }
-            else if (node is Element childEl && IsBlockLevelTag(childEl.TagName))
-            {
-                // Defensive: leaf blocks have no block children; a container's block
-                // children become sibling blocks, not part of its own inline text.
-            }
-            else if (node is Element inline)
-            {
-                var childSize = inheritedSize;
-                var childBold = inheritedBold;
-                var childItalic = inheritedItalic;
-                var cs = GetComputedStyle(inline);
-                var fs = cs.GetPropertyValue("font-size");
-                // Only an explicitly declared font-size is re-parsed; an inherited
-                // raw string (e.g. "max(2.42em, …)") would apply the em unit twice.
-                if (!string.IsNullOrWhiteSpace(fs) && cs.IsExplicit("font-size"))
-                {
-                    var parsed = ParseLengthToPx(fs, childSize, childSize);
-                    if (parsed is > 0f) childSize = parsed.Value;
-                }
-                var fw = cs.GetPropertyValue("font-weight");
-                if (!string.IsNullOrWhiteSpace(fw)) childBold = IsBoldWeight(fw);
-                var fst = cs.GetPropertyValue("font-style");
-                if (!string.IsNullOrWhiteSpace(fst)) childItalic = IsItalicStyle(fst);
-                WalkInlineRuns(inline, childSize, childBold, childItalic, runs);
-            }
-        }
-    }
-
-    private static void AppendRun(List<RunBuilder> runs, string text, float size, bool bold, bool italic)
-    {
-        if (text.Length == 0) return;
-        var style = ToFontStyle(bold, italic);
-        if (runs.Count > 0 && Math.Abs(runs[^1].Size - size) < 0.001f && runs[^1].Style == style)
-        {
-            runs[^1].Append(text);
-        }
-        else
-        {
-            runs.Add(new RunBuilder { Size = size, Style = style });
-            runs[^1].Append(text);
-        }
-    }
-
-    /// <summary>
-    /// Accumulates the text of a single run in a <see cref="StringBuilder"/> so that
-    /// merging consecutive same-style fragments is O(total text).
-    /// </summary>
-    private sealed class RunBuilder
-    {
-        public float Size;
-        public FontStyle Style;
-        private readonly StringBuilder _text = new();
-
-        public void Append(string text) => _text.Append(text);
-
-        public TextRun Build() => new(_text.ToString(), Size, Style);
-    }
-
-    private static FontStyle ToFontStyle(bool bold, bool italic) =>
-        (bold, italic) switch
-        {
-            (true, true) => FontStyle.BoldItalic,
-            (true, false) => FontStyle.Bold,
-            (false, true) => FontStyle.Italic,
-            _ => FontStyle.Regular
-        };
-
-    /// <summary>CSS <c>font-weight</c>: bold at "bold"/"bolder" or a numeric weight ≥ 600.</summary>
-    private static bool IsBoldWeight(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        var v = value.Trim().ToLowerInvariant();
-        if (v is "bold" or "bolder") return true;
-        return float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) && n >= 600f;
-    }
-
-    /// <summary>CSS <c>font-style</c>: italic at "italic"/"oblique".</summary>
-    private static bool IsItalicStyle(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        var v = value.Trim().ToLowerInvariant();
-        return v is "italic" or "oblique";
-    }
-
     // The resolver expands every logical property (margin-block, margin-block-start,
     // margin-inline, ...) into physical longhands at cascade time, so the engine reads
     // the physical longhand directly — no per-property fallback chain is needed.
-    private float? TryGetComputedMarginPx(CssStyle computed, string name, float reference, float? emReference)
+    private float? TryGetComputedBoxPx(CssStyle computed, string name, float reference, float? emReference)
         => ParseLengthToPx(computed.GetPropertyValue(name), reference, emReference);
 
-    private float? TryGetComputedPaddingPx(CssStyle computed, string name, float reference, float? emReference)
-        => ParseLengthToPx(computed.GetPropertyValue(name), reference, emReference);
+    /// <summary>
+    /// True when the element's computed <c>display</c> is block-like. Images are
+    /// inline by UA default; <c>figure</c> is block.
+    /// </summary>
+    private bool IsBlockDisplay(Element el)
+        => CssValueParser.IsBlockDisplay(GetComputedStyle(el).GetPropertyValue("display"), el.TagName);
 
-    private static bool IsImageElement(Element el)
+    /// <summary>An image element whose computed display is inline (the UA default).</summary>
+    private bool IsInlineImage(Element el) => ImageHelpers.IsImageElement(el) && !IsBlockDisplay(el);
+
+    /// <summary>
+    /// Collects the inline-display image descendants of <paramref name="el"/>,
+    /// skipping <paramref name="blockChildren"/> (their images belong to their
+    /// own block flow, not to this element's inline content).
+    /// </summary>
+    private List<Element> CollectInlineImages(Element el, List<Element>? blockChildren = null)
     {
-        return el.TagName.ToUpperInvariant() switch
+        List<Element> result = [];
+        CollectInlineImagesRecursive(el, blockChildren, result);
+        return result;
+    }
+
+    private void CollectInlineImagesRecursive(Element el, List<Element>? blockChildren, List<Element> result)
+    {
+        foreach (var child in el.Children)
         {
-            "IMG" or "SVG" or "IMAGE" or "FIGURE" or "PICTURE" or "OBJECT" or "CANVAS" => true,
-            _ => false
-        };
+            if (IsHidden(child)) continue;
+            if (blockChildren is { Count: > 0 } && blockChildren.Contains(child)) continue;
+            if (ImageHelpers.IsImageElement(child) && !IsBlockDisplay(child))
+            {
+                result.Add(child);
+                continue;
+            }
+            if (!IsBlockLevelTag(child.TagName))
+                CollectInlineImagesRecursive(child, null, result);
+        }
     }
 
     public void Dispose()
@@ -1332,7 +834,4 @@ public sealed partial class LayoutEngine : IDisposable
         }
         GC.SuppressFinalize(this);
     }
-
-    [GeneratedRegex(@"display\s*:\s*none", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
-    private static partial Regex DisplayNoneRegex();
 }

@@ -49,30 +49,8 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         // Chapter CSS depends only on the chapter, so build it all up front
         // (it used to be rebuilt inside the loop, once per chapter).
         var chapterCss = new List<string>[chapters.Count];
-        var stylesheets = ebook.Content.Stylesheets;
         for (var i = 0; i < chapters.Count; i++)
-        {
-            var chapter = chapters[i];
-            var styles = new List<string>();
-
-            if(!string.IsNullOrEmpty(chapter.ParagraphClassName))
-            {
-                styles.Add($"body p.{chapter.ParagraphClassName} {{ margin-block: calc(var(--paragraph-spacing) * 1pt) !important; }}");
-            }
-
-            // Book-stylesheet order is the cascade order; a set makes the
-            // membership test O(1) instead of O(stylesheets) per chapter.
-            var chapterStylesheetIds = new HashSet<string>(chapter.Stylesheets);
-            foreach (var stylesheet in stylesheets)
-            {
-                if (chapterStylesheetIds.Contains(stylesheet.Identifier))
-                {
-                    styles.Add(stylesheet.Content);
-                }
-            }
-
-            chapterCss[i] = styles;
-        }
+            chapterCss[i] = BuildChapterCss(chapters[i], ebook.Content.Stylesheets);
 
         // One shared, thread-safe measurer for the whole book (native resources
         // are released below, when the book is done); each parallel chapter gets
@@ -131,5 +109,32 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Builds the CSS that applies to a single chapter: the paragraph-spacing
+    /// rule (when the chapter declares a paragraph class) followed by the
+    /// chapter's stylesheets in book order, which is the cascade order.
+    /// </summary>
+    private static List<string> BuildChapterCss(Chapter chapter, IReadOnlyList<Stylesheet> stylesheets)
+    {
+        var styles = new List<string>();
+
+        if (!string.IsNullOrEmpty(chapter.ParagraphClassName))
+        {
+            styles.Add($"body p.{chapter.ParagraphClassName} {{ margin-block: calc(var(--paragraph-spacing) * 1pt) !important; }}");
+        }
+
+        // A set makes the membership test O(1) instead of O(stylesheets) per chapter.
+        var chapterStylesheetIds = new HashSet<string>(chapter.Stylesheets);
+        foreach (var stylesheet in stylesheets)
+        {
+            if (chapterStylesheetIds.Contains(stylesheet.Identifier))
+            {
+                styles.Add(stylesheet.Content);
+            }
+        }
+
+        return styles;
     }
 }

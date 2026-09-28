@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Text;
 using BookHeaven.Core.DOM.Text.Abstractions;
+using BookHeaven.Core.DOM.Text.Enums;
+using BookHeaven.Core.DOM.Text.Helpers;
 using HarfBuzzSharp;
 using SkiaSharp;
 using SkiaSharp.HarfBuzz;
@@ -203,7 +205,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         var lineCount = 0;
         var lineEmpty = true;
 
-        TextRunWrapper.ForEachSegment(text, part =>
+        Helpers.TextRunWrapper.ForEachSegment(text, part =>
         {
             if (part.Length == 0)
             {
@@ -335,7 +337,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     {
         for (var i = word.Length - 1; i > 0; i--)
         {
-            if (!TextRunWrapper.IsBreakableDash(word[i]))
+            if (!Helpers.TextRunWrapper.IsBreakableDash(word[i]))
                 continue;
             var head = word.AsSpan(0, i).ToString();
             var headWidth = GetWordWidth(head, fontSizePx, style);
@@ -347,7 +349,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         // A LEADING dash (UAX #14): the browser breaks AFTER it, keeping the dash on
         // this line and pushing the rest to the next. Without this, a token like
         // "—dijo" is atomic and wraps whole, adding a line the browser doesn't have.
-        if (word.Length > 1 && TextRunWrapper.IsBreakableDash(word[0]))
+        if (word.Length > 1 && Helpers.TextRunWrapper.IsBreakableDash(word[0]))
         {
             var head = word.AsSpan(0, 1).ToString();
             var headWidth = GetWordWidth(head, fontSizePx, style);
@@ -362,10 +364,10 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     public TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true)
     {
         ArgumentNullException.ThrowIfNull(runs);
-        return TextRunWrapper.Wrap(runs, TextWidthProbes.Create(
-            WordWidth: GetWordWidth,
-            SpaceWidth: (size, style) => GetWordWidth(" ", size, style),
-            CharWidth: (ch, size, style) => MeasureShapedTextWidth(ch.ToString(), size, style)),
+        return Helpers.TextRunWrapper.Wrap(runs, TextWidthProbes.Create(
+            wordWidth: GetWordWidth,
+            spaceWidth: (size, style) => GetWordWidth(" ", size, style),
+            charWidth: (ch, size, style) => MeasureShapedTextWidth(ch.ToString(), size, style)),
             maxWidthPx, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx, includeLineText);
     }
 

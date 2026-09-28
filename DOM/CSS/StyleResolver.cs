@@ -116,16 +116,6 @@ public static class StyleResolver
     {
         const int order = -1;
 
-        void Hint(string attr, string prop, bool isLength)
-        {
-            var v = el.GetAttribute(attr);
-            if (string.IsNullOrWhiteSpace(v)) return;
-            v = v.Trim();
-            if (isLength && float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-                v += "px";
-            ConsiderDecl(best, new CssDeclaration(prop, v, false), 0, 0, order, scope);
-        }
-
         switch (el.TagName.ToLowerInvariant())
         {
             case "table":
@@ -148,6 +138,18 @@ public static class StyleResolver
                 Hint("width", "width", isLength: true);
                 Hint("height", "height", isLength: true);
                 break;
+        }
+
+        return;
+
+        void Hint(string attr, string prop, bool isLength)
+        {
+            var v = el.GetAttribute(attr);
+            if (string.IsNullOrWhiteSpace(v)) return;
+            v = v.Trim();
+            if (isLength && float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                v += "px";
+            ConsiderDecl(best, new CssDeclaration(prop, v, false), 0, 0, order, scope);
         }
     }
 

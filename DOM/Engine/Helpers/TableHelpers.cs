@@ -4,8 +4,9 @@ using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Text.Abstractions;
+using BookHeaven.Core.DOM.Text.Enums;
 
-namespace BookHeaven.Core.DOM.Engine;
+namespace BookHeaven.Core.DOM.Engine.Helpers;
 
 /// <summary>
 /// Faithful implementation of Chromium's <c>table-layout: auto</c> column-width
@@ -19,7 +20,7 @@ namespace BookHeaven.Core.DOM.Engine;
 /// columns in proportion to their (percentSize − min) increases. This was verified
 /// against Playwright/Chromium (see <c>.browser-test/test_clamp.html</c>).
 /// </summary>
-internal static class TableLayout
+internal static class TableHelpers
 {
     /// <summary>The computed geometry of a table.</summary>
     public sealed class Result
@@ -253,7 +254,7 @@ internal static class TableLayout
     {
         var style = getStyle(el);
         var fontSize = getFontSize(el);
-        var styleEnum = IsItalicStyle(style.GetPropertyValue("font-style")) ? FontStyle.Italic : FontStyle.Regular;
+        var styleEnum = CssValueParser.IsItalicStyle(style.GetPropertyValue("font-style")) ? FontStyle.Italic : FontStyle.Regular;
 
         var cell = new Cell
         {
@@ -707,7 +708,4 @@ internal static class TableLayout
         }
         return (spacing, isCollapsed);
     }
-
-    private static bool IsItalicStyle(string? value)
-        => value is not null && value.Trim().Equals("italic", StringComparison.OrdinalIgnoreCase);
 }

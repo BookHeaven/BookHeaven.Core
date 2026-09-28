@@ -1,4 +1,4 @@
-namespace BookHeaven.Core.DOM.Text.Abstractions;
+namespace BookHeaven.Core.DOM.Text.Enums;
 
 /// <summary>
 /// The four font style variants a family can ship. A text run is measured with the

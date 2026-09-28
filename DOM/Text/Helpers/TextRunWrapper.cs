@@ -1,9 +1,10 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using BookHeaven.Core.DOM.Text.Abstractions;
+using BookHeaven.Core.DOM.Text.Enums;
 using BookHeaven.Core.DOM.Text.Measurers;
 
-namespace BookHeaven.Core.DOM.Text;
+namespace BookHeaven.Core.DOM.Text.Helpers;
 
 /// <summary>
 /// Width probes a measurer hands to <see cref="TextRunWrapper"/>: how wide a word, a
@@ -17,8 +18,8 @@ public readonly struct TextWidthProbes
     public required Func<float, FontStyle, float> SpaceWidth { get; init; }
     public required Func<char, float, FontStyle, float> CharWidth { get; init; }
 
-    public static TextWidthProbes Create(Func<string, float, FontStyle, float> WordWidth, Func<float, FontStyle, float> SpaceWidth, Func<char, float, FontStyle, float> CharWidth) =>
-        new() { WordWidth = WordWidth, SpaceWidth = SpaceWidth, CharWidth = CharWidth };
+    public static TextWidthProbes Create(Func<string, float, FontStyle, float> wordWidth, Func<float, FontStyle, float> spaceWidth, Func<char, float, FontStyle, float> charWidth) =>
+        new() { WordWidth = wordWidth, SpaceWidth = spaceWidth, CharWidth = charWidth };
 }
 
 /// <summary>
@@ -72,15 +73,6 @@ public static partial class TextRunWrapper
             return new TextMeasurementResult { Lines = lines, LineCount = 0, LineHeightPx = fallbackLineHeight, TotalHeightPx = 0f };
         }
 
-        float SpaceWidth(float size, FontStyle style) => probes.SpaceWidth(size, style) + (wordSpacingPx ?? 0f);
-
-        float WordWidth(string word, float size, FontStyle style)
-        {
-            var width = probes.WordWidth(word, size, style);
-            if (letterSpacingPx.HasValue && word.Length > 1) width += (word.Length - 1) * letterSpacingPx.Value;
-            return width;
-        }
-
         // A browser does not break between a word and punctuation that immediately follows
         // it with no space (e.g. "word,"), even across run/style boundaries. Glue such
         // tokens into one unbreakable unit so the fit test uses the combined width.
@@ -102,91 +94,6 @@ public static partial class TextRunWrapper
         var currentText = includeLineText ? LineTextScratch.Value : null;
         currentText?.Clear();
         var currentWidth = 0f;
-
-        // <paramref name="materializeEmpty"/>: a <c>&lt;br&gt;</c> flushes the current
-        // line even when it is empty (an empty line of the break's own box height);
-        // the final flush and wrap flushes only materialize non-empty lines.
-        void FlushLine(bool materializeEmpty, float emptyLineHeight)
-        {
-            if (current.Count == 0)
-            {
-                if (materializeEmpty)
-                {
-                    if (currentText is not null) lines.Add(string.Empty);
-                    lineHeights.Add(emptyLineHeight);
-                }
-                return;
-            }
-            if (currentText is not null)
-            {
-                lines.Add(currentText.ToString());
-                currentText.Clear();
-            }
-            var h = 0f;
-            foreach (var t in current) h = Math.Max(h, BoxHeight(t.FontSize));
-            lineHeights.Add(h);
-            current.Clear();
-            currentWidth = 0f;
-        }
-
-        void SplitLongWord(Token token)
-        {
-            var frag = includeLineText ? FragTextScratch.Value : null;
-            frag?.Clear();
-            var fragLen = 0;
-            var fragWidth = 0f;
-            foreach (var ch in token.Word)
-            {
-                var cw = probes.CharWidth(ch, token.FontSize, token.Style);
-                if (fragLen > 0 && letterSpacingPx.HasValue) cw += letterSpacingPx.Value;
-                if (fragWidth + cw <= maxWidthPx || fragLen == 0)
-                {
-                    frag?.Append(ch);
-                    fragLen++;
-                    fragWidth += cw;
-                }
-                else
-                {
-                    if (frag is not null)
-                    {
-                        lines.Add(frag.ToString());
-                        frag.Clear();
-                    }
-                    lineHeights.Add(BoxHeight(token.FontSize));
-                    frag?.Append(ch);
-                    fragLen = 1;
-                    fragWidth = probes.CharWidth(ch, token.FontSize, token.Style);
-                }
-            }
-            if (fragLen > 0)
-            {
-                if (frag is not null) lines.Add(frag.ToString());
-                lineHeights.Add(BoxHeight(token.FontSize));
-            }
-        }
-
-        // Rightmost breakable dash whose head fits the current line (UAX #14); -1 if none.
-        int FindBreakableDash(string word, float curWidth, float spaceW, float limit, float size, FontStyle style)
-        {
-            for (var i = word.Length - 1; i > 0; i--)
-            {
-                if (!IsBreakableDash(word[i]))
-                    continue;
-                var head = word.AsSpan(0, i).ToString();
-                if (curWidth + spaceW + WordWidth(head, size, style) <= limit)
-                    return i;
-            }
-            // A LEADING dash (UAX #14): the browser breaks AFTER it, keeping the dash
-            // on this line and pushing the rest to the next. Without this, a token like
-            // "—dijo" is atomic and wraps whole, adding a line the browser lacks.
-            if (word.Length > 1 && IsBreakableDash(word[0]))
-            {
-                var head = word.AsSpan(0, 1).ToString();
-                if (curWidth + spaceW + WordWidth(head, size, style) <= limit)
-                    return 1; // tail starts right after the dash
-            }
-            return -1;
-        }
 
         foreach (var token in tokens)
         {
@@ -275,6 +182,100 @@ public static partial class TextRunWrapper
             LineHeightPx = maxHeight,
             TotalHeightPx = total
         };
+
+        void SplitLongWord(Token token)
+        {
+            var frag = includeLineText ? FragTextScratch.Value : null;
+            frag?.Clear();
+            var fragLen = 0;
+            var fragWidth = 0f;
+            foreach (var ch in token.Word)
+            {
+                var cw = probes.CharWidth(ch, token.FontSize, token.Style);
+                if (fragLen > 0 && letterSpacingPx.HasValue) cw += letterSpacingPx.Value;
+                if (fragWidth + cw <= maxWidthPx || fragLen == 0)
+                {
+                    frag?.Append(ch);
+                    fragLen++;
+                    fragWidth += cw;
+                }
+                else
+                {
+                    if (frag is not null)
+                    {
+                        lines.Add(frag.ToString());
+                        frag.Clear();
+                    }
+                    lineHeights.Add(BoxHeight(token.FontSize));
+                    frag?.Append(ch);
+                    fragLen = 1;
+                    fragWidth = probes.CharWidth(ch, token.FontSize, token.Style);
+                }
+            }
+            if (fragLen > 0)
+            {
+                if (frag is not null) lines.Add(frag.ToString());
+                lineHeights.Add(BoxHeight(token.FontSize));
+            }
+        }
+
+        // Rightmost breakable dash whose head fits the current line (UAX #14); -1 if none.
+        int FindBreakableDash(string word, float curWidth, float spaceW, float limit, float size, FontStyle style)
+        {
+            for (var i = word.Length - 1; i > 0; i--)
+            {
+                if (!IsBreakableDash(word[i]))
+                    continue;
+                var head = word.AsSpan(0, i).ToString();
+                if (curWidth + spaceW + WordWidth(head, size, style) <= limit)
+                    return i;
+            }
+            // A LEADING dash (UAX #14): the browser breaks AFTER it, keeping the dash
+            // on this line and pushing the rest to the next. Without this, a token like
+            // "—dijo" is atomic and wraps whole, adding a line the browser lacks.
+            if (word.Length > 1 && IsBreakableDash(word[0]))
+            {
+                var head = word.AsSpan(0, 1).ToString();
+                if (curWidth + spaceW + WordWidth(head, size, style) <= limit)
+                    return 1; // tail starts right after the dash
+            }
+            return -1;
+        }
+
+        // <paramref name="materializeEmpty"/>: a <c>&lt;br&gt;</c> flushes the current
+        // line even when it is empty (an empty line of the break's own box height);
+        // the final flush and wrap flushes only materialize non-empty lines.
+        void FlushLine(bool materializeEmpty, float emptyLineHeight)
+        {
+            if (current.Count == 0)
+            {
+                if (materializeEmpty)
+                {
+                    if (currentText is not null) lines.Add(string.Empty);
+                    lineHeights.Add(emptyLineHeight);
+                }
+                return;
+            }
+            if (currentText is not null)
+            {
+                lines.Add(currentText.ToString());
+                currentText.Clear();
+            }
+            var h = 0f;
+            foreach (var t in current) h = Math.Max(h, BoxHeight(t.FontSize));
+            lineHeights.Add(h);
+            current.Clear();
+            currentWidth = 0f;
+        }
+
+        float WordWidth(string word, float size, FontStyle style)
+        {
+            var width = probes.WordWidth(word, size, style);
+            if (letterSpacingPx.HasValue && word.Length > 1) width += (word.Length - 1) * letterSpacingPx.Value;
+            return width;
+        }
+
+        float SpaceWidth(float size, FontStyle style) => probes.SpaceWidth(size, style) + (wordSpacingPx ?? 0f);
 
         // Inline box height for a run: a length line-height fixes every box; a unitless
         // (or "normal") one multiplies the run's own font size. Quantized to Blink's

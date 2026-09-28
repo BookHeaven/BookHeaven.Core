@@ -1,6 +1,7 @@
 using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Text.Abstractions;
+using BookHeaven.Core.DOM.Text.Enums;
 using BookHeaven.Core.Entities;
 using BookHeaven.Core.Features.Fonts;
 using Mediator;
