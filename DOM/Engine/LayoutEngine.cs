@@ -68,7 +68,8 @@ public sealed partial class LayoutEngine : IDisposable
     public LayoutEngine(
         PageCalculatorOptions options,
         IOptions<CoreOptions> coreOptions,
-        ITextMeasurer? sharedMeasurer = null)
+        ITextMeasurer? sharedMeasurer = null,
+        CssParser? sharedCssParser = null)
     {
         _options = (options ?? throw new ArgumentNullException(nameof(options))).Normalize();
         ArgumentNullException.ThrowIfNull(coreOptions);
@@ -82,7 +83,7 @@ public sealed partial class LayoutEngine : IDisposable
 
         // The parser owns the HTML construction (global + chapter stylesheets injected
         // around the fragment); the engine only passes the fragment and styles down.
-        _parser = new HtmlParser(_options);
+        _parser = new HtmlParser(_options, sharedCssParser);
 
         // A shared measurer (one per book, used by several parallel engines) is not
         // disposed by the engines using it; only the caller that created it owns it.
@@ -1154,7 +1155,10 @@ public sealed partial class LayoutEngine : IDisposable
     {
         if (IsUniformInline(el, ownFontSize, ownBold, ownItalic))
         {
-            return [new TextRun(el.TextContent, ownFontSize, ToFontStyle(ownBold, ownItalic))];
+            // TrimmedTextContent: the measurer collapses leading/trailing
+            // whitespace anyway, and reusing it avoids a second subtree walk
+            // (BuildLeafBlock already computed it for the same element).
+            return [new TextRun(el.TrimmedTextContent, ownFontSize, ToFontStyle(ownBold, ownItalic))];
         }
 
         var builders = new List<RunBuilder>();

@@ -26,11 +26,14 @@ namespace BookHeaven.Core.DOM.HTML;
 public sealed class HtmlParser
 {
     private readonly PageCalculatorOptions _options;
-    private readonly CssParser _cssParser = new();
+    private readonly CssParser _cssParser;
 
-    public HtmlParser(PageCalculatorOptions options)
+    public HtmlParser(PageCalculatorOptions options, CssParser? sharedCssParser = null)
     {
         _options = options ?? new PageCalculatorOptions();
+        // A shared parser reuses its rule cache across chapters, so the global
+        // stylesheet is parsed once per book instead of once per chapter.
+        _cssParser = sharedCssParser ?? new CssParser();
     }
 
     // HTML void elements: no content, no closing tag.

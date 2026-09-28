@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using BookHeaven.Core.Abstractions.Services;
+using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.Engine;
 using BookHeaven.Core.DOM.Services.Abstractions;
 using BookHeaven.Core.DOM.Text.Measurers;
@@ -82,6 +83,10 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         var sharedMeasurer = sender != null && urlBuilder != null
             ? await TextMeasurerFactory.CreateMeasurerAsync(normalized, sender, urlBuilder, cancellationToken)
             : TextMeasurerFactory.CreateMeasurer(coreOptions.Value.DefaultFontDirectory);
+
+        // One shared, thread-safe CSS parser for the whole book: its rule cache
+        // means the global stylesheet is parsed once instead of once per chapter.
+        var sharedCssParser = new CssParser();
         try
         {
             // A bounded channel of chapter indices feeds a fixed pool of workers:
@@ -98,7 +103,7 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
                 await foreach (var i in queue.Reader.ReadAllAsync(cancellationToken))
                 {
                     // Generate layout blocks and split them into pages (block-based path).
-                    using var engine = new LayoutEngine(normalized, coreOptions, sharedMeasurer);
+                    using var engine = new LayoutEngine(normalized, coreOptions, sharedMeasurer, sharedCssParser);
                     var blocks = await engine.GenerateLayoutBlocksAsync(chapters[i].Content, chapterCss[i], cancellationToken);
                     var map = PageSplitter.SplitToPages(blocks, normalized.PageHeightPx);
 
