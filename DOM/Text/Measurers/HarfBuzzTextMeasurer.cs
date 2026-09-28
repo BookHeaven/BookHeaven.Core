@@ -158,7 +158,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(fontSizePx, 0f);
-        var lineHeight = lineHeightPx ?? (fontSizePx * ITextMeasurer.NormalLineHeightMultiplier);
+        var lineHeight = ITextMeasurer.QuantizeLineHeight(lineHeightPx ?? (fontSizePx * ITextMeasurer.NormalLineHeightMultiplier));
         var lines = new List<string>();
         if (string.IsNullOrEmpty(text))
         {

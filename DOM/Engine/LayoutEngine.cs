@@ -498,6 +498,7 @@ public sealed partial class LayoutEngine : IDisposable
         // Line-height: keep the LENGTH and UNITLESS forms separate (browser model).
         var (lineHeightLengthPx, lineHeightMultiplier) = ResolveLineHeightForm(computed, fontSize);
         var lineHeightPx = lineHeightLengthPx ?? lineHeightMultiplier * fontSize;
+        if (lineHeightPx.HasValue) lineHeightPx = ITextMeasurer.QuantizeLineHeight(lineHeightPx.Value);
 
         // Letter-spacing and word-spacing.
         float? letterSpacingPx = null;
@@ -577,8 +578,8 @@ public sealed partial class LayoutEngine : IDisposable
         // (Kind.Text) so the splitter can break between its lines.
         if (images.Count > 0)
         {
-            var resolvedLineHeight = lineHeightLengthPx
-                ?? (lineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize;
+            var resolvedLineHeight = ITextMeasurer.QuantizeLineHeight(lineHeightLengthPx
+                ?? (lineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize);
             var metrics = _measurer.GetFontMetrics(fontSize, ToFontStyle(bold, italic));
             var strutDescent = ChromiumStrutDescent(resolvedLineHeight, metrics);
 
@@ -1030,7 +1031,7 @@ public sealed partial class LayoutEngine : IDisposable
             return (0f, 0, 0f);
 
         var (lhLengthPx, lhMultiplier) = ResolveLineHeightForm(computed, fontSize);
-        var lineHeight = lhLengthPx ?? (lhMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize;
+        var lineHeight = ITextMeasurer.QuantizeLineHeight(lhLengthPx ?? (lhMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize);
         return (lineHeight, 1, lineHeight);
     }
 

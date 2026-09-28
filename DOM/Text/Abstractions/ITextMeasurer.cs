@@ -21,6 +21,17 @@ public interface ITextMeasurer
     const float NormalLineHeightMultiplier = 1.2f;
 
     /// <summary>
+    /// Quantizes a line height to Blink's <c>LayoutUnit</c> grid (1/64px), flooring
+    /// exactly as <c>LayoutUnit::FromFloatFloor</c> does. Browsers lay out line boxes
+    /// on this grid, so the engine must use the same quantized value: the unquantized
+    /// float is a fraction of a pixel taller per line, and over a chapter's hundreds of
+    /// lines that drift tips the page count by one at a boundary. The multiply is done
+    /// in double (as Blink does) so a value sitting on the 1/64px boundary is not
+    /// pushed over it by float rounding.
+    /// </summary>
+    static float QuantizeLineHeight(float px) => (float)(Math.Truncate(px * 64.0) / 64.0);
+
+    /// <summary>
     /// Measures text. When <paramref name="includeLineText"/> is false the measurer
     /// skips building the per-line strings (only line count and heights are produced),
     /// which callers that never read <see cref="TextMeasurementResult.Lines"/> — like

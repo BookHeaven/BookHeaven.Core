@@ -264,8 +264,9 @@ public static partial class TextRunWrapper
         };
 
         // Inline box height for a run: a length line-height fixes every box; a unitless
-        // (or "normal") one multiplies the run's own font size.
-        float BoxHeight(float fontSize) => lineHeightLengthPx ?? (lineHeightMultiplier ?? NormalLineHeightMultiplier) * fontSize;
+        // (or "normal") one multiplies the run's own font size. Quantized to Blink's
+        // LayoutUnit grid so the line boxes match the browser's exactly.
+        float BoxHeight(float fontSize) => ITextMeasurer.QuantizeLineHeight(lineHeightLengthPx ?? (lineHeightMultiplier ?? NormalLineHeightMultiplier) * fontSize);
     }
 
     /// <summary>

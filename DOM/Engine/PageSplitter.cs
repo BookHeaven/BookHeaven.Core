@@ -411,27 +411,18 @@ public static class PageSplitter
             while (remaining > 0)
             {
                 var space = PageHeight - UsedOnPage;
-
-                int fit;
-                float sliceHeight;
-                if (havePerLine)
+                // Place whole lines while their BOTTOM edge fits the page remainder
+                // (bottom-fits). The body sets orphans:1 / widows:1, so there is no
+                // widow/orphan adjustment — a line breaks to the next page as soon as
+                // it no longer fits, exactly as the browser does.
+                var fit = 0;
+                var sliceHeight = 0f;
+                for (var li = placed; li < block.LineCount; li++)
                 {
-                    // Mixed-size lines: heights vary per line, so "how many fit" is a prefix sum.
-                    fit = 0;
-                    sliceHeight = 0f;
-                    for (var li = placed; li < block.LineCount; li++)
-                    {
-                        var next = sliceHeight + perLine![li];
-                        if (next > space) break;
-                        sliceHeight = next;
-                        fit++;
-                    }
-                }
-                else
-                {
-                    // Uniform lines: the original arithmetic, kept bit-identical.
-                    fit = (int)Math.Floor(space / lineHeight);
-                    sliceHeight = fit * lineHeight;
+                    var lineH = havePerLine ? perLine![li] : lineHeight;
+                    if (sliceHeight + lineH > space) break;
+                    sliceHeight += lineH;
+                    fit++;
                 }
 
                 if (fit <= 0)
