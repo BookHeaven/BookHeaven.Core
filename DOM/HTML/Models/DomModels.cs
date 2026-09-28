@@ -177,10 +177,12 @@ public sealed class Element : Node
     }
 
     // Lazily cached: the tree is immutable after parsing, and the engine reads
-    // TextContent several times per element (leaf measurement, inline runs, own-text
-    // extraction). Computing it once removes the repeated O(subtree) StringBuilder
-    // and string allocations from the layout hot path.
+    // the text several times per element (leaf measurement, inline runs, body
+    // root). Both variants are computed in ONE subtree walk, so an element that
+    // needs both (leaf block + uniform run) pays the O(subtree) StringBuilder
+    // cost only once.
     private string? _textContent;
+    private string? _trimmedTextContent;
 
     /// <summary>Concatenated text of this element and all its descendants (computed once, then cached).</summary>
     public override string TextContent
@@ -188,18 +190,10 @@ public sealed class Element : Node
         get
         {
             if (_textContent is { } cached) return cached;
-            var sb = new StringBuilder();
-            AppendDescendantText(this, sb);
-            _textContent = sb.ToString();
-            return _textContent;
+            ComputeText();
+            return _textContent!;
         }
     }
-
-    // Lazily cached: the engine reads the trimmed text in several places (leaf
-    // measurement, inline-run fallback, body root). The text is built into a
-    // StringBuilder and the trimmed range is taken directly from it, so the whole
-    // computation costs ONE string allocation (the old TextContent + Trim cost two).
-    private string? _trimmedTextContent;
 
     /// <summary><see cref="TextContent"/> with surrounding whitespace removed (computed once, then cached).</summary>
     public string TrimmedTextContent
@@ -207,15 +201,21 @@ public sealed class Element : Node
         get
         {
             if (_trimmedTextContent is { } cached) return cached;
-            var sb = new StringBuilder();
-            AppendDescendantText(this, sb);
-            var start = 0;
-            var end = sb.Length;
-            while (start < end && char.IsWhiteSpace(sb[start])) start++;
-            while (end > start && char.IsWhiteSpace(sb[end - 1])) end--;
-            _trimmedTextContent = sb.ToString(start, end - start);
-            return _trimmedTextContent;
+            ComputeText();
+            return _trimmedTextContent!;
         }
+    }
+
+    private void ComputeText()
+    {
+        var sb = new StringBuilder();
+        AppendDescendantText(this, sb);
+        var start = 0;
+        var end = sb.Length;
+        while (start < end && char.IsWhiteSpace(sb[start])) start++;
+        while (end > start && char.IsWhiteSpace(sb[end - 1])) end--;
+        _textContent = sb.ToString();
+        _trimmedTextContent = sb.ToString(start, end - start);
     }
 
     internal static void AppendDescendantText(Node node, StringBuilder sb)
