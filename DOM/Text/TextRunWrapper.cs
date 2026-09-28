@@ -30,9 +30,18 @@ public readonly struct TextWidthProbes
 /// </summary>
 public static partial class TextRunWrapper
 {
-
     // "normal" line-height approximation, same factor the single-size measurers use.
     private const float NormalLineHeightMultiplier = ITextMeasurer.NormalLineHeightMultiplier;
+
+    // Per-thread scratch buffers: Wrap is called thousands of times per book, and
+    // the token/line lists plus the line-text builders were a steady allocation
+    // source. Everything is copied out (strings, the LineHeights array) before the
+    // buffers are cleared and reused; the returned `lines` list stays per-call.
+    private static readonly ThreadLocal<List<Token>> TokenScratch = new(() => new List<Token>(32));
+    private static readonly ThreadLocal<List<Token>> CurrentLineScratch = new(() => new List<Token>(16));
+    private static readonly ThreadLocal<List<float>> LineHeightsScratch = new(() => new List<float>(8));
+    private static readonly ThreadLocal<StringBuilder> LineTextScratch = new(() => new StringBuilder(256));
+    private static readonly ThreadLocal<StringBuilder> FragTextScratch = new(() => new StringBuilder(64));
 
     /// <summary>One word plus the font size and style it renders at and the size/style of the run that owns the collapsed space before it (null = no space in the source). <see cref="PrecomputedWidth"/> is set when the token is a glued unit of several original tokens (a word plus punctuation that follows it with no space); it then overrides the per-word width probe. <see cref="ForcedBreak"/> marks a <c>&lt;br&gt;</c> (U+FFFC): it materializes the current line — even an empty one — and starts a new line.</summary>
     private readonly record struct Token(string Word, float FontSize, FontStyle Style, float? SpaceOwnerSize, FontStyle? SpaceOwnerStyle, float? PrecomputedWidth = null, bool ForcedBreak = false);
@@ -49,7 +58,8 @@ public static partial class TextRunWrapper
     {
         var tokens = BuildTokens(runs);
         var lines = new List<string>();
-        var lineHeights = new List<float>();
+        var lineHeights = LineHeightsScratch.Value!;
+        lineHeights.Clear();
 
         var maxRunSize = 0f;
         foreach (var run in runs) maxRunSize = Math.Max(maxRunSize, run.FontSizePx);
@@ -87,8 +97,10 @@ public static partial class TextRunWrapper
             tokens.RemoveAt(i);
         }
 
-        var current = new List<Token>();
-        var currentText = includeLineText ? new StringBuilder() : null;
+        var current = CurrentLineScratch.Value!;
+        current.Clear();
+        var currentText = includeLineText ? LineTextScratch.Value : null;
+        currentText?.Clear();
         var currentWidth = 0f;
 
         // <paramref name="materializeEmpty"/>: a <c>&lt;br&gt;</c> flushes the current
@@ -119,7 +131,8 @@ public static partial class TextRunWrapper
 
         void SplitLongWord(Token token)
         {
-            var frag = includeLineText ? new StringBuilder() : null;
+            var frag = includeLineText ? FragTextScratch.Value : null;
+            frag?.Clear();
             var fragLen = 0;
             var fragWidth = 0f;
             foreach (var ch in token.Word)
@@ -282,7 +295,8 @@ public static partial class TextRunWrapper
     /// </summary>
     private static List<Token> BuildTokens(IReadOnlyList<TextRun> runs)
     {
-        var tokens = new List<Token>();
+        var tokens = TokenScratch.Value!;
+        tokens.Clear();
         float? pendingSpace = null;
         FontStyle? pendingSpaceStyle = null;
         foreach (var run in runs)
@@ -304,6 +318,17 @@ public static partial class TextRunWrapper
                 }
                 // A <br> (U+FFFC) inside the segment is a forced break: it emits a
                 // break token and resets the space state (no space after a break).
+                if (part.IndexOf('\uFFFC') < 0)
+                {
+                    // No break in the segment (the common case): no Split array.
+                    var space = sawWord ? run.FontSizePx : pendingSpace;
+                    var spaceStyle = sawWord ? run.Style : pendingSpaceStyle;
+                    tokens.Add(new Token(part, run.FontSizePx, run.Style, space, spaceStyle));
+                    sawWord = true;
+                    pendingSpace = null;
+                    pendingSpaceStyle = null;
+                    return;
+                }
                 var segments = part.Split('\uFFFC');
                 for (var i = 0; i < segments.Length; i++)
                 {
