@@ -87,6 +87,11 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         // One shared, thread-safe CSS parser for the whole book: its rule cache
         // means the global stylesheet is parsed once instead of once per chapter.
         var sharedCssParser = new CssParser();
+
+        // One cache scope for the whole call: every memoized artifact (global CSS,
+        // tag interning, shorthand splits, var() resolution) is fresh per
+        // CalculatePagesAsync and shared across the parallel chapter workers.
+        var scope = new ParseScope();
         try
         {
             // A bounded channel of chapter indices feeds a fixed pool of workers:
@@ -103,7 +108,7 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
                 await foreach (var i in queue.Reader.ReadAllAsync(cancellationToken))
                 {
                     // Generate layout blocks and split them into pages (block-based path).
-                    using var engine = new LayoutEngine(normalized, coreOptions, sharedMeasurer, sharedCssParser);
+                    using var engine = new LayoutEngine(normalized, coreOptions, sharedMeasurer, sharedCssParser, scope);
                     var blocks = await engine.GenerateLayoutBlocksAsync(chapters[i].Content, chapterCss[i], cancellationToken);
                     var map = PageSplitter.SplitToPages(blocks, normalized.PageHeightPx);
 

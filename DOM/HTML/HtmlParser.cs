@@ -27,13 +27,16 @@ public sealed class HtmlParser
 {
     private readonly PageCalculatorOptions _options;
     private readonly CssParser _cssParser;
+    private readonly ParseScope _scope;
 
-    public HtmlParser(PageCalculatorOptions options, CssParser? sharedCssParser = null)
+    public HtmlParser(PageCalculatorOptions options, CssParser? sharedCssParser = null, ParseScope? scope = null)
     {
         _options = options ?? new PageCalculatorOptions();
         // A shared parser reuses its rule cache across chapters, so the global
         // stylesheet is parsed once per book instead of once per chapter.
         _cssParser = sharedCssParser ?? new CssParser();
+        // Caches are scoped to the CalculatePagesAsync call that owns this parser.
+        _scope = scope ?? new ParseScope();
     }
 
     // HTML void elements: no content, no closing tag.
@@ -75,7 +78,12 @@ public sealed class HtmlParser
         var rules = new List<CssRule>();
         foreach (var styleEl in CollectStyleElements(doc.Root))
         {
-            var text = styleEl.TextContent;
+            // The injected <style> tags hold one 33 KB text node: reading it via
+            // TextContent would rebuild (and trim-copy) the whole string per
+            // chapter. The single-child fast path returns the value as-is.
+            var text = styleEl.ChildNodes.Count == 1 && styleEl.ChildNodes[0] is Models.Text t
+                ? t.Value
+                : styleEl.TextContent;
             if (string.IsNullOrWhiteSpace(text)) continue;
             rules.AddRange(_cssParser.Parse(text));
         }
@@ -93,7 +101,7 @@ public sealed class HtmlParser
         var htmlEl = new Element("html");
         var head = new Element("head") { Parent = htmlEl };
         
-        var defaultCss = BuildGlobalCss(_options);
+        var defaultCss = GetGlobalCss();
         var injectedCssStyle = new Element("style") { Parent = head };
         injectedCssStyle.ChildNodes.Add(new Models.Text(defaultCss) { Parent = injectedCssStyle });
         head.ChildNodes.Add(injectedCssStyle);
@@ -195,9 +203,31 @@ public sealed class HtmlParser
     /// geometry. Moved here from the engine so the parser owns the full HTML.
     ///
     /// Public so browser-based validation tests can render chapters with the exact
-    /// same CSS the engine lays out with.
+    /// same CSS the engine lays out with. Pure function: the per-call memoization
+    /// lives in <see cref="GetGlobalCss"/>, scoped to the CalculatePagesAsync call.
     /// </summary>
-    public static string BuildGlobalCss(PageCalculatorOptions o)
+    public static string BuildGlobalCss(PageCalculatorOptions o) => BuildGlobalCssCore(o);
+
+    // The global CSS depends only on the page options, which are constant for a
+    // whole book: memoize it in the call's <see cref="ParseScope"/> so the 33 KB
+    // string (and the interpolation buffers) is built once per option set instead
+    // of once per chapter, and every chapter shares the same string instance.
+    private string GetGlobalCss()
+    {
+        var o = _options;
+        var ci = CultureInfo.InvariantCulture;
+        var key = $"{o.FontSize.ToString(ci)}|{o.LineHeight.ToString(ci)}|{o.LetterSpacing.ToString(ci)}|" +
+                  $"{o.WordSpacing.ToString(ci)}|{o.ParagraphSpacing.ToString(ci)}|{o.TextIndent.ToString(ci)}|" +
+                  $"{o.VerticalMargin.ToString(ci)}|{o.HorizontalMargin.ToString(ci)}|" +
+                  $"{o.PageHeightPx.ToString(ci)}|{o.PageWidthPx.ToString(ci)}|{o.RootFontSizePx.ToString(ci)}";
+        if (_scope.GlobalCss.TryGetValue(key, out var cached)) return cached;
+
+        var css = BuildGlobalCssCore(o);
+        _scope.GlobalCss.TryAdd(key, css);
+        return css;
+    }
+
+    private static string BuildGlobalCssCore(PageCalculatorOptions o)
     {
         var ci = CultureInfo.InvariantCulture;
         return $$"""
@@ -331,11 +361,28 @@ public sealed class HtmlParser
         // No match down to the body: ignore the close tag.
     }
 
-    private static string NormalizeTag(ReadOnlySpan<char> span)
+    // Tag names come from a tiny fixed set (p, div, span, ...): intern them in the
+    // call's <see cref="ParseScope"/> so the 24K+ elements of a book share a handful
+    // of string instances instead of each tag allocating its own ToString +
+    // ToLowerInvariant pair.
+    private string InternTag(ReadOnlySpan<char> span)
+    {
+        var raw = span.ToString();
+        if (_scope.TagInterns.TryGetValue(raw, out var interned)) return interned;
+        var lower = raw.ToLowerInvariant();
+        _scope.TagInterns.TryAdd(raw, lower);
+        return lower;
+    }
+
+    private string NormalizeTag(ReadOnlySpan<char> span)
     {
         // Trim and lowercase; tag names are case-insensitive in HTML.
-        var s = span.ToString().Trim();
-        return s.Length == 0 ? s : s.ToLowerInvariant();
+        var start = 0;
+        var end = span.Length;
+        while (start < end && char.IsWhiteSpace(span[start])) start++;
+        while (end > start && char.IsWhiteSpace(span[end - 1])) end--;
+        if (end == start) return string.Empty;
+        return InternTag(span.Slice(start, end - start));
     }
 
     /// <summary>
@@ -344,12 +391,12 @@ public sealed class HtmlParser
     /// string is allocated. Returns the lowercase name and the index where the
     /// attribute body starts.
     /// </summary>
-    private static (string Tag, int BodyStart) ParseTagName(ReadOnlySpan<char> span)
+    private (string Tag, int BodyStart) ParseTagName(ReadOnlySpan<char> span)
     {
         var i = 0;
         while (i < span.Length && !char.IsWhiteSpace(span[i]) && span[i] != '/')
             i++;
-        var tag = span[..i].ToString().ToLowerInvariant();
+        var tag = InternTag(span[..i]);
         return (tag, i);
     }
 

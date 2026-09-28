@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
@@ -24,8 +23,15 @@ public static class StyleResolver
     /// from <paramref name="parent"/> where applicable. <paramref name="specificities"/>
     /// is a parallel array of precomputed selector specificities (one per rule) — the
     /// engine computes it once per document instead of per (rule × element) pair.
+    ///
+    /// Resolves with a fresh <see cref="ParseScope"/>: for one-off resolutions (tests,
+    /// single elements). The layout engine passes its per-call scope so the memoized
+    /// shorthand splits and var() resolutions are shared across the whole book.
     /// </summary>
     public static CssStyle Resolve(Element el, List<CssRule> rules, int[] specificities, CssStyle? parent)
+        => Resolve(el, rules, specificities, parent, new ParseScope());
+
+    public static CssStyle Resolve(Element el, List<CssRule> rules, int[] specificities, CssStyle? parent, ParseScope scope)
     {
         var style = new CssStyle();
         // Pre-sized: a typical element matches a handful of declarations, so the
@@ -34,7 +40,7 @@ public static class StyleResolver
 
         // Presentational hints (HTML attributes → CSS) are the lowest-priority cascade
         // layer: applied first with order -1 so every stylesheet rule overrides them.
-        ApplyPresentationalHints(el, best);
+        ApplyPresentationalHints(el, best, scope);
 
         // Stylesheet rules.
         for (var r = 0; r < rules.Count; r++)
@@ -44,7 +50,7 @@ public static class StyleResolver
                 continue;
             var spec = specificities[r];
             foreach (var decl in rule.Declarations)
-                ConsiderDecl(best, decl, decl.Important ? 1 : 0, spec, r);
+                ConsiderDecl(best, decl, decl.Important ? 1 : 0, spec, r, scope);
         }
 
         // Inline style: highest specificity, after all stylesheet rules.
@@ -53,7 +59,7 @@ public static class StyleResolver
         {
             var order = rules.Count;
             foreach (var decl in ParseInline(inline))
-                ConsiderDecl(best, decl, decl.Important ? 1 : 0, InlineSpecificity, order);
+                ConsiderDecl(best, decl, decl.Important ? 1 : 0, InlineSpecificity, order, scope);
         }
 
         foreach (var (prop, w) in best)
@@ -95,7 +101,7 @@ public static class StyleResolver
             }
         }
 
-        ResolveVars(style);
+        ResolveVars(style, scope);
         return style;
     }
 
@@ -106,7 +112,7 @@ public static class StyleResolver
     /// cellpadding) are pixels; keyword/color hints pass through unchanged.
     /// </summary>
     private static void ApplyPresentationalHints(
-        Element el, Dictionary<string, (int Importance, int Spec, int Order, string Value)> best)
+        Element el, Dictionary<string, (int Importance, int Spec, int Order, string Value)> best, ParseScope scope)
     {
         const int order = -1;
 
@@ -117,7 +123,7 @@ public static class StyleResolver
             v = v.Trim();
             if (isLength && float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
                 v += "px";
-            ConsiderDecl(best, new CssDeclaration(prop, v, false), 0, 0, order);
+            ConsiderDecl(best, new CssDeclaration(prop, v, false), 0, 0, order, scope);
         }
 
         switch (el.TagName.ToLowerInvariant())
@@ -189,11 +195,11 @@ public static class StyleResolver
     /// </summary>
     private static void ConsiderDecl(
         Dictionary<string, (int Importance, int Spec, int Order, string Value)> best,
-        CssDeclaration decl, int importance, int spec, int order)
+        CssDeclaration decl, int importance, int spec, int order, ParseScope scope)
     {
         if (BoxShorthands.TryGetValue(decl.Property, out var longhands))
         {
-            var values = SplitShorthandValues(decl.Value, longhands.Length);
+            var values = SplitShorthandValues(scope, decl.Value, longhands.Length);
             for (var k = 0; k < longhands.Length; k++)
                 Consider(best, longhands[k], importance, spec, order, values[k]);
             return;
@@ -201,19 +207,18 @@ public static class StyleResolver
         Consider(best, decl.Property, importance, spec, order, decl.Value);
     }
 
-    // Shorthand values are pure functions of (value, count) and the same CSS values
-    // (e.g. "1em 0") repeat across thousands of elements, so the split result is
-    // memoized for the process lifetime instead of re-allocated per element.
-    private static readonly ConcurrentDictionary<(string, int), string[]> ShorthandCache = [];
-
     /// <summary>
     /// Splits a shorthand value on top-level whitespace (parentheses-aware) and
     /// repeats it per the CSS 1/2/3/4-value rules for the target longhand count.
+    /// Shorthand values are pure functions of (value, count) and the same CSS values
+    /// (e.g. "1em 0") repeat across thousands of elements, so the split result is
+    /// memoized in the call's <see cref="ParseScope"/> instead of re-allocated per
+    /// element.
     /// </summary>
-    private static string[] SplitShorthandValues(string value, int count)
+    private static string[] SplitShorthandValues(ParseScope scope, string value, int count)
     {
         var key = (value, count);
-        if (ShorthandCache.TryGetValue(key, out var cached))
+        if (scope.ShorthandCache.TryGetValue(key, out var cached))
             return cached;
 
         var parts = new List<string>();
@@ -248,7 +253,7 @@ public static class StyleResolver
                 3 => [parts[0], parts[1], parts[2], parts[1]],
                 _ => [parts[0], parts[1], parts[2], parts[3]]
             };
-        ShorthandCache[key] = result;
+        scope.ShorthandCache[key] = result;
         return result;
     }
 
@@ -437,7 +442,7 @@ public static class StyleResolver
     }
 
     /// <summary>Resolves <c>var(--name, fallback)</c> references against the element's custom properties.</summary>
-    private static void ResolveVars(CssStyle style)
+    private static void ResolveVars(CssStyle style, ParseScope scope)
     {
         var props = style.Props;
         for (var i = 0; i < props.Count; i++)
@@ -445,29 +450,28 @@ public static class StyleResolver
             var (prop, value, explicitSet) = props[i];
             if (!value.Contains("var(", StringComparison.Ordinal))
                 continue;
-            props[i] = (prop, ResolveVarValue(value, props, depth: 0), explicitSet);
+            props[i] = (prop, ResolveVarValue(value, props, depth: 0, scope), explicitSet);
         }
     }
 
-    // Memoizes top-level var() resolution. The result is a pure function of the raw
-    // value plus the values of the custom properties in scope; those are inherited and
-    // rarely overridden, so the same key repeats across the tree and the expensive
-    // StringBuilder resolution runs once per distinct key instead of once per element.
-    // The key is a (value, fingerprint) tuple — a struct that references the shared
-    // value string and a 32-bit hash of the in-scope custom props, so building it
-    // allocates nothing.
-    private static readonly ConcurrentDictionary<(string, int), string> VarCache = [];
-
-    private static string ResolveVarValue(string value, List<(string Name, string Value, bool Explicit)> props, int depth)
+    // Memoizes top-level var() resolution in the call's <see cref="ParseScope"/>.
+    // The result is a pure function of the raw value plus the values of the custom
+    // properties in scope; those are inherited and rarely overridden, so the same
+    // key repeats across the tree and the expensive StringBuilder resolution runs
+    // once per distinct key instead of once per element. The key is a (value,
+    // fingerprint) tuple — a struct that references the shared value string and a
+    // 32-bit hash of the in-scope custom props, so building it allocates nothing.
+    private static string ResolveVarValue(
+        string value, List<(string Name, string Value, bool Explicit)> props, int depth, ParseScope scope)
     {
         if (depth > 0)
             return ResolveVarValueCore(value, props, depth);
 
         var key = (value, CustomFingerprint(props));
-        if (VarCache.TryGetValue(key, out var cached))
+        if (scope.VarCache.TryGetValue(key, out var cached))
             return cached;
         var resolved = ResolveVarValueCore(value, props, 0);
-        VarCache[key] = resolved;
+        scope.VarCache[key] = resolved;
         return resolved;
     }
 

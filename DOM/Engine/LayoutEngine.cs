@@ -44,6 +44,7 @@ public sealed partial class LayoutEngine : IDisposable
     private readonly bool _ownsMeasurer;
     private readonly RenderContext _context;
     private readonly HtmlParser _parser;
+    private readonly ParseScope _scope;
     private readonly CssLengthParser _lengthParser = new();
 
     // Per-document state, cleared per call.
@@ -69,7 +70,8 @@ public sealed partial class LayoutEngine : IDisposable
         PageCalculatorOptions options,
         IOptions<CoreOptions> coreOptions,
         ITextMeasurer? sharedMeasurer = null,
-        CssParser? sharedCssParser = null)
+        CssParser? sharedCssParser = null,
+        ParseScope? scope = null)
     {
         _options = (options ?? throw new ArgumentNullException(nameof(options))).Normalize();
         ArgumentNullException.ThrowIfNull(coreOptions);
@@ -83,7 +85,9 @@ public sealed partial class LayoutEngine : IDisposable
 
         // The parser owns the HTML construction (global + chapter stylesheets injected
         // around the fragment); the engine only passes the fragment and styles down.
-        _parser = new HtmlParser(_options, sharedCssParser);
+        // Caches are scoped to the CalculatePagesAsync call that owns this engine.
+        _scope = scope ?? new ParseScope();
+        _parser = new HtmlParser(_options, sharedCssParser, _scope);
 
         // A shared measurer (one per book, used by several parallel engines) is not
         // disposed by the engines using it; only the caller that created it owns it.
@@ -193,7 +197,7 @@ public sealed partial class LayoutEngine : IDisposable
         var key = (el.TagName, el.AttributeSignature, el.Style, parent);
         if (_styleMemo.TryGetValue(key, out var entry))
             return entry;
-        var style = StyleResolver.Resolve(el, _rules, _specificities, parent);
+        var style = StyleResolver.Resolve(el, _rules, _specificities, parent, _scope);
         entry = new StyleEntry { Style = style, Hidden = ComputeHidden(el, style) };
         _styleMemo[key] = entry;
         return entry;
