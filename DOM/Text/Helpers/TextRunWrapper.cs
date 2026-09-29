@@ -340,9 +340,12 @@ public static partial class TextRunWrapper
 
     /// <summary>
     /// The exact character set of <see cref="CollapsibleWhitespace"/> as a cheap char test,
-    /// so <see cref="ForEachSegment"/> can split without the regex engine.
+    /// so <see cref="ForEachSegment"/> can split without the regex engine. Also the
+    /// canonical test for trimming: only these characters are dropped at the edges of
+    /// a text run; non-collapsible ones (U+00A0, U+2007, U+202F, U+205F, U+3000, …)
+    /// survive and occupy a line, as in a browser.
     /// </summary>
-    private static bool IsCollapsibleWhitespace(char c) =>
+    public static bool IsCollapsibleWhitespace(char c) =>
         c is ' ' or '\t' or '\r' or '\n' or '\f' or '\u0085' or '\u2028' or '\u2029';
 
     /// <summary>

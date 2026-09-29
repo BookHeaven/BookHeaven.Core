@@ -6,6 +6,7 @@ using BookHeaven.Core.DOM.HTML;
 using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Text.Abstractions;
+using BookHeaven.Core.DOM.Text.Helpers;
 using BookHeaven.Core.DOM.Text.Measurers;
 using Microsoft.Extensions.Options;
 
@@ -564,7 +565,7 @@ public sealed class LayoutEngine : IDisposable
                 // Mixed text + images: measure the text, then the images follow
                 // on their own lines (documented approximation: the surveyed
                 // epubs have no paragraph mixing text and images).
-                var textRuns = TextRunBuilder.Build(el, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockLevelTag);
+                var textRuns = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockLevelTag);
                 var textMeas = textRuns.Count == 1
                     ? _measurer.Measure(textRuns[0].Text, textRuns[0].FontSizePx, availableWidth,
                         lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * textRuns[0].FontSizePx),
@@ -627,7 +628,7 @@ public sealed class LayoutEngine : IDisposable
         }
 
         // Split the inline content into runs at their own font sizes (browser model).
-        var runs = TextRunBuilder.Build(el, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockLevelTag);
+        var runs = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockLevelTag);
         var meas = runs.Count == 1
             ? _measurer.Measure(runs[0].Text, runs[0].FontSizePx, availableWidth,
                 lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
@@ -693,10 +694,10 @@ public sealed class LayoutEngine : IDisposable
         if (heightPx is > 0f) return (heightPx.Value, 0, 0f);
 
         // A whitespace-only element generates a line box only if it contains
-        // non-collapsible content. The browser collapses space, tab, LF, CR and
-        // FF to nothing (a CR from a &#13; reference is a normal line break), but
-        // a non-breaking space (&nbsp;, U+00A0) is not collapsible and occupies a
-        // line. Any other non-whitespace character (real text) also does.
+        // non-collapsible content. The browser collapses the CSS-collapsible
+        // whitespace characters to nothing, but a non-breaking space (&nbsp;,
+        // U+00A0) is not collapsible and occupies a line. Any other
+        // non-whitespace character (real text) also does.
         if (!HasNonCollapsibleContent(el))
             return (0f, 0, 0f);
 
@@ -712,7 +713,7 @@ public sealed class LayoutEngine : IDisposable
         {
             if (node.NodeType == NodeType.Text)
             {
-                if (node.TextContent.Any(c => c is not (' ' or '\t' or '\n' or '\r' or '\f')))
+                if (node.TextContent.Any(c => !TextRunWrapper.IsCollapsibleWhitespace(c)))
                     return true;
             }
             else if (node is Element childEl && HasNonCollapsibleContent(childEl))

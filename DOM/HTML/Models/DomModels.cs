@@ -1,4 +1,5 @@
 using System.Text;
+using BookHeaven.Core.DOM.Text.Helpers;
 
 namespace BookHeaven.Core.DOM.HTML.Models;
 
@@ -195,7 +196,7 @@ public sealed class Element : Node
         }
     }
 
-    /// <summary><see cref="TextContent"/> with surrounding whitespace removed (computed once, then cached).</summary>
+    /// <summary><see cref="TextContent"/> with surrounding CSS-collapsible whitespace removed (non-collapsible characters such as U+00A0 are kept; computed once, then cached).</summary>
     public string TrimmedTextContent
     {
         get
@@ -215,8 +216,8 @@ public sealed class Element : Node
             _textContent = only.Value;
             var tStart = 0;
             var tEnd = only.Value.Length;
-            while (tStart < tEnd && char.IsWhiteSpace(only.Value[tStart])) tStart++;
-            while (tEnd > tStart && char.IsWhiteSpace(only.Value[tEnd - 1])) tEnd--;
+            while (tStart < tEnd && TextRunWrapper.IsCollapsibleWhitespace(only.Value[tStart])) tStart++;
+            while (tEnd > tStart && TextRunWrapper.IsCollapsibleWhitespace(only.Value[tEnd - 1])) tEnd--;
             _trimmedTextContent = tStart == 0 && tEnd == only.Value.Length
                 ? only.Value
                 : only.Value.AsSpan(tStart, tEnd - tStart).ToString();
@@ -227,8 +228,8 @@ public sealed class Element : Node
         AppendDescendantText(this, sb);
         var start = 0;
         var end = sb.Length;
-        while (start < end && char.IsWhiteSpace(sb[start])) start++;
-        while (end > start && char.IsWhiteSpace(sb[end - 1])) end--;
+        while (start < end && TextRunWrapper.IsCollapsibleWhitespace(sb[start])) start++;
+        while (end > start && TextRunWrapper.IsCollapsibleWhitespace(sb[end - 1])) end--;
         _textContent = sb.ToString();
         _trimmedTextContent = sb.ToString(start, end - start);
     }

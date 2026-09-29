@@ -4,6 +4,7 @@ using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Text.Abstractions;
 using BookHeaven.Core.DOM.Text.Enums;
+using BookHeaven.Core.DOM.Text.Helpers;
 
 namespace BookHeaven.Core.DOM.Engine.Helpers;
 
@@ -28,20 +29,22 @@ public static class TextRunBuilder
     /// <summary>
     /// Splits the element's inline content into <see cref="TextRun"/>s at their
     /// effective font size and style. Consecutive runs at the same size AND
-    /// style are merged.
+    /// style are merged. <paramref name="text"/> is the caller's precomputed
+    /// text for the uniform fast path: for a leaf it is <c>TrimmedTextContent</c>;
+    /// for a container's own inline content it is <see cref="GetOwnInlineText"/>
+    /// (the whole-subtree text would double-count the block children).
     /// </summary>
     public static List<TextRun> Build(
-        Element el, float ownFontSize, bool ownBold, bool ownItalic,
+        Element el, string text, float ownFontSize, bool ownBold, bool ownItalic,
         Func<Element, CssStyle> getComputedStyle,
         Func<string?, float, float?, float?> parseLength,
         Func<string, bool> isBlockLevelTag)
     {
         if (IsUniformInline(el, ownFontSize, ownBold, ownItalic, getComputedStyle, parseLength, isBlockLevelTag))
         {
-            // TrimmedTextContent: the measurer collapses leading/trailing
-            // whitespace anyway, and reusing it avoids a second subtree walk
-            // (BuildLeafBlock already computed it for the same element).
-            return [new TextRun(el.TrimmedTextContent, ownFontSize, ToFontStyle(ownBold, ownItalic))];
+            // The measurer collapses leading/trailing whitespace anyway, and
+            // reusing the caller's text avoids a second subtree walk.
+            return [new TextRun(text, ownFontSize, ToFontStyle(ownBold, ownItalic))];
         }
 
         var builders = new List<RunBuilder>();
@@ -180,10 +183,13 @@ public static class TextRunBuilder
             // Block children are skipped (their text is handled by recursion).
         }
 
+        // Trim only CSS-collapsible whitespace: a non-collapsible character
+        // (e.g. U+00A0) survives the trim and makes the text non-empty, so the
+        // engine emits the anonymous block the browser renders for it.
         var start = 0;
         var end = sb.Length;
-        while (start < end && char.IsWhiteSpace(sb[start])) start++;
-        while (end > start && char.IsWhiteSpace(sb[end - 1])) end--;
+        while (start < end && TextRunWrapper.IsCollapsibleWhitespace(sb[start])) start++;
+        while (end > start && TextRunWrapper.IsCollapsibleWhitespace(sb[end - 1])) end--;
         return sb.ToString(start, end - start);
     }
 }
