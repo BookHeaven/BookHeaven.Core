@@ -162,8 +162,10 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         FontStyle style = FontStyle.Regular,
         bool includeLineText = true)
     {
-        ArgumentNullException.ThrowIfNull(text);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(fontSizePx, 0f);
+        if (string.IsNullOrEmpty(text) || fontSizePx <= 0f)
+        {
+            return new TextMeasurementResult();
+        }
         var lineHeight = ITextMeasurer.QuantizeLineHeight(lineHeightPx ?? (fontSizePx * ITextMeasurer.NormalLineHeightMultiplier));
         var lines = new List<string>();
         if (string.IsNullOrEmpty(text))
