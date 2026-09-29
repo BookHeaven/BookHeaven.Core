@@ -125,7 +125,7 @@ public static partial class TextRunWrapper
                 // (UAX #14): keep the head on this line, push the dash + tail to the
                 // next. Without this, a word like "oeste—." wraps whole, adding a line
                 // the browser doesn't have.
-                var dashIndex = FindBreakableDash(token.Word, currentWidth, spaceW, limit, token.FontSize, token.Style);
+                var dashIndex = FindBreakableDash(token.Word, currentWidth, spaceW, limit, head => WordWidth(head, token.FontSize, token.Style));
                 if (dashIndex > 0)
                 {
                     var head = token.Word.AsSpan(0, dashIndex).ToString();
@@ -217,37 +217,6 @@ public static partial class TextRunWrapper
                 if (frag is not null) lines.Add(frag.ToString());
                 lineHeights.Add(BoxHeight(token.FontSize));
             }
-        }
-
-        // Rightmost breakable dash whose head fits the current line (UAX #14); returns
-        // the index where the tail begins, or -1 if none. Hyphens (HY/HH/BA) break only
-        // AFTER the dash, so the dash stays on the head line; em dashes (B2) break on
-        // both sides, so the dash goes to whichever side yields the longer line.
-        int FindBreakableDash(string word, float curWidth, float spaceW, float limit, float size, FontStyle style)
-        {
-            for (var i = word.Length - 1; i > 0; i--)
-            {
-                var ch = word[i];
-                if (IsBreakAfterDash(ch))
-                {
-                    if (Fits(word.AsSpan(0, i + 1).ToString()))
-                        return i + 1; // tail starts after the dash
-                }
-                else if (IsBreakBothSidesDash(ch))
-                {
-                    if (Fits(word.AsSpan(0, i + 1).ToString()))
-                        return i + 1; // dash on the head (longer line)
-                    if (Fits(word.AsSpan(0, i).ToString()))
-                        return i; // dash on the tail
-                }
-            }
-            // A LEADING dash: only em dashes (B2) break after a word-initial position;
-            // hyphens (HY/HH) do not (LB20a). The dash stays on this line.
-            if (word.Length > 1 && IsBreakBothSidesDash(word[0]) && Fits(word.AsSpan(0, 1).ToString()))
-                return 1; // tail starts right after the dash
-            return -1;
-
-            bool Fits(string head) => curWidth + spaceW + WordWidth(head, size, style) <= limit;
         }
 
         // <paramref name="materializeEmpty"/>: a <c>&lt;br&gt;</c> flushes the current
@@ -407,6 +376,42 @@ public static partial class TextRunWrapper
     }
 
     /// <summary>
+    /// Finds the rightmost breakable dash in <paramref name="word"/> whose head fits on
+    /// the current line. Returns the index where the tail begins, or -1 if none. Hyphens
+    /// (HY/HH/BA) break only after the dash, so the dash stays on the head line; em
+    /// dashes (B2) break on both sides, so the dash goes to whichever side yields the
+    /// longer line (UAX #14). <paramref name="headWidth"/> measures a head substring at
+    /// the caller's own font size/style/letter-spacing, so the multi-run <see cref="Wrap"/>
+    /// and the single-string measurer fast path share this one rule.
+    /// </summary>
+    public static int FindBreakableDash(string word, float curWidth, float spaceW, float limit, Func<string, float> headWidth)
+    {
+        for (var i = word.Length - 1; i > 0; i--)
+        {
+            var ch = word[i];
+            if (IsBreakAfterDash(ch))
+            {
+                if (Fits(word.AsSpan(0, i + 1).ToString()))
+                    return i + 1; // tail starts after the dash
+            }
+            else if (IsBreakBothSidesDash(ch))
+            {
+                if (Fits(word.AsSpan(0, i + 1).ToString()))
+                    return i + 1; // dash on the head (longer line)
+                if (Fits(word.AsSpan(0, i).ToString()))
+                    return i; // dash on the tail
+            }
+        }
+        // A LEADING dash: only em dashes (B2) break after a word-initial position;
+        // hyphens (HY/HH) do not (LB20a). The dash stays on this line.
+        if (word.Length > 1 && IsBreakBothSidesDash(word[0]) && Fits(word.AsSpan(0, 1).ToString()))
+            return 1; // tail starts right after the dash
+        return -1;
+
+        bool Fits(string head) => curWidth + spaceW + headWidth(head) <= limit;
+    }
+
+    /// <summary>
     /// Dashes that create a break opportunity only AFTER the dash (UAX #14 HY/HH/BA):
     /// the ASCII hyphen-minus, the various hyphens, and the figure/en dashes. Rule LB21
     /// forbids a break before them, so the dash stays on the head line (e.g. "Tan-" /
@@ -429,7 +434,4 @@ public static partial class TextRunWrapper
     /// </summary>
     public static bool IsBreakBothSidesDash(char c) =>
         c is '\u2014'; // em dash (B2)
-
-    /// <summary>Any dash that creates a break opportunity (UAX #14).</summary>
-    public static bool IsBreakableDash(char c) => IsBreakAfterDash(c) || IsBreakBothSidesDash(c);
 }

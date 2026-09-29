@@ -205,7 +205,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         var lineCount = 0;
         var lineEmpty = true;
 
-        Helpers.TextRunWrapper.ForEachSegment(text, part =>
+        TextRunWrapper.ForEachSegment(text, part =>
         {
             if (part.Length == 0)
             {
@@ -274,7 +274,13 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                 // pushes the dash + remainder to the next. Without this, a word like
                 // "oeste—." is atomic and wraps whole, adding a line the browser
                 // doesn't have.
-                var dashIndex = FindBreakableDash(w, currentWidth, spaceWidth, limit, fontSizePx, style, letterSpacingPx);
+                var dashIndex = TextRunWrapper.FindBreakableDash(w, currentWidth, spaceWidth, limit, head =>
+                {
+                    var width = GetWordWidth(head, fontSizePx, style);
+                    if (letterSpacingPx.HasValue && head.Length > 1)
+                        width += (head.Length - 1) * letterSpacingPx.Value;
+                    return width;
+                });
                 if (dashIndex > 0)
                 {
                     var head = w.AsSpan(0, dashIndex).ToString();
@@ -327,50 +333,10 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         }
     }
 
-    /// <summary>
-    /// Finds the rightmost breakable dash in <paramref name="word"/> whose head fits on
-    /// the current line. Returns the index where the tail begins, or -1 if none. Hyphens
-    /// (HY/HH/BA) break only after the dash, so the dash stays on the head line; em
-    /// dashes (B2) break on both sides, so the dash goes to whichever side yields the
-    /// longer line (UAX #14).
-    /// </summary>
-    private int FindBreakableDash(string word, float currentWidth, float spaceWidth, float limit, float fontSizePx, FontStyle style, float? letterSpacingPx)
-    {
-        for (var i = word.Length - 1; i > 0; i--)
-        {
-            var ch = word[i];
-            if (Helpers.TextRunWrapper.IsBreakAfterDash(ch))
-            {
-                if (Fits(word.AsSpan(0, i + 1).ToString()))
-                    return i + 1; // tail starts after the dash
-            }
-            else if (Helpers.TextRunWrapper.IsBreakBothSidesDash(ch))
-            {
-                if (Fits(word.AsSpan(0, i + 1).ToString()))
-                    return i + 1; // dash on the head (longer line)
-                if (Fits(word.AsSpan(0, i).ToString()))
-                    return i; // dash on the tail
-            }
-        }
-        // A LEADING dash: only em dashes (B2) break after a word-initial position;
-        // hyphens (HY/HH) do not (LB20a). The dash stays on this line.
-        if (word.Length > 1 && Helpers.TextRunWrapper.IsBreakBothSidesDash(word[0]) && Fits(word.AsSpan(0, 1).ToString()))
-            return 1; // tail starts right after the dash
-        return -1;
-
-        bool Fits(string head)
-        {
-            var w = GetWordWidth(head, fontSizePx, style);
-            if (letterSpacingPx.HasValue && head.Length > 1)
-                w += (head.Length - 1) * letterSpacingPx.Value;
-            return currentWidth + spaceWidth + w <= limit;
-        }
-    }
-
     public TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true)
     {
         ArgumentNullException.ThrowIfNull(runs);
-        return Helpers.TextRunWrapper.Wrap(runs, TextWidthProbes.Create(
+        return TextRunWrapper.Wrap(runs, TextWidthProbes.Create(
             wordWidth: GetWordWidth,
             spaceWidth: (size, style) => GetWordWidth(" ", size, style),
             charWidth: (ch, size, style) => MeasureShapedTextWidth(ch.ToString(), size, style)),
