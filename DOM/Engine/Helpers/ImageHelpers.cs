@@ -134,7 +134,7 @@ public static class ImageHelpers
             catch { }
         }
 
-        var mw = parseLength(computed.GetPropertyValue("max-width"), containerRefWidth, fontSize);
+        var mw = parseLength(computed.GetPropertyValue("max-width"), availableWidth, fontSize);
         var maxW = mw is > 0 ? Math.Min(availableWidth, mw.Value) : availableWidth;
         if (imgWidth > maxW) imgWidth = maxW;
 
