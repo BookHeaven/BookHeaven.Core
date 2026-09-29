@@ -49,9 +49,10 @@ namespace BookHeaven.Core.DOM.Engine;
 ///       inside the content box and is consumed after the children, before the
 ///       container's PaddingBottom. A container with no measured children falls
 ///       back to whole-move / clip of its content height.
-///  5. PaddingBottom: consumed after the last fragment; if it does not fit the page
-///     remainder it is clipped at the page edge (a browser clips the overflow rather
-///     than leaving the remainder blank).
+///  5. PaddingBottom: consumed after the last fragment. Paddings are never truncated
+///     at a break (unlike margins): if it does not fit the page remainder it overflows
+///     the page edge (clipped visually) and the excess carries into the next page,
+///     pushing the following block down — as in a browser.
 ///  6. PageBreakAfter (and the page is not empty) → new page.
 ///
 /// AvoidBreakInside (CSS break-inside: avoid) is enforced between steps 2 and 3:
@@ -187,14 +188,17 @@ public static class PageSplitter
                 ? Math.Max(0f, ownTopMargin - prevZeroHeightMargin)
                 : Math.Max(prevBottomMargin, ownTopMargin);
 
-            // 2b. AvoidBreakInside (CSS break-inside: avoid): if the whole block does
-            //     not fit the page remainder but fits a fresh page, start the fresh
-            //     page NOW so the placement below moves the block whole. On a fresh
-            //     non-first page the gap is trimmed at the boundary (step 3), so it
-            //     is excluded from the fresh-page check. A block taller than a page
-            //     cannot honor the hint and falls through to the normal (breaking)
-            //     placement. At the top of a page there is nothing to avoid.
-            if ((flags & LayoutBlockFlags.AvoidBreakInside) != 0 && UsedOnPage > 0f)
+            // 2b. AvoidBreakInside / monolithic: if the whole block does not fit the
+            //     page remainder but fits a fresh page, start the fresh page NOW so the
+            //     placement below moves the block whole. This applies to blocks with the
+            //     AvoidBreakInside flag and to monolithic blocks (single-line text) that
+            //     cannot be broken internally, so their padding is never left behind on
+            //     the previous page. On a fresh non-first page the gap is trimmed at the
+            //     boundary (step 3), so it is excluded from the fresh-page check. A block
+            //     taller than a page cannot honor the hint and falls through to the normal
+            //     (breaking) placement. At the top of a page there is nothing to avoid.
+            var isMonolithic = block.Kind == BlockKind.Text && block.LineCount == 1;
+            if (((flags & LayoutBlockFlags.AvoidBreakInside) != 0 || isMonolithic) && UsedOnPage > 0f)
             {
                 var contentH = MeasureContentFlow(block, blockIdx);
                 var fitsInPlace = UsedOnPage + gap + block.PaddingTop + contentH + block.PaddingBottom <= PageHeight;
@@ -247,12 +251,19 @@ public static class PageSplitter
                     break;
             }
 
-            // 5. Padding bottom: consumed after the last fragment; if it does not fit
-            //    the page remainder it is clipped at the page edge (a browser clips
-            //    the overflow — leaving the remainder blank would waste the page).
+            // 5. Padding bottom: consumed after the last fragment. Paddings are never
+            //    truncated at a break (unlike margins, css-break-3 §5.2): if it does not
+            //    fit the page remainder it overflows the page edge (clipped visually) and
+            //    the excess carries into the next page, pushing the following block down.
             if (block.PaddingBottom > 0f)
             {
-                UsedOnPage = Math.Min(UsedOnPage + block.PaddingBottom, PageHeight);
+                UsedOnPage += block.PaddingBottom;
+                if (UsedOnPage > PageHeight)
+                {
+                    var overflow = UsedOnPage - PageHeight;
+                    NewPage();
+                    UsedOnPage = overflow;
+                }
             }
 
             // 6. Forced page break after the block.
