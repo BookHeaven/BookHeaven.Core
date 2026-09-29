@@ -328,37 +328,43 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     }
 
     /// <summary>
-    /// Finds the rightmost breakable dash in <paramref name="word"/> such that the part
-    /// before it fits on the current line. Returns the dash index, or -1 if no breakable
-    /// dash fits. Browsers break within a token at dashes (UAX #14); we replicate that by
-    /// keeping the head on the current line and pushing the dash + tail to the next.
+    /// Finds the rightmost breakable dash in <paramref name="word"/> whose head fits on
+    /// the current line. Returns the index where the tail begins, or -1 if none. Hyphens
+    /// (HY/HH/BA) break only after the dash, so the dash stays on the head line; em
+    /// dashes (B2) break on both sides, so the dash goes to whichever side yields the
+    /// longer line (UAX #14).
     /// </summary>
     private int FindBreakableDash(string word, float currentWidth, float spaceWidth, float limit, float fontSizePx, FontStyle style, float? letterSpacingPx)
     {
         for (var i = word.Length - 1; i > 0; i--)
         {
-            if (!Helpers.TextRunWrapper.IsBreakableDash(word[i]))
-                continue;
-            var head = word.AsSpan(0, i).ToString();
-            var headWidth = GetWordWidth(head, fontSizePx, style);
-            if (letterSpacingPx.HasValue && head.Length > 1)
-                headWidth += (head.Length - 1) * letterSpacingPx.Value;
-            if (currentWidth + spaceWidth + headWidth <= limit)
-                return i;
+            var ch = word[i];
+            if (Helpers.TextRunWrapper.IsBreakAfterDash(ch))
+            {
+                if (Fits(word.AsSpan(0, i + 1).ToString()))
+                    return i + 1; // tail starts after the dash
+            }
+            else if (Helpers.TextRunWrapper.IsBreakBothSidesDash(ch))
+            {
+                if (Fits(word.AsSpan(0, i + 1).ToString()))
+                    return i + 1; // dash on the head (longer line)
+                if (Fits(word.AsSpan(0, i).ToString()))
+                    return i; // dash on the tail
+            }
         }
-        // A LEADING dash (UAX #14): the browser breaks AFTER it, keeping the dash on
-        // this line and pushing the rest to the next. Without this, a token like
-        // "—dijo" is atomic and wraps whole, adding a line the browser doesn't have.
-        if (word.Length > 1 && Helpers.TextRunWrapper.IsBreakableDash(word[0]))
-        {
-            var head = word.AsSpan(0, 1).ToString();
-            var headWidth = GetWordWidth(head, fontSizePx, style);
-            if (letterSpacingPx.HasValue && head.Length > 1)
-                headWidth += (head.Length - 1) * letterSpacingPx.Value;
-            if (currentWidth + spaceWidth + headWidth <= limit)
-                return 1; // tail starts right after the dash
-        }
+        // A LEADING dash: only em dashes (B2) break after a word-initial position;
+        // hyphens (HY/HH) do not (LB20a). The dash stays on this line.
+        if (word.Length > 1 && Helpers.TextRunWrapper.IsBreakBothSidesDash(word[0]) && Fits(word.AsSpan(0, 1).ToString()))
+            return 1; // tail starts right after the dash
         return -1;
+
+        bool Fits(string head)
+        {
+            var w = GetWordWidth(head, fontSizePx, style);
+            if (letterSpacingPx.HasValue && head.Length > 1)
+                w += (head.Length - 1) * letterSpacingPx.Value;
+            return currentWidth + spaceWidth + w <= limit;
+        }
     }
 
     public TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true)

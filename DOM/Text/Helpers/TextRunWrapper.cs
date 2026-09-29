@@ -219,27 +219,35 @@ public static partial class TextRunWrapper
             }
         }
 
-        // Rightmost breakable dash whose head fits the current line (UAX #14); -1 if none.
+        // Rightmost breakable dash whose head fits the current line (UAX #14); returns
+        // the index where the tail begins, or -1 if none. Hyphens (HY/HH/BA) break only
+        // AFTER the dash, so the dash stays on the head line; em dashes (B2) break on
+        // both sides, so the dash goes to whichever side yields the longer line.
         int FindBreakableDash(string word, float curWidth, float spaceW, float limit, float size, FontStyle style)
         {
             for (var i = word.Length - 1; i > 0; i--)
             {
-                if (!IsBreakableDash(word[i]))
-                    continue;
-                var head = word.AsSpan(0, i).ToString();
-                if (curWidth + spaceW + WordWidth(head, size, style) <= limit)
-                    return i;
+                var ch = word[i];
+                if (IsBreakAfterDash(ch))
+                {
+                    if (Fits(word.AsSpan(0, i + 1).ToString()))
+                        return i + 1; // tail starts after the dash
+                }
+                else if (IsBreakBothSidesDash(ch))
+                {
+                    if (Fits(word.AsSpan(0, i + 1).ToString()))
+                        return i + 1; // dash on the head (longer line)
+                    if (Fits(word.AsSpan(0, i).ToString()))
+                        return i; // dash on the tail
+                }
             }
-            // A LEADING dash (UAX #14): the browser breaks AFTER it, keeping the dash
-            // on this line and pushing the rest to the next. Without this, a token like
-            // "—dijo" is atomic and wraps whole, adding a line the browser lacks.
-            if (word.Length > 1 && IsBreakableDash(word[0]))
-            {
-                var head = word.AsSpan(0, 1).ToString();
-                if (curWidth + spaceW + WordWidth(head, size, style) <= limit)
-                    return 1; // tail starts right after the dash
-            }
+            // A LEADING dash: only em dashes (B2) break after a word-initial position;
+            // hyphens (HY/HH) do not (LB20a). The dash stays on this line.
+            if (word.Length > 1 && IsBreakBothSidesDash(word[0]) && Fits(word.AsSpan(0, 1).ToString()))
+                return 1; // tail starts right after the dash
             return -1;
+
+            bool Fits(string head) => curWidth + spaceW + WordWidth(head, size, style) <= limit;
         }
 
         // <paramref name="materializeEmpty"/>: a <c>&lt;br&gt;</c> flushes the current
@@ -399,14 +407,29 @@ public static partial class TextRunWrapper
     }
 
     /// <summary>
-    /// Dashes that create a break opportunity (UAX #14 BA class): hyphen, figure dash,
-    /// en dash, em dash, horizontal bar. The ASCII hyphen-minus (U+002D) is NOT breakable
-    /// (LB13/LB21 forbid breaks around it), matching browser behavior.
+    /// Dashes that create a break opportunity only AFTER the dash (UAX #14 HY/HH/BA):
+    /// the ASCII hyphen-minus, the various hyphens, and the figure/en dashes. Rule LB21
+    /// forbids a break before them, so the dash stays on the head line (e.g. "Tan-" /
+    /// "Stoker"). The non-breaking hyphen (U+2011, GL) is deliberately excluded.
     /// </summary>
-    public static bool IsBreakableDash(char c) =>
-        c is '\u2010' // hyphen
-        or '\u2012' // figure dash
-        or '\u2013' // en dash
-        or '\u2014' // em dash
-        or '\u2015'; // horizontal bar
+    public static bool IsBreakAfterDash(char c) =>
+        c is '\u002D' // hyphen-minus (HY)
+        or '\u00AD' // soft hyphen (HH)
+        or '\u2010' // hyphen (HH)
+        or '\u2012' // figure dash (BA)
+        or '\u2013' // en dash (BA)
+        or '\u2E17' // double oblique hyphen (HH)
+        or '\u2E40' // double hyphen (HH)
+        or '\u2E5D'; // oblique hyphen (HH)
+
+    /// <summary>
+    /// Dashes that create a break opportunity both before and after (UAX #14 B2): the
+    /// em dash. Rule LB17 only forbids the "——" pair, so the dash goes to whichever side
+    /// yields the longer line.
+    /// </summary>
+    public static bool IsBreakBothSidesDash(char c) =>
+        c is '\u2014'; // em dash (B2)
+
+    /// <summary>Any dash that creates a break opportunity (UAX #14).</summary>
+    public static bool IsBreakableDash(char c) => IsBreakAfterDash(c) || IsBreakBothSidesDash(c);
 }
