@@ -250,8 +250,8 @@ public sealed class LayoutEngine : IDisposable
     {
         unchecked
         {
-            hash = (hash * 1000003) ^ (long)(uint)a.GetHashCode();
-            hash = (hash * 1000003) ^ (long)(uint)b.GetHashCode();
+            hash = (hash * 1000003) ^ (uint)a.GetHashCode();
+            hash = (hash * 1000003) ^ (uint)b.GetHashCode();
             return hash;
         }
     }
@@ -303,12 +303,17 @@ public sealed class LayoutEngine : IDisposable
         var result = -1f;
         for (var i = chain.Count - 1; i >= 0; i--)
         {
-            var pc = GetComputedStyle(chain[i]);
-            var pl = ParseLengthToPx(pc.GetPropertyValue("padding-left"), cbWidth) ?? 0f;
-            var pr = ParseLengthToPx(pc.GetPropertyValue("padding-right"), cbWidth) ?? 0f;
-            var ml = ParseLengthToPx(pc.GetPropertyValue("margin-left"), cbWidth) ?? 0f;
-            var mr = ParseLengthToPx(pc.GetPropertyValue("margin-right"), cbWidth) ?? 0f;
-            var pw = ParseLengthToPx(pc.GetPropertyValue("width"), cbWidth);
+            var el = chain[i];
+            var pc = GetComputedStyle(el);
+            // em units in an ancestor's box resolve against THAT ancestor's font-size
+            // (rem stays root-relative). Falling back to the root context font-size
+            // under-sizes em-based margins on elements that inherit a larger font.
+            var emRef = ResolveFontSize(el);
+            var pl = ParseLengthToPx(pc.GetPropertyValue("padding-left"), cbWidth, emRef) ?? 0f;
+            var pr = ParseLengthToPx(pc.GetPropertyValue("padding-right"), cbWidth, emRef) ?? 0f;
+            var ml = ParseLengthToPx(pc.GetPropertyValue("margin-left"), cbWidth, emRef) ?? 0f;
+            var mr = ParseLengthToPx(pc.GetPropertyValue("margin-right"), cbWidth, emRef) ?? 0f;
+            var pw = ParseLengthToPx(pc.GetPropertyValue("width"), cbWidth, emRef);
             var boxWidth = pw ?? (cbWidth - ml - mr);
             var contentW = boxWidth - pl - pr;
 
