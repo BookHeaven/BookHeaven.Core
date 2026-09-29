@@ -50,8 +50,10 @@ public sealed class LayoutEngine : IDisposable
     private readonly ParseScope _scope;
     private readonly CssLengthParser _lengthParser = new();
 
-    // Per-document state, cleared per call.
-    private readonly Dictionary<(string Tag, string Attrs, string? Inline, CssStyle? Parent), StyleEntry> _styleMemo = [];
+    // Per-document state, cleared per call. The key includes the element's structural
+    // context (preceding siblings + ancestor chain) so sibling/descendant combinators
+    // can't poison the cache across structurally-different elements.
+    private readonly Dictionary<(string Tag, string Attrs, string? Inline, CssStyle? Parent, long SiblingCtx, long AncestorCtx), StyleEntry> _styleMemo = [];
     private Dictionary<Element, float>? _contentWidthMemo;
     private List<CssRule> _rules = [];
     private int[] _specificities = [];
@@ -185,15 +187,19 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// Memoized style entry: the resolved style is a pure function of the element's
-    /// signature (tag, full attribute set, inline style) and its parent's resolved
-    /// style, so every element sharing a signature reuses one resolution. The parent
-    /// is resolved first (top-down), and its memoized style is part of the key.
+    /// Memoized style entry. The resolved style is a pure function of the element's own
+    /// signature (tag, full attribute set, inline style), its parent's resolved style,
+    /// and its structural context: the preceding element-siblings (sibling combinators
+    /// <c>+</c>/<c>~</c>) and the ancestor chain (descendant/child combinators). Two
+    /// elements sharing all of these reuse one resolution; the parent is resolved first
+    /// (top-down). The context hashes are what keep structurally-different elements —
+    /// e.g. a <c>p</c> after an <c>h1</c> vs. a <c>p</c> after a <c>p</c> — from
+    /// colliding on the same key.
     /// </summary>
     private StyleEntry GetStyleEntry(Element el)
     {
         var parent = el.ParentElement is { } p ? GetStyleEntry(p).Style : null;
-        var key = (el.TagName, el.AttributeSignature, el.Style, parent);
+        var key = (el.TagName, el.AttributeSignature, el.Style, parent, SiblingContext(el), AncestorContext(el));
         if (_styleMemo.TryGetValue(key, out var entry))
             return entry;
         var style = StyleResolver.Resolve(el, _rules, _specificities, parent, _scope);
@@ -204,6 +210,50 @@ public sealed class LayoutEngine : IDisposable
         };
         _styleMemo[key] = entry;
         return entry;
+    }
+
+    /// <summary>
+    /// Fingerprint of the element's preceding element-siblings. Sibling combinators
+    /// (<c>+</c>, <c>~</c>) match against these, so elements with different left
+    /// contexts must not share a memo entry even when their own signature and parent
+    /// style are identical.
+    /// </summary>
+    private static long SiblingContext(Element el)
+    {
+        var parent = el.ParentElement;
+        if (parent is null)
+            return 0;
+        var hash = 0L;
+        foreach (var node in parent.ChildNodes)
+        {
+            if (node == el)
+                break;
+            if (node is Element sibling)
+                hash = CombineHash(hash, sibling.TagName, sibling.AttributeSignature);
+        }
+        return hash;
+    }
+
+    /// <summary>
+    /// Fingerprint of the element's ancestor chain. Descendant/child combinators match
+    /// against ancestor tags and attributes, so the chain is part of the memo key.
+    /// </summary>
+    private static long AncestorContext(Element el)
+    {
+        var hash = 0L;
+        for (var a = el.ParentElement; a is not null; a = a.ParentElement)
+            hash = CombineHash(hash, a.TagName, a.AttributeSignature);
+        return hash;
+    }
+
+    private static long CombineHash(long hash, string a, string b)
+    {
+        unchecked
+        {
+            hash = (hash * 1000003) ^ (long)(uint)a.GetHashCode();
+            hash = (hash * 1000003) ^ (long)(uint)b.GetHashCode();
+            return hash;
+        }
     }
 
     /// <summary>Computed style, memoized per (signature, parent style) — see <see cref="GetStyleEntry"/>.</summary>
