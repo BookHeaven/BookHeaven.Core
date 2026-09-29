@@ -473,12 +473,8 @@ public sealed class HtmlParser
         parent.ChildNodes.Add(node);
     }
 
-    /// <summary>Decodes HTML entities (&amp;, &lt;, &#nn;, &#xhh;, ...) in <paramref name="text"/>.</summary>
-    public static string DecodeEntities(string text)
-        => text.Contains('&') ? DecodeEntities(text.AsSpan()) : text;
-
     /// <summary>Decodes HTML entities in a span; returns the original text (no copy) when it has none.</summary>
-    public static string DecodeEntities(ReadOnlySpan<char> text)
+    private static string DecodeEntities(ReadOnlySpan<char> text)
     {
         if (!text.Contains('&')) return text.ToString();
 
@@ -527,8 +523,9 @@ public sealed class HtmlParser
             return false;
         }
 
-        // Named entity (strip the leading '&').
-        if (NamedEntities.TryGetValue(entity.Slice(1).ToString(), out var value))
+        // Named entity: the caller passes the name WITHOUT the leading '&'
+        // (text.Slice(i + 1, ...)), so look it up as-is.
+        if (NamedEntities.TryGetValue(entity.ToString(), out var value))
         {
             decoded = value!;
             return true;
