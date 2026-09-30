@@ -19,7 +19,7 @@ public static class ImageHelpers
     {
         return el.TagName.ToUpperInvariant() switch
         {
-            "IMG" or "SVG" or "IMAGE" or "FIGURE" or "PICTURE" or "OBJECT" or "CANVAS" => true,
+            "IMG" or "IMAGE" => true,
             _ => false
         };
     }
@@ -240,13 +240,13 @@ public static class ImageHelpers
     /// </summary>
     public static List<float> BuildImageLines(
         IReadOnlyList<(float Width, float Height, string? VerticalAlign)> images,
-        float availableWidth, float lineHeightPx, float strutDescent, float fontSize, bool startOnNewLine)
+        float availableWidth, float lineHeightPx, float strutDescent, float fontSize)
     {
         var lineHeights = new List<float>(images.Count);
         var currentLine = 0f;
-        // After text, the first image starts on a fresh line (documented
-        // approximation: an image following text wraps to the next line).
-        var currentLineWidth = startOnNewLine ? availableWidth : 0f;
+        // Images never share a line with text (handled by the caller), so the
+        // first image always starts on a fresh line.
+        var currentLineWidth = 0f;
         var imageGap = 0.25f * fontSize;
 
         foreach (var (width, height, verticalAlign) in images)
