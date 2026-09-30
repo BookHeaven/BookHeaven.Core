@@ -81,6 +81,7 @@ internal static class TableHelpers
         float containingBlockContentWidth,
         Func<Element, CssStyle> getStyle,
         Func<Element, float> getFontSize,
+        Func<Element, bool> isHidden,
         ITextMeasurer measurer,
         PageCalculatorOptions options,
         RenderContext context,
@@ -112,7 +113,7 @@ internal static class TableHelpers
                 while (col < columnCount && occupied[r, col]) col++;
                 if (col >= columnCount) break;
 
-                var cell = ParseCell(cellEl, r, col, getStyle, getFontSize, measurer, options, context, parser);
+                var cell = ParseCell(cellEl, r, col, getStyle, getFontSize, isHidden, measurer, options, context, parser);
                 cells.Add(cell);
                 for (var dr = 0; dr < cell.RowSpan && r + dr < rowElements.Count; dr++)
                     for (var dc = 0; dc < cell.ColSpan && col + dc < columnCount; dc++)
@@ -249,6 +250,7 @@ internal static class TableHelpers
     private static Cell ParseCell(
         Element el, int row, int column,
         Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
+        Func<Element, bool> isHidden,
         ITextMeasurer measurer, PageCalculatorOptions options, RenderContext context,
         CssLengthParser parser)
     {
@@ -262,7 +264,7 @@ internal static class TableHelpers
             Column = column,
             ColSpan = ParseSpan(el, "colspan"),
             RowSpan = ParseSpan(el, "rowspan"),
-            Text = el.TrimmedTextContent,
+            Text = Element.GetVisibleTextContent(el, isHidden),
             FontSize = fontSize,
             Style = styleEnum,
             PaddingLeft = ParseLength(style, "padding-left", 0f, fontSize, parser) ?? 0f,

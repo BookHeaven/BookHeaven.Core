@@ -122,7 +122,7 @@ public sealed class LayoutEngine : IDisposable
         var all = QueryAll(body, BlockSelector);
         if (all.Count == 0)
         {
-            var text = body.TrimmedTextContent;
+            var text = GetVisibleText(body);
             var images = CollectInlineImages(body);
             if (string.IsNullOrEmpty(text) && images.Count == 0) return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
 
@@ -367,7 +367,7 @@ public sealed class LayoutEngine : IDisposable
         {
             // Leaf block: measure its full text content. An EMPTY leaf still
             // produces a block when it occupies space (see BuildLeafBlock).
-            var text = el.TrimmedTextContent;
+            var text = GetVisibleText(el);
             var block = BuildLeafBlock(text, el);
             if (block != null) sink.Add(block);
             return;
@@ -381,7 +381,7 @@ public sealed class LayoutEngine : IDisposable
 
         // Measure own inline text (text nodes not inside block children) and own
         // inline images. It is an anonymous box: no margins of its own.
-        var ownText = TextRunBuilder.GetOwnInlineText(el, blockChildren);
+        var ownText = TextRunBuilder.GetOwnInlineText(el, blockChildren, IsHidden);
         var ownImages = CollectInlineImages(el, blockChildren);
         if (!string.IsNullOrEmpty(ownText) || ownImages.Count > 0)
         {
@@ -464,6 +464,7 @@ public sealed class LayoutEngine : IDisposable
             containerRefWidth,
             GetComputedStyle,
             ResolveFontSize,
+            IsHidden,
             _measurer,
             _options,
             _context,
@@ -629,7 +630,7 @@ public sealed class LayoutEngine : IDisposable
                 // Mixed text + images: measure the text, then the images follow
                 // on their own lines (documented approximation: the surveyed
                 // epubs have no paragraph mixing text and images).
-                var textRuns = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild);
+                var textRuns = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
                 var textMeas = textRuns.Count == 1
                     ? _measurer.Measure(textRuns[0].Text, textRuns[0].FontSizePx, availableWidth,
                         lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * textRuns[0].FontSizePx),
@@ -692,7 +693,7 @@ public sealed class LayoutEngine : IDisposable
         }
 
         // Split the inline content into runs at their own font sizes (browser model).
-        var runs = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild);
+        var runs = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
         var meas = runs.Count == 1
             ? _measurer.Measure(runs[0].Text, runs[0].FontSizePx, availableWidth,
                 lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
@@ -762,7 +763,7 @@ public sealed class LayoutEngine : IDisposable
         // whitespace characters to nothing, but a non-breaking space (&nbsp;,
         // U+00A0) is not collapsible and occupies a line. Any other
         // non-whitespace character (real text) also does.
-        if (!HasNonCollapsibleContent(el))
+        if (!HasNonCollapsibleContent(el, IsHidden))
             return (0f, 0, 0f);
 
         var (lhLengthPx, lhMultiplier) =
@@ -771,7 +772,7 @@ public sealed class LayoutEngine : IDisposable
         return (lineHeight, 1, lineHeight);
     }
 
-    private static bool HasNonCollapsibleContent(Element el)
+    private static bool HasNonCollapsibleContent(Element el, Func<Element, bool> isHidden)
     {
         foreach (var node in el.ChildNodes)
         {
@@ -780,9 +781,12 @@ public sealed class LayoutEngine : IDisposable
                 if (node.TextContent.Any(c => !TextRunWrapper.IsCollapsibleWhitespace(c)))
                     return true;
             }
-            else if (node is Element childEl && HasNonCollapsibleContent(childEl))
+            else if (node is Element childEl)
             {
-                return true;
+                // A display:none element (and its whole subtree) contributes no
+                // content, so it cannot force a line box on an otherwise-empty box.
+                if (!isHidden(childEl) && HasNonCollapsibleContent(childEl, isHidden))
+                    return true;
             }
         }
 
@@ -865,6 +869,15 @@ public sealed class LayoutEngine : IDisposable
             return IsBlockLevelTag(el.TagName);
         return CssValueParser.IsBlockDisplay(display, el.TagName);
     }
+
+    /// <summary>
+    /// The element's text content with surrounding CSS-collapsible whitespace trimmed,
+    /// EXCLUDING display:none descendants (and their subtrees). Unlike
+    /// <see cref="Element.TrimmedTextContent"/>, which is a cached, style-agnostic walk,
+    /// this applies the cascade's hidden verdict so hidden inline content (e.g. a
+    /// <c>display:none</c> link inside a list item) contributes no text.
+    /// </summary>
+    private string GetVisibleText(Element el) => Element.GetVisibleTextContent(el, IsHidden);
 
     /// <summary>An image element whose computed display is inline (the UA default).</summary>
     private bool IsInlineImage(Element el) => ImageHelpers.IsImageElement(el) && !IsBlockDisplay(el);

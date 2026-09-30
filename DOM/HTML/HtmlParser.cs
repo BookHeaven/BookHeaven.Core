@@ -237,6 +237,7 @@ public sealed class HtmlParser
                     border: 0 solid;
                     margin: 0;
                     padding: 0;
+                    font-family: '{{(!string.IsNullOrEmpty(o.SelectedFont) ? o.SelectedFont : "Montserrat")}}' !important;
                  }
                  html {
                      --font-size: {{o.FontSize.ToString("0.00", ci)}};
@@ -278,6 +279,15 @@ public sealed class HtmlParser
 
                  p {
                      hyphens: none !important;
+                 }
+                 
+                 table {
+                    table-layout: fixed !important;
+                 }
+                 
+                 table th, table td {
+                    font-size: 0.8rem !important;
+                    word-break: break-word !important;
                  }
 
                  body p:not([class]) {

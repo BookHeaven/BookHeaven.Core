@@ -234,24 +234,48 @@ public sealed class Element : Node
         _trimmedTextContent = sb.ToString(start, end - start);
     }
 
-    internal static void AppendDescendantText(Node node, StringBuilder sb)
+    internal static void AppendDescendantText(Node node, StringBuilder sb, Func<Element, bool>? isHidden = null)
     {
         switch (node)
         {
             case Text t:
                 sb.Append(t.Value);
                 break;
-            case Element e when e.TagName == "br":
-                // A <br> is a forced line break: the object replacement character
-                // (U+FFFC) marks it in the text stream. It is not whitespace, so
-                // trimming keeps it and the measurers/wrapper turn it into a break.
-                sb.Append('\uFFFC');
-                break;
             case Element e:
-                foreach (var child in e.ChildNodes)
-                    AppendDescendantText(child, sb);
+                // A display:none element (and its whole subtree) contributes no text.
+                if (isHidden is not null && isHidden(e))
+                    return;
+                if (e.TagName == "br")
+                {
+                    // A <br> is a forced line break: the object replacement character
+                    // (U+FFFC) marks it in the text stream. It is not whitespace, so
+                    // trimming keeps it and the measurers/wrapper turn it into a break.
+                    sb.Append('\uFFFC');
+                }
+                else
+                {
+                    foreach (var child in e.ChildNodes)
+                        AppendDescendantText(child, sb, isHidden);
+                }
                 break;
         }
+    }
+
+    /// <summary>
+    /// The element's text content with surrounding CSS-collapsible whitespace trimmed,
+    /// EXCLUDING <paramref name="isHidden"/> elements (and their subtrees). Unlike
+    /// <see cref="TrimmedTextContent"/> (a cached, style-agnostic walk), this applies a
+    /// caller-supplied hidden verdict so <c>display:none</c> content contributes no text.
+    /// </summary>
+    internal static string GetVisibleTextContent(Element el, Func<Element, bool>? isHidden)
+    {
+        var sb = new StringBuilder();
+        AppendDescendantText(el, sb, isHidden);
+        var start = 0;
+        var end = sb.Length;
+        while (start < end && TextRunWrapper.IsCollapsibleWhitespace(sb[start])) start++;
+        while (end > start && TextRunWrapper.IsCollapsibleWhitespace(sb[end - 1])) end--;
+        return sb.ToString(start, end - start);
     }
 }
 
