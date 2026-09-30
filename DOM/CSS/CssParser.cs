@@ -269,7 +269,8 @@ public sealed class CssParser
         var isFirstLetter = false;
 
         var i = 0;
-        // Element name (or universal '*'). A leading '[', ':' or '.' means no element name.
+        // Element name (or universal '*'). A leading '[', ':', '.' or '#' means no
+        // element name (e.g. a bare "#id" selector).
         if (token[0] == '*')
         {
             i = 1;
@@ -281,9 +282,9 @@ public sealed class CssParser
                 i++;
             element = token[start..i].ToLowerInvariant();
         }
-        else if (token[0] is '[' or ':' or '.')
+        else if (token[0] is '[' or ':' or '.' or '#')
         {
-            // Universal selector with class/attribute/pseudo parts only; element stays null.
+            // Universal selector with class/id/attribute/pseudo parts only; element stays null.
         }
         else
         {
