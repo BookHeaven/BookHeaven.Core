@@ -105,7 +105,7 @@ public sealed class LayoutEngine : IDisposable
     /// <summary>
     /// Generates a flat list of layout blocks (in flow order) for the given HTML.
     /// </summary>
-    public Task<IReadOnlyList<LayoutBlock>> GenerateLayoutBlocksAsync(string html, IReadOnlyList<string>? css = null, CancellationToken cancellationToken = default)
+    public IReadOnlyList<LayoutBlock> GenerateLayoutBlocks(string html, IReadOnlyList<string>? css = null, CancellationToken cancellationToken = default)
     {
         _styleMemo.Clear();
         _contentWidthMemo = null;
@@ -117,18 +117,18 @@ public sealed class LayoutEngine : IDisposable
 
         var body = doc.Body;
         var blocks = new List<LayoutBlock>();
-        if (body == null) return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
+        if (body == null) return blocks;
 
         var all = QueryAll(body, BlockSelector);
         if (all.Count == 0)
         {
             var text = GetVisibleText(body);
             var images = CollectInlineImages(body);
-            if (string.IsNullOrEmpty(text) && images.Count == 0) return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
+            if (string.IsNullOrEmpty(text) && images.Count == 0) return blocks;
 
             var block = BuildLeafBlock(text, body, images);
             if (block != null) blocks.Add(block);
-            return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
+            return blocks;
         }
 
         var matchedSet = new HashSet<Element>(all);
@@ -159,7 +159,7 @@ public sealed class LayoutEngine : IDisposable
             if (anon != null) blocks.Add(anon);
         }
 
-        return Task.FromResult<IReadOnlyList<LayoutBlock>>(blocks);
+        return blocks;
     }
 
     /// <summary>Collects every element in the subtree (pre-order) whose tag is in the comma-separated selector.</summary>
@@ -385,7 +385,7 @@ public sealed class LayoutEngine : IDisposable
         var ownImages = CollectInlineImages(el, blockChildren);
         if (!string.IsNullOrEmpty(ownText) || ownImages.Count > 0)
         {
-            var ownBlock = BuildLeafBlock(ownText, el, ownImages);
+            var ownBlock = BuildLeafBlock(ownText, el, ownImages, blockChildren);
             if (ownBlock != null)
             {
                 // Anonymous box: no margins of its own. The element's margins belong
@@ -496,7 +496,7 @@ public sealed class LayoutEngine : IDisposable
     /// INTRINSIC geometry. Returns null when the element is hidden, or when it has
     /// no content AND occupies no space.
     /// </summary>
-    private LayoutBlock? BuildLeafBlock(string text, Element el, IReadOnlyList<Element>? inlineImages = null)
+    private LayoutBlock? BuildLeafBlock(string text, Element el, IReadOnlyList<Element>? inlineImages = null, List<Element>? blockChildren = null)
     {
         var computed = GetComputedStyle(el);
         if (IsHidden(el)) return null;
@@ -624,34 +624,68 @@ public sealed class LayoutEngine : IDisposable
             var metrics = _measurer.GetFontMetrics(fontSize, TextRunBuilder.ToFontStyle(bold, italic));
             var strutDescent = ImageHelpers.ChromiumStrutDescent(resolvedLineHeight, metrics);
 
+            // A LEADING inline image (before any text in document order) shares
+            // the first line with the text: the text wraps around it and line 1
+            // gets height max(textLine1, imageContribution), matching the browser.
+            // Trailing images keep the documented approximation (their own line).
+            var leadingImage = images.Count == 1 && HasLeadingImage(el, blockChildren);
+
+            // The single leading image's geometry: its border-box width narrows
+            // line 1, and its vertical-align contribution sets line 1's height.
+            float leadingImgWidth = 0f, leadingImgContribution = 0f;
+            if (leadingImage)
+            {
+                var imgStyle = GetComputedStyle(images[0]);
+                var (w, h) = ImageHelpers.MeasureImageSize(images[0], imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
+                leadingImgWidth = w;
+                leadingImgContribution = ImageHelpers.LineContribution(imgStyle.GetPropertyValue("vertical-align"), h, strutDescent);
+            }
+
             var imgLineHeights = new List<float>();
             if (!string.IsNullOrEmpty(text))
             {
-                // Mixed text + images: measure the text, then the images follow
-                // on their own lines (documented approximation: the surveyed
-                // epubs have no paragraph mixing text and images).
                 var textRuns = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
+
+                // A leading image narrows the first line by its border-box width
+                // (box-sizing:border-box includes its padding, so the text starts
+                // at the image's right edge — the browser gap is 0).
+                var textFirstLine = leadingImage
+                    ? Math.Max(0f, availableWidth - leadingImgWidth)
+                    : firstLineWidthPx;
+
                 var textMeas = textRuns.Count == 1
                     ? _measurer.Measure(textRuns[0].Text, textRuns[0].FontSizePx, availableWidth,
                         lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * textRuns[0].FontSizePx),
-                        letterSpacingPx, wordSpacingPx, firstLineWidthPx, textRuns[0].Style, includeLineText: false)
-                    : _measurer.MeasureRuns(textRuns, availableWidth, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx, includeLineText: false);
+                        letterSpacingPx, wordSpacingPx, textFirstLine, textRuns[0].Style, includeLineText: false)
+                    : _measurer.MeasureRuns(textRuns, availableWidth, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, textFirstLine, includeLineText: false);
+
                 for (var li = 0; li < textMeas.LineCount; li++)
-                    imgLineHeights.Add(textMeas.LineHeights.Length > 0 ? textMeas.LineHeights[li] : textMeas.LineHeightPx);
+                {
+                    var h = textMeas.LineHeights.Length > 0 ? textMeas.LineHeights[li] : textMeas.LineHeightPx;
+                    // Line 1: the leading image and the text share it; take the taller.
+                    imgLineHeights.Add(leadingImage && li == 0 ? Math.Max(h, leadingImgContribution) : h);
+                }
             }
-
-            var imageBoxes = new List<(float Width, float Height, string? VerticalAlign)>(images.Count);
-            foreach (var img in images)
+            else if (leadingImage)
             {
-                var imgStyle = GetComputedStyle(img);
-                var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
-                imageBoxes.Add((imgWidth, imgHeight, imgStyle.GetPropertyValue("vertical-align")));
+                // Leading image with no text: the image alone on line 1.
+                imgLineHeights.Add(Math.Max(resolvedLineHeight, leadingImgContribution));
             }
 
-            imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight, strutDescent, fontSize,
-                startOnNewLine: !string.IsNullOrEmpty(text)));
+            if (!leadingImage)
+            {
+                // Trailing images (or multiple images): their own line(s).
+                var imageBoxes = new List<(float Width, float Height, string? VerticalAlign)>(images.Count);
+                foreach (var img in images)
+                {
+                    var imgStyle = GetComputedStyle(img);
+                    var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
+                    imageBoxes.Add((imgWidth, imgHeight, imgStyle.GetPropertyValue("vertical-align")));
+                }
+                imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight, strutDescent, fontSize));
+            }
 
-            contentHeight = imgLineHeights.Sum();
+            contentHeight = imgLineHeights.Count > 0 ? imgLineHeights.Sum() : 0f;
             return new LayoutBlock
             {
                 TagName = el.TagName,
@@ -662,7 +696,7 @@ public sealed class LayoutEngine : IDisposable
                 PaddingTop = paddingTop,
                 PaddingBottom = paddingBottom,
                 LineCount = imgLineHeights.Count,
-                LineHeightPx = imgLineHeights.Max(),
+                LineHeightPx = imgLineHeights.Count > 0 ? imgLineHeights.Max() : 0,
                 LineHeights = [.. imgLineHeights],
                 Flags = flags,
                 Links = []
@@ -908,6 +942,42 @@ public sealed class LayoutEngine : IDisposable
             }
             if (!IsBlockChild(child))
                 CollectInlineImagesRecursive(child, null, result);
+        }
+    }
+
+    /// <summary>
+    /// True when the element's first inline content (document order, skipping
+    /// hidden nodes and <paramref name="blockChildren"/>) is an image — a leading
+    /// inline image that shares the first line with the text that follows it.
+    /// </summary>
+    private bool HasLeadingImage(Element el, List<Element>? blockChildren)
+    {
+        return Walk(el);
+
+        bool Walk(Element e)
+        {
+            foreach (var child in e.ChildNodes)
+            {
+                if (child is Element childEl)
+                {
+                    if (IsHidden(childEl)) continue;
+                    if (blockChildren is { Count: > 0 } && blockChildren.Contains(childEl)) continue;
+                    if (ImageHelpers.IsImageElement(childEl) && !IsBlockDisplay(childEl))
+                        return true;
+                    if (!IsBlockChild(childEl))
+                    {
+                        if (Walk(childEl)) return true;
+                        if (!string.IsNullOrWhiteSpace(GetVisibleText(childEl)))
+                            return false;
+                    }
+                }
+                else if (child.NodeType == NodeType.Text)
+                {
+                    if (!string.IsNullOrWhiteSpace(child.TextContent))
+                        return false;
+                }
+            }
+            return false;
         }
     }
 
