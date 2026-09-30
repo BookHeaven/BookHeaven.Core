@@ -610,13 +610,11 @@ public sealed class LayoutEngine : IDisposable
         }
 
         // INLINE images: they sit in the element's inline content. A line box
-        // containing an image of height H gets height max(lineHeight, H +
-        // strutDescent) for a baseline-aligned image, where strutDescent = D +
-        // (L - (A + D)) / 2 (the browser baseline model: the image's baseline is
-        // the font baseline, so its bottom extends strutDescent below the line's
-        // baseline); a bottom/top/middle-aligned image is contained by the line,
-        // so the line gets max(lineHeight, H). The block is a TEXT block
-        // (Kind.Text) so the splitter can break between its lines.
+        // containing an image of height H gets height max(lineHeight, the image's
+        // vertical-align contribution) — see ImageHelpers.LineContribution for the
+        // per-value model (baseline: H + strutDescent; sub/super/middle/length:
+        // the shifted metrics unioned with the strut; top/bottom: H). The block is
+        // a TEXT block (Kind.Text) so the splitter can break between its lines.
         if (images.Count > 0)
         {
             var resolvedLineHeight = ITextMeasurer.QuantizeLineHeight(lineHeightLengthPx
@@ -638,7 +636,8 @@ public sealed class LayoutEngine : IDisposable
                 var imgStyle = GetComputedStyle(images[0]);
                 var (w, h) = ImageHelpers.MeasureImageSize(images[0], imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
                 leadingImgWidth = w;
-                leadingImgContribution = ImageHelpers.LineContribution(imgStyle.GetPropertyValue("vertical-align"), h, strutDescent);
+                leadingImgContribution = ImageHelpers.LineContribution(
+                    imgStyle.GetPropertyValue("vertical-align"), h, resolvedLineHeight, strutDescent, fontSize, metrics.XHeight, ParseLengthToPx);
             }
 
             var imgLineHeights = new List<float>();
@@ -682,7 +681,7 @@ public sealed class LayoutEngine : IDisposable
                     var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
                     imageBoxes.Add((imgWidth, imgHeight, imgStyle.GetPropertyValue("vertical-align")));
                 }
-                imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight, strutDescent, fontSize));
+                imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight, strutDescent, fontSize, metrics.XHeight, ParseLengthToPx));
             }
 
             contentHeight = imgLineHeights.Count > 0 ? imgLineHeights.Sum() : 0f;

@@ -219,28 +219,62 @@ public static class ImageHelpers
     }
 
     /// <summary>
-    /// How much an image of height <paramref name="imageHeight"/> grows the line box
-    /// that contains it, per its <c>vertical-align</c>: baseline (the default) adds
-    /// the font's strut descent, bottom/top/middle do not.
+    /// The height an image of height <paramref name="imageHeight"/> forces on the line
+    /// box that contains it, per its <c>vertical-align</c>, following Chromium's
+    /// <c>InlineLayoutStateStack::ApplyBaselineShift</c>: the image's metrics (ascent =
+    /// H, descent = 0, its baseline at the image's bottom edge) are shifted relative to
+    /// the line's baseline, and the line is the union of the shifted metrics and the
+    /// strut (ascent = line height − strut descent).
+    /// <list type="bullet">
+    /// <item><c>baseline</c> (the default): no shift.</item>
+    /// <item><c>sub</c>: shifted down by fontSize/5 + 1.</item>
+    /// <item><c>super</c>: shifted up by fontSize/3 + 1.</item>
+    /// <item><c>middle</c>: centered on the font's x-height.</item>
+    /// <item>length/percentage: shifted up by the value (percentages resolve against
+    /// the line height, per CSS 2.1 §15.21); unparseable values fall back to baseline.</item>
+    /// <item><c>top</c>/<c>bottom</c>/<c>text-top</c>/<c>text-bottom</c>: the line
+    /// contains the image, so it contributes its height alone.</item>
+    /// </list>
     /// </summary>
-    public static float LineContribution(string? verticalAlign, float imageHeight, float strutDescent)
+    public static float LineContribution(
+        string? verticalAlign, float imageHeight, float lineHeightPx, float strutDescent,
+        float fontSize, float xHeight,
+        Func<string?, float, float?, float?>? parseLength = null)
     {
-        var baseline = string.IsNullOrWhiteSpace(verticalAlign)
-            || verticalAlign.Trim().Equals("baseline", StringComparison.OrdinalIgnoreCase);
-        return baseline ? imageHeight + strutDescent : imageHeight;
+        var strutAscent = lineHeightPx - strutDescent;
+        var v = verticalAlign?.Trim().ToLowerInvariant();
+
+        // Baseline shift in the block direction (+ = down), Chromium's convention.
+        float shift = v switch
+        {
+            null or "" or "baseline" => 0f,
+            "sub" => fontSize / 5f + 1f,
+            "super" => -(fontSize / 3f + 1f),
+            "middle" or "baseline-middle" => (imageHeight - xHeight) / 2f,
+            "top" or "bottom" or "text-top" or "text-bottom" => float.NaN,
+            _ => float.TryParse(verticalAlign!, NumberStyles.Float, CultureInfo.InvariantCulture, out var unitless)
+                ? -unitless // a positive length moves the box UP
+                : (parseLength?.Invoke(verticalAlign, lineHeightPx, fontSize) is { } l ? -l : 0f)
+        };
+        if (float.IsNaN(shift)) return imageHeight;
+
+        var ascent = imageHeight - shift;
+        var descent = shift;
+        return MathF.Max(strutAscent, ascent) + MathF.Max(strutDescent, descent);
     }
 
     /// <summary>
     /// Greedily wraps inline image boxes into lines. Each line gets height
-    /// max(lineHeight, tallest image contribution on the line): baseline-aligned
-    /// images contribute height + strutDescent, bottom/top/middle-aligned images
-    /// contribute their height alone. Adjacent images are separated by an
+    /// max(lineHeight, tallest image contribution on the line), where the
+    /// contribution follows the image's <c>vertical-align</c> (see
+    /// <see cref="LineContribution"/>). Adjacent images are separated by an
     /// approximate gap (0.25 × font size); the surveyed epubs have at most one
     /// image per paragraph, so the gap only matters in theory.
     /// </summary>
     public static List<float> BuildImageLines(
         IReadOnlyList<(float Width, float Height, string? VerticalAlign)> images,
-        float availableWidth, float lineHeightPx, float strutDescent, float fontSize)
+        float availableWidth, float lineHeightPx, float strutDescent, float fontSize,
+        float xHeight, Func<string?, float, float?, float?>? parseLength = null)
     {
         var lineHeights = new List<float>(images.Count);
         var currentLine = 0f;
@@ -258,7 +292,7 @@ public static class ImageHelpers
                 currentLineWidth = 0f;
             }
             currentLineWidth += (currentLineWidth > 0 ? imageGap : 0f) + width;
-            currentLine = Math.Max(currentLine, LineContribution(verticalAlign, height, strutDescent));
+            currentLine = Math.Max(currentLine, LineContribution(verticalAlign, height, lineHeightPx, strutDescent, fontSize, xHeight, parseLength));
         }
 
         lineHeights.Add(Math.Max(lineHeightPx, currentLine));
