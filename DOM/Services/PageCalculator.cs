@@ -73,11 +73,6 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         var scope = new ParseScope();
         try
         {
-            if (ebook.Title.Contains("Aleacion de ley"))
-            {
-                Debugger.Break();
-            }
-            
             // A bounded channel of chapter indices feeds a fixed pool of workers:
             // at most `workerCount` engines are alive at once, and no per-chapter
             // Task is created (a SemaphoreSlim + one Task per chapter spawned a
