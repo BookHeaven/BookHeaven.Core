@@ -130,8 +130,14 @@ public static class TextRunBuilder
         var fs = style.GetPropertyValue("font-size");
         if (!string.IsNullOrWhiteSpace(fs) && style.IsExplicit("font-size"))
         {
-            var parsed = parseLength(fs, size, size);
-            if (parsed is > 0f) size = parsed.Value;
+            // Keywords (small, larger, xx-large, …) are ratios of the inherited size.
+            if (CssValueParser.TryParseFontSizeKeyword(fs, out var ratio))
+                size *= ratio;
+            else
+            {
+                var parsed = parseLength(fs, size, size);
+                if (parsed is > 0f) size = parsed.Value;
+            }
         }
         var fw = style.GetPropertyValue("font-weight");
         if (!string.IsNullOrWhiteSpace(fw)) bold = CssValueParser.IsBoldWeight(fw);

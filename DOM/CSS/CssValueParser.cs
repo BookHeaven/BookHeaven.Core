@@ -21,6 +21,38 @@ public static partial class CssValueParser
         return float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) && n >= 600f;
     }
 
+    /// <summary>
+    /// CSS <c>font-size</c> keywords as a ratio against the PARENT's font size.
+    /// Absolute keywords (CSS 2.1 §15.2): xx-small 3/5, x-small 3/4, small 8/10,
+    /// medium 1, large 10/8, x-large 4/3, xx-large 5/3. Relative keywords step one
+    /// size: smaller 3/4, larger 4/3. Returns false for lengths.
+    /// </summary>
+    public static bool TryParseFontSizeKeyword(string? value, out float ratio)
+    {
+        ratio = 1f;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var v = value.Trim().ToLowerInvariant();
+        return v switch
+        {
+            "xx-small" => SetRatio(ref ratio, 3f / 5f),
+            "x-small" => SetRatio(ref ratio, 3f / 4f),
+            "small" => SetRatio(ref ratio, 8f / 10f),
+            "medium" => SetRatio(ref ratio, 1f),
+            "large" => SetRatio(ref ratio, 10f / 8f),
+            "x-large" => SetRatio(ref ratio, 4f / 3f),
+            "xx-large" => SetRatio(ref ratio, 5f / 3f),
+            "smaller" => SetRatio(ref ratio, 3f / 4f),
+            "larger" => SetRatio(ref ratio, 4f / 3f),
+            _ => false
+        };
+
+        static bool SetRatio(ref float r, float value)
+        {
+            r = value;
+            return true;
+        }
+    }
+
     /// <summary>CSS <c>font-style</c>: italic at "italic"/"oblique".</summary>
     public static bool IsItalicStyle(string? value)
     {

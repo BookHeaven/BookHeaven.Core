@@ -875,6 +875,10 @@ public sealed class LayoutEngine : IDisposable
         if (!computed.IsExplicit("font-size"))
             return parentFontSize;
 
+        // Keywords (small, larger, xx-large, …) are ratios of the parent's size.
+        if (CssValueParser.TryParseFontSizeKeyword(fs, out var ratio))
+            return parentFontSize * ratio;
+
         var parsed = ParseLengthToPx(fs, parentFontSize, parentFontSize);
         return parsed ?? parentFontSize;
     }
