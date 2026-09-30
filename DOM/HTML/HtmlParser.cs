@@ -237,7 +237,6 @@ public sealed class HtmlParser
                     border: 0 solid;
                     margin: 0;
                     padding: 0;
-                    font-family: '{{(!string.IsNullOrEmpty(o.SelectedFont) ? o.SelectedFont : "Montserrat")}}' !important;
                  }
                  html {
                      --font-size: {{o.FontSize.ToString("0.00", ci)}};
@@ -303,15 +302,19 @@ public sealed class HtmlParser
                      float: none !important;
                  }
 
-                 // Minimal UA stylesheet: the chapter CSS assumes browser defaults
-                 // (em is italic, b/strong is bold). Injected first so any chapter
-                 // rule overrides it, exactly like a real UA sheet.
+                 /* Minimal UA stylesheet: the chapter CSS assumes browser defaults
+                 (em is italic, b/strong is bold). Injected first so any chapter
+                 rule overrides it, exactly like a real UA sheet. */
                  em, i, cite, dfn, var {
                      font-style: italic;
                  }
 
                  b, strong {
                      font-weight: bold;
+                 }
+                 
+                 code, kbd, samp,  pre {
+                     font-family: inherit !important;
                  }
 
                  sup {
