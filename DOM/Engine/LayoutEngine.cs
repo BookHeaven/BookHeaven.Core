@@ -361,7 +361,7 @@ public sealed class LayoutEngine : IDisposable
         // Inline-display images are NOT block children: they belong to the
         // element's inline content (baseline model), not to its block flow.
         var blockChildren = el.Children
-            .Where(c => IsBlockLevelTag(c.TagName) && !IsHidden(c) && !IsInlineImage(c))
+            .Where(c => IsBlockChild(c) && !IsHidden(c) && !IsInlineImage(c))
             .ToList();
         if (blockChildren.Count == 0)
         {
@@ -388,7 +388,11 @@ public sealed class LayoutEngine : IDisposable
             var ownBlock = BuildLeafBlock(ownText, el, ownImages);
             if (ownBlock != null)
             {
-                ownBlock.MarginTop = 0f; // anonymous box: no top margin of its own
+                // Anonymous box: no margins of its own. The element's margins belong
+                // to the container, not to this box (resetting both avoids the
+                // element's margin-bottom being counted twice).
+                ownBlock.MarginTop = 0f;
+                ownBlock.MarginBottom = 0f;
                 childSink.Add(ownBlock);
             }
         }
@@ -625,7 +629,7 @@ public sealed class LayoutEngine : IDisposable
                 // Mixed text + images: measure the text, then the images follow
                 // on their own lines (documented approximation: the surveyed
                 // epubs have no paragraph mixing text and images).
-                var textRuns = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockLevelTag);
+                var textRuns = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild);
                 var textMeas = textRuns.Count == 1
                     ? _measurer.Measure(textRuns[0].Text, textRuns[0].FontSizePx, availableWidth,
                         lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * textRuns[0].FontSizePx),
@@ -688,7 +692,7 @@ public sealed class LayoutEngine : IDisposable
         }
 
         // Split the inline content into runs at their own font sizes (browser model).
-        var runs = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockLevelTag);
+        var runs = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild);
         var meas = runs.Count == 1
             ? _measurer.Measure(runs[0].Text, runs[0].FontSizePx, availableWidth,
                 lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
@@ -849,6 +853,19 @@ public sealed class LayoutEngine : IDisposable
     private bool IsBlockDisplay(Element el)
         => CssValueParser.IsBlockDisplay(GetComputedStyle(el).GetPropertyValue("display"), el.TagName);
 
+    /// <summary>
+    /// True when the element is a block-level child of its parent. An explicit
+    /// <c>display</c> wins; when none is set (the engine has no UA stylesheet) the
+    /// tag-name heuristic approximates the UA default.
+    /// </summary>
+    private bool IsBlockChild(Element el)
+    {
+        var display = GetComputedStyle(el).GetPropertyValue("display");
+        if (string.IsNullOrWhiteSpace(display))
+            return IsBlockLevelTag(el.TagName);
+        return CssValueParser.IsBlockDisplay(display, el.TagName);
+    }
+
     /// <summary>An image element whose computed display is inline (the UA default).</summary>
     private bool IsInlineImage(Element el) => ImageHelpers.IsImageElement(el) && !IsBlockDisplay(el);
 
@@ -875,7 +892,7 @@ public sealed class LayoutEngine : IDisposable
                 result.Add(child);
                 continue;
             }
-            if (!IsBlockLevelTag(child.TagName))
+            if (!IsBlockChild(child))
                 CollectInlineImagesRecursive(child, null, result);
         }
     }

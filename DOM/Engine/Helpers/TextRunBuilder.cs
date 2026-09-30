@@ -38,9 +38,9 @@ public static class TextRunBuilder
         Element el, string text, float ownFontSize, bool ownBold, bool ownItalic,
         Func<Element, CssStyle> getComputedStyle,
         Func<string?, float, float?, float?> parseLength,
-        Func<string, bool> isBlockLevelTag)
+        Func<Element, bool> isBlockChild)
     {
-        if (IsUniformInline(el, ownFontSize, ownBold, ownItalic, getComputedStyle, parseLength, isBlockLevelTag))
+        if (IsUniformInline(el, ownFontSize, ownBold, ownItalic, getComputedStyle, parseLength, isBlockChild))
         {
             // The measurer collapses leading/trailing whitespace anyway, and
             // reusing the caller's text avoids a second subtree walk.
@@ -48,7 +48,7 @@ public static class TextRunBuilder
         }
 
         var builders = new List<RunBuilder>();
-        WalkInlineRuns(el, ownFontSize, ownBold, ownItalic, builders, getComputedStyle, parseLength, isBlockLevelTag);
+        WalkInlineRuns(el, ownFontSize, ownBold, ownItalic, builders, getComputedStyle, parseLength, isBlockChild);
         var runs = new List<TextRun>(builders.Count);
         foreach (var b in builders) runs.Add(b.Build());
         return runs;
@@ -62,11 +62,11 @@ public static class TextRunBuilder
         Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic,
         Func<Element, CssStyle> getComputedStyle,
         Func<string?, float, float?, float?> parseLength,
-        Func<string, bool> isBlockLevelTag)
+        Func<Element, bool> isBlockChild)
     {
         foreach (var node in element.ChildNodes)
         {
-            if (node is not Element childEl || isBlockLevelTag(childEl.TagName)) continue;
+            if (node is not Element childEl || isBlockChild(childEl)) continue;
 
             var (childSize, childBold, childItalic) =
                 ResolveInlineFont(getComputedStyle(childEl), inheritedSize, inheritedBold, inheritedItalic, parseLength);
@@ -74,7 +74,7 @@ public static class TextRunBuilder
             if (Math.Abs(childSize - inheritedSize) >= 0.001f || childBold != inheritedBold || childItalic != inheritedItalic)
                 return false;
 
-            if (!IsUniformInline(childEl, childSize, childBold, childItalic, getComputedStyle, parseLength, isBlockLevelTag))
+            if (!IsUniformInline(childEl, childSize, childBold, childItalic, getComputedStyle, parseLength, isBlockChild))
                 return false;
         }
 
@@ -85,7 +85,7 @@ public static class TextRunBuilder
         Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs,
         Func<Element, CssStyle> getComputedStyle,
         Func<string?, float, float?, float?> parseLength,
-        Func<string, bool> isBlockLevelTag)
+        Func<Element, bool> isBlockChild)
     {
         foreach (var node in element.ChildNodes)
         {
@@ -93,7 +93,7 @@ public static class TextRunBuilder
             {
                 AppendRun(runs, node.TextContent, inheritedSize, inheritedBold, inheritedItalic);
             }
-            else if (node is Element childEl && isBlockLevelTag(childEl.TagName))
+            else if (node is Element childEl && isBlockChild(childEl))
             {
                 // Defensive: leaf blocks have no block children; a container's block
                 // children become sibling blocks, not part of its own inline text.
@@ -102,7 +102,7 @@ public static class TextRunBuilder
             {
                 var (childSize, childBold, childItalic) =
                     ResolveInlineFont(getComputedStyle(inline), inheritedSize, inheritedBold, inheritedItalic, parseLength);
-                WalkInlineRuns(inline, childSize, childBold, childItalic, runs, getComputedStyle, parseLength, isBlockLevelTag);
+                WalkInlineRuns(inline, childSize, childBold, childItalic, runs, getComputedStyle, parseLength, isBlockChild);
             }
         }
     }
