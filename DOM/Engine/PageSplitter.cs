@@ -64,6 +64,12 @@ namespace BookHeaven.Core.DOM.Engine;
 /// breaks and page capacity override). For containers the "whole flow" height
 /// is measured with a DRY RUN of the child placement — the exact same rules,
 /// no slices recorded.
+///
+/// AvoidBreakAfter (CSS break-after: avoid) is enforced right after: if the
+/// block fits the page remainder but the NEXT block does not fit after it (so
+/// this block would be the last on the page), a new page is started BEFORE the
+/// gap is consumed, so the block moves whole and the break lands after the next
+/// block instead of right after this one.
 /// </summary>
 public static class PageSplitter
 {
@@ -89,6 +95,7 @@ public static class PageSplitter
             // and collapse normally with the previous block's bottom margin; on following
             // pages the gap is trimmed at the page boundary (handled by PlaceBlock).
             context.PlaceBlock(blocks[i], i, childIdx: -1, trimTopMargin: false,
+                nextBlock: i + 1 < blocks.Count ? blocks[i + 1] : null,
                 ref context.PrevBottomMargin, ref context.PrevZeroHeightMargin);
         }
 
@@ -166,7 +173,7 @@ public static class PageSplitter
             return true;
         }
 
-        public void PlaceBlock(LayoutBlock block, int blockIdx, int childIdx, bool trimTopMargin, ref float prevBottomMargin, ref float prevZeroHeightMargin)
+        public void PlaceBlock(LayoutBlock block, int blockIdx, int childIdx, bool trimTopMargin, LayoutBlock? nextBlock, ref float prevBottomMargin, ref float prevZeroHeightMargin)
         {
             var flags = block.Flags;
 
@@ -221,6 +228,25 @@ public static class PageSplitter
                 var fitsInPlace = UsedOnPage + gap + block.PaddingTop + contentH + block.PaddingBottom <= PageHeight;
                 var fitsOnFresh = contentH <= PageHeight && block.PaddingTop + contentH + block.PaddingBottom <= PageHeight;
                 if (!fitsInPlace && fitsOnFresh) NewPage();
+            }
+
+            // 2c. AvoidBreakAfter (CSS break-after: avoid): a page break must not land
+            //     right after this block. If the block fits the page remainder but the
+            //     NEXT block cannot even START after it (its first line would go to the
+            //     next page), start a fresh page NOW so the block moves whole and the
+            //     break lands after the next block instead. If the next block would
+            //     break INSIDE (first line fits, rest flows on) there is no break after
+            //     this block, so nothing is avoided. At the top of a page there is
+            //     nothing to avoid (moving the first block would leave an empty page).
+            if ((flags & LayoutBlockFlags.AvoidBreakAfter) != 0 && nextBlock is not null && UsedOnPage > 0f)
+            {
+                var contentH = MeasureContentFlow(block, blockIdx);
+                var fitsInPlace = UsedOnPage + gap + block.PaddingTop + contentH + block.PaddingBottom <= PageHeight;
+                if (fitsInPlace)
+                {
+                    var usedAfter = UsedOnPage + gap + block.PaddingTop + contentH + block.PaddingBottom;
+                    if (!CanStartOnPage(nextBlock, usedAfter, block)) NewPage();
+                }
             }
 
             if (gap > 0f)
@@ -317,7 +343,9 @@ public static class PageSplitter
             var childPrevZeroHeight = 0f;
             for (var ci = 0; ci < container.Children.Count; ci++)
             {
-                PlaceBlock(container.Children[ci], blockIdx, ci, ShouldTrimTopMargin(container, ci), ref childPrevBottom, ref childPrevZeroHeight);
+                PlaceBlock(container.Children[ci], blockIdx, ci, ShouldTrimTopMargin(container, ci),
+                    nextBlock: ci + 1 < container.Children.Count ? container.Children[ci + 1] : null,
+                    ref childPrevBottom, ref childPrevZeroHeight);
             }
 
             // WITH padding-bottom the last child's effective bottom margin does NOT
@@ -374,6 +402,50 @@ public static class PageSplitter
         }
 
         /// <summary>
+        /// Whether <paramref name="block"/> fits on the current page when the flow has
+        /// already consumed <paramref name="usedOnPage"/> and the preceding sibling is
+        /// <paramref name="prevBlock"/> (for the margin collapse). Used by the
+        /// AvoidBreakAfter look-ahead to decide whether the current block would be the
+        /// last one on the page.
+        /// </summary>
+        /// <summary>
+        /// Can <paramref name="block"/> START on a page that already has
+        /// <paramref name="usedOnPage"/> px used (after the collapsed gap with
+        /// <paramref name="prevBlock"/>)? A block starts when its first line (text),
+        /// whole box (image/hr), or first child (container) fits the page remainder.
+        /// Unlike a full-fit test this returns true when the block would break
+        /// inside — exactly the case where a break-after:avoid must NOT trigger.
+        /// </summary>
+        private bool CanStartOnPage(LayoutBlock block, float usedOnPage, LayoutBlock? prevBlock)
+        {
+            var topMargin = LayoutBlock.EffectiveTopMargin(block);
+            var isSpacer = LayoutBlock.IsZeroHeightSpacer(block);
+            var ownTop = isSpacer && topMargin > 0f
+                ? Math.Max(block.MarginTop, block.MarginBottom)
+                : topMargin;
+            var prevBottom = prevBlock is null ? 0f : LayoutBlock.EffectiveBottomMargin(prevBlock);
+            var gap = Math.Max(prevBottom, ownTop);
+            var start = usedOnPage + gap + block.PaddingTop;
+            if (start > PageHeight) return false;
+
+            switch (block.Kind)
+            {
+                case BlockKind.Container:
+                    if (block.Children.Count == 0) return true;
+                    // The first child's top margin collapses into the container's top
+                    // margin (already in the container's effective top), so no extra gap.
+                    return CanStartOnPage(block.Children[0], start, null);
+                case BlockKind.Text:
+                    if (block.LineCount == 0) return block.ContentHeight <= 0f;
+                    var firstLine = block.LineHeights is { Length: > 0 } ? block.LineHeights[0] : block.LineHeightPx;
+                    return start + firstLine <= PageHeight;
+                default:
+                    // Box (image, hr): atomic, must fit entirely to start.
+                    return start + block.ContentHeight + block.PaddingBottom <= PageHeight;
+            }
+        }
+
+        /// <summary>
         /// Dry run of the container's child flow on a fresh page: the exact
         /// placement rules (margin collapse, paddings, nested avoids) with no
         /// slices recorded. Returns the flow's total height, or Infinity when it
@@ -385,7 +457,9 @@ public static class PageSplitter
             var childPrevBottom = 0f;
             var childPrevZeroHeight = 0f;
             for (var ci = 0; ci < container.Children.Count; ci++)
-                scratch.PlaceBlock(container.Children[ci], blockIdx, ci, ShouldTrimTopMargin(container, ci), ref childPrevBottom, ref childPrevZeroHeight);
+                scratch.PlaceBlock(container.Children[ci], blockIdx, ci, ShouldTrimTopMargin(container, ci),
+                    nextBlock: ci + 1 < container.Children.Count ? container.Children[ci + 1] : null,
+                    ref childPrevBottom, ref childPrevZeroHeight);
             scratch.ConsumeContainerTailMargin(container);
             return scratch.Paged ? float.PositiveInfinity : scratch.UsedOnPage;
         }

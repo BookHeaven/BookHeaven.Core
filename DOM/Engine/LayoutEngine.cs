@@ -796,11 +796,12 @@ public sealed class LayoutEngine : IDisposable
     /// <summary>Maps the parsed CSS break properties to <see cref="LayoutBlockFlags"/>.</summary>
     private static LayoutBlockFlags ToBreakFlags(CssStyle style)
     {
-        var (pageBreakBefore, pageBreakAfter, avoidBreakInside) = CssValueParser.ParseBreaks(style);
+        var (pageBreakBefore, pageBreakAfter, avoidBreakInside, avoidBreakAfter) = CssValueParser.ParseBreaks(style);
         LayoutBlockFlags flags = 0;
         if (pageBreakBefore) flags |= LayoutBlockFlags.PageBreakBefore;
         if (pageBreakAfter) flags |= LayoutBlockFlags.PageBreakAfter;
         if (avoidBreakInside) flags |= LayoutBlockFlags.AvoidBreakInside;
+        if (avoidBreakAfter) flags |= LayoutBlockFlags.AvoidBreakAfter;
         return flags;
     }
 

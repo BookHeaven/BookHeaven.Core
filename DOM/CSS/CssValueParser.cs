@@ -79,14 +79,19 @@ public static partial class CssValueParser
     /// count (e.g. arcanum ch146: 46 vs the browser's 21).
     /// <c>break-inside: avoid</c> (and the legacy <c>page-break-inside: avoid</c>)
     /// IS honored (Chromium avoids breaking inside the box).
+    /// <c>break-after: avoid</c> (and the legacy <c>page-break-after: avoid</c>)
+    /// IS honored: a block that would end up as the last one on a page is moved to
+    /// the next page so the break does not land right after it.
     /// </summary>
-    public static (bool PageBreakBefore, bool PageBreakAfter, bool AvoidBreakInside) ParseBreaks(CssStyle style)
+    public static (bool PageBreakBefore, bool PageBreakAfter, bool AvoidBreakInside, bool AvoidBreakAfter) ParseBreaks(CssStyle style)
     {
         var pageBreakBefore = EqualsValue(style.GetPropertyValue("break-before"), "column");
         var pageBreakAfter = EqualsValue(style.GetPropertyValue("break-after"), "column");
         var avoidBreakInside = EqualsValue(style.GetPropertyValue("page-break-inside"), "avoid")
             || EqualsValue(style.GetPropertyValue("break-inside"), "avoid");
-        return (pageBreakBefore, pageBreakAfter, avoidBreakInside);
+        var avoidBreakAfter = EqualsValue(style.GetPropertyValue("page-break-after"), "avoid")
+            || EqualsValue(style.GetPropertyValue("break-after"), "avoid");
+        return (pageBreakBefore, pageBreakAfter, avoidBreakInside, avoidBreakAfter);
     }
 
     /// <summary>Parses an <c>initial-letter</c> value into a line count, or null.</summary>

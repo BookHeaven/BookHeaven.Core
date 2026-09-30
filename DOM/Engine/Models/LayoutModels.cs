@@ -18,7 +18,8 @@ public enum LayoutBlockFlags
     None = 0,
     PageBreakBefore = 1 << 0,
     PageBreakAfter = 1 << 1,
-    AvoidBreakInside = 1 << 2
+    AvoidBreakInside = 1 << 2,
+    AvoidBreakAfter = 1 << 3
 }
 
 /// <summary>
