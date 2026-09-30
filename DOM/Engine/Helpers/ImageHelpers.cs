@@ -46,13 +46,20 @@ public static class ImageHelpers
         Element el, CssStyle computed,
         Func<string?, float, float?, float?> parseLength,
         PageCalculatorOptions options, CoreOptions coreOptions,
-        float availableWidth, float containerRefWidth, float fontSize)
+        float availableWidth, float containerRefWidth, float fontSize,
+        CssStyle? srcComputed = null)
     {
         // A wrapper (e.g. <figure>) carries no src of its own: use the first
         // descendant image that does.
         var srcEl = el.GetAttribute("src") is { Length: > 0 } || el.GetAttribute("href") is { Length: > 0 }
             ? el
             : FindImageWithSrc(el) ?? el;
+
+        // The replaced element's box (width/height/max-*) is declared on the
+        // element that carries the src, not on a wrapper. When <paramref name="el"/>
+        // is a wrapper (e.g. <figure>), the caller passes the descendant image's
+        // computed style so its own CSS (e.g. `width: 25%`) is honoured.
+        var srcStyle = srcComputed ?? computed;
 
         var imgWidth = float.NaN;
         var imgHeight = float.NaN;
@@ -62,8 +69,8 @@ public static class ImageHelpers
         float parsedAttrWidth = 0f, parsedAttrHeight = 0f;
         float computedWidth = 0f, computedHeight = 0f;
 
-        var wp = parseLength(computed.GetPropertyValue("width"), containerRefWidth, fontSize);
-        var hp = parseLength(computed.GetPropertyValue("height"), options.PageHeightPx, fontSize);
+        var wp = parseLength(srcStyle.GetPropertyValue("width"), containerRefWidth, fontSize);
+        var hp = parseLength(srcStyle.GetPropertyValue("height"), options.PageHeightPx, fontSize);
         if (wp is > 0) { imgWidth = wp.Value; computedWidthParsed = true; computedWidth = wp.Value; }
         if (hp is > 0) { imgHeight = hp.Value; computedHeightParsed = true; computedHeight = hp.Value; }
 
@@ -134,7 +141,7 @@ public static class ImageHelpers
             catch { }
         }
 
-        var mw = parseLength(computed.GetPropertyValue("max-width"), availableWidth, fontSize);
+        var mw = parseLength(srcStyle.GetPropertyValue("max-width"), availableWidth, fontSize);
         var maxW = mw is > 0 ? Math.Min(availableWidth, mw.Value) : availableWidth;
         if (imgWidth > maxW) imgWidth = maxW;
 
@@ -183,7 +190,7 @@ public static class ImageHelpers
             else imgHeight = options.DefaultImageHeightPx;
         }
 
-        var mh = parseLength(computed.GetPropertyValue("max-height"), options.PageHeightPx, fontSize);
+        var mh = parseLength(srcStyle.GetPropertyValue("max-height"), options.PageHeightPx, fontSize);
         if (mh is > 0 && !float.IsNaN(imgHeight) && imgHeight > mh.Value) imgHeight = mh.Value;
 
         return (imgWidth, imgHeight);

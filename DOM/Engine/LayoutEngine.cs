@@ -580,7 +580,12 @@ public sealed class LayoutEngine : IDisposable
         // BLOCK-display image: a block-level replaced element, placed whole.
         if (ImageHelpers.IsImageElement(el))
         {
-            var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
+            // A wrapper (e.g. <figure>) sizes its box from the descendant image's
+            // own CSS, so pass that image's computed style when el is not the
+            // image itself.
+            var srcEl = ImageHelpers.FindImageWithSrc(el);
+            var srcComputed = srcEl != null ? GetComputedStyle(srcEl) : null;
+            var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize, srcComputed);
             contentHeight = imgHeight;
 
             return new LayoutBlock
