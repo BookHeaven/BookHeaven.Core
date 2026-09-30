@@ -81,13 +81,14 @@ public static class PageSplitter
 
         for (var i = 0; i < blocks.Count; i++)
         {
-            // Top-level blocks are direct children of the body (a flex container), so
-            // their top margins do NOT collapse through the body: the first block's
-            // margin is consumed on the first page, and on following pages it is
-            // trimmed at the page boundary (handled by the gap logic in PlaceBlock).
-            // childIdx -1 keeps the margin; only a container's first child (childIdx 0,
-            // no padding-top) is trimmed to 0 because its margin collapsed through it.
-            context.PlaceBlock(blocks[i], i, childIdx: -1, parentPaddingTop: 0f,
+            // Top-level blocks are direct children of the body. The body is a flex ITEM
+            // of the html (the html element is the flex container), and flex items do
+            // NOT collapse their margins with their parent. So the first block's top
+            // margin is CONSUMED on the first page (childIdx -1 keeps it); it does not
+            // leak out past the page's top edge. Subsequent blocks keep their top margin
+            // and collapse normally with the previous block's bottom margin; on following
+            // pages the gap is trimmed at the page boundary (handled by PlaceBlock).
+            context.PlaceBlock(blocks[i], i, childIdx: -1, trimTopMargin: false,
                 ref context.PrevBottomMargin, ref context.PrevZeroHeightMargin);
         }
 
@@ -149,7 +150,23 @@ public static class PageSplitter
 
         public float PrevZeroHeightMargin;
 
-        public void PlaceBlock(LayoutBlock block, int blockIdx, int childIdx, float parentPaddingTop, ref float prevBottomMargin, ref float prevZeroHeightMargin)
+        /// <summary>
+        /// A child's top margin is trimmed (folded into the container's effective top
+        /// margin) when the container has no padding-top and every preceding sibling is
+        /// a zero-height spacer — the CSS collapse then ran through those spacers to
+        /// this child, so its top margin is already part of the container's effective
+        /// top margin and must not be added again as a gap. Only the first child is
+        /// trimmed when the leading siblings are content blocks (the common case).
+        /// </summary>
+        private static bool ShouldTrimTopMargin(LayoutBlock container, int childIdx)
+        {
+            if (container.PaddingTop > 0f) return false;
+            for (var i = 0; i < childIdx; i++)
+                if (!LayoutBlock.IsZeroHeightSpacer(container.Children[i])) return false;
+            return true;
+        }
+
+        public void PlaceBlock(LayoutBlock block, int blockIdx, int childIdx, bool trimTopMargin, ref float prevBottomMargin, ref float prevZeroHeightMargin)
         {
             var flags = block.Flags;
 
@@ -157,10 +174,12 @@ public static class PageSplitter
             if ((flags & LayoutBlockFlags.PageBreakBefore) != 0 && UsedOnPage > 0) NewPage();
 
             // 2. Margin collapse (CSS): gap = max(this block's effective top margin,
-            //    the previous sibling's effective bottom margin). A container's
-            //    first child contributes no top margin when the container has no
-            //    padding-top: its margin collapsed through the container and is
-            //    already part of the container's effective top margin.
+            //    the previous sibling's effective bottom margin). A block's top margin
+            //    is trimmed (folded into the parent's effective top margin) when it
+            //    collapsed through the parent: the parent has no padding-top and every
+            //    preceding sibling is a zero-height spacer, so the CSS collapse ran
+            //    through those spacers to this block and its margin is already part of
+            //    the parent's effective top margin (see ShouldTrimTopMargin).
             //
             //    Page-boundary collapse: a page is one column of a flex layout, so
             //    the collapsed margin is trimmed at the page boundary. Only the top
@@ -170,14 +189,12 @@ public static class PageSplitter
             //    block's top margin (clipped at the new page's edge) is consumed. This
             //    also covers the case where the gap itself does not fit below the
             //    previous sibling and forces a page break.
-            var topMargin = childIdx == 0 && parentPaddingTop <= 0f
-                ? 0f
-                : LayoutBlock.EffectiveTopMargin(block);
+            var topMargin = trimTopMargin ? 0f : LayoutBlock.EffectiveTopMargin(block);
             // A zero-height spacer (no content, padding or border) collapses its top and
             // bottom margins through itself: the spacer and the following sibling share the
             // same point, and the spacer's margins are consumed as a single gap rather than
             // stacked on top of the next sibling's top margin.
-            var isZeroHeightSpacer = block.Kind == BlockKind.Text && block is { LineCount: 0, ContentHeight: <= 0f, PaddingTop: <= 0f, PaddingBottom: <= 0f };
+            var isZeroHeightSpacer = LayoutBlock.IsZeroHeightSpacer(block);
             // A spacer whose top margin was already trimmed (first child of a
             // padding-less container) must not re-introduce it via the combined
             // spacer margin — that would consume the collapsed margin twice.
@@ -300,7 +317,7 @@ public static class PageSplitter
             var childPrevZeroHeight = 0f;
             for (var ci = 0; ci < container.Children.Count; ci++)
             {
-                PlaceBlock(container.Children[ci], blockIdx, ci, container.PaddingTop, ref childPrevBottom, ref childPrevZeroHeight);
+                PlaceBlock(container.Children[ci], blockIdx, ci, ShouldTrimTopMargin(container, ci), ref childPrevBottom, ref childPrevZeroHeight);
             }
 
             // WITH padding-bottom the last child's effective bottom margin does NOT
@@ -368,7 +385,7 @@ public static class PageSplitter
             var childPrevBottom = 0f;
             var childPrevZeroHeight = 0f;
             for (var ci = 0; ci < container.Children.Count; ci++)
-                scratch.PlaceBlock(container.Children[ci], blockIdx, ci, container.PaddingTop, ref childPrevBottom, ref childPrevZeroHeight);
+                scratch.PlaceBlock(container.Children[ci], blockIdx, ci, ShouldTrimTopMargin(container, ci), ref childPrevBottom, ref childPrevZeroHeight);
             scratch.ConsumeContainerTailMargin(container);
             return scratch.Paged ? float.PositiveInfinity : scratch.UsedOnPage;
         }

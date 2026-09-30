@@ -112,7 +112,7 @@ public class LayoutBlock
     public static float EffectiveTopMargin(LayoutBlock block)
     {
         if (block.Kind == BlockKind.Container && block.Children.Count > 0 && block.PaddingTop <= 0f)
-            return Math.Max(block.MarginTop, EffectiveTopMargin(block.Children[0]));
+            return Math.Max(block.MarginTop, CollapsedLeadingMargin(block.Children));
         return block.MarginTop;
     }
 
@@ -126,8 +126,60 @@ public class LayoutBlock
     public static float EffectiveBottomMargin(LayoutBlock block)
     {
         if (block.Kind == BlockKind.Container && block.Children.Count > 0 && block.PaddingBottom <= 0f)
-            return Math.Max(block.MarginBottom, EffectiveBottomMargin(block.Children[^1]));
+            return Math.Max(block.MarginBottom, CollapsedTrailingMargin(block.Children));
         return block.MarginBottom;
+    }
+
+    /// <summary>
+    /// True when the block is a zero-height spacer: no content, no padding, no border.
+    /// Such a block collapses its top and bottom margins through itself, so the margins
+    /// of the blocks on either side merge into a single gap (CSS margin collapsing).
+    /// </summary>
+    public static bool IsZeroHeightSpacer(LayoutBlock block)
+        => block.Kind == BlockKind.Text
+           && block.LineCount == 0
+           && block.ContentHeight <= 0f
+           && block.PaddingTop <= 0f
+           && block.PaddingBottom <= 0f;
+
+    /// <summary>
+    /// The margin that collapses out of the TOP of a child sequence: the max of the top
+    /// margins of the leading run of zero-height spacers, plus the top margin of the
+    /// first content child that terminates the run. A zero-height spacer collapses its
+    /// top and bottom margins through itself, so the collapse continues to the next
+    /// sibling; the first non-zero-height child stops the run (its top margin is folded
+    /// in, but the run does not continue past it).
+    /// </summary>
+    private static float CollapsedLeadingMargin(List<LayoutBlock> children)
+    {
+        var max = 0f;
+        for (var i = 0; i < children.Count; i++)
+        {
+            var child = children[i];
+            max = Math.Max(max, EffectiveTopMargin(child));
+            if (!IsZeroHeightSpacer(child)) break;
+            max = Math.Max(max, EffectiveBottomMargin(child));
+        }
+        return max;
+    }
+
+    /// <summary>
+    /// The margin that collapses out of the BOTTOM of a child sequence: the mirror of
+    /// <see cref="CollapsedLeadingMargin"/> — the max of the bottom margins of the
+    /// trailing run of zero-height spacers, plus the bottom margin of the last content
+    /// child that terminates the run.
+    /// </summary>
+    private static float CollapsedTrailingMargin(List<LayoutBlock> children)
+    {
+        var max = 0f;
+        for (var i = children.Count - 1; i >= 0; i--)
+        {
+            var child = children[i];
+            max = Math.Max(max, EffectiveBottomMargin(child));
+            if (!IsZeroHeightSpacer(child)) break;
+            max = Math.Max(max, EffectiveTopMargin(child));
+        }
+        return max;
     }
 }
 
