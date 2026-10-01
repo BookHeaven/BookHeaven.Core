@@ -316,6 +316,8 @@ public static class StyleResolver
         spec += c.Attributes.Count * 100; // attribute selectors are class-level
         if (c.Pseudo is not null)
             spec += 100; // pseudo-elements are class-level
+        if (c.PseudoClass is not null)
+            spec += 100; // pseudo-classes are class-level
         foreach (var n in c.Not)
             spec += CompoundSpecificity(n); // :not(S) carries the specificity of S
         return spec;
@@ -453,7 +455,36 @@ public static class StyleResolver
         foreach (var n in c.Not)
             if (CompoundMatches(n, el))
                 return false; // :not() — the element must NOT match
+        if (c.PseudoClass is PseudoClass.FirstChild && !IsFirstElementChild(el))
+            return false;
+        if (c.PseudoClass is PseudoClass.LastChild && !IsLastElementChild(el))
+            return false;
         return true;
+    }
+
+    /// <summary>True when <paramref name="el"/> is the first element child of its parent.</summary>
+    private static bool IsFirstElementChild(Element el)
+    {
+        var parent = el.ParentElement;
+        if (parent is null)
+            return false;
+        foreach (var node in parent.ChildNodes)
+            if (node is Element element)
+                return ReferenceEquals(element, el);
+        return false;
+    }
+
+    /// <summary>True when <paramref name="el"/> is the last element child of its parent.</summary>
+    private static bool IsLastElementChild(Element el)
+    {
+        var parent = el.ParentElement;
+        if (parent is null)
+            return false;
+        var nodes = parent.ChildNodes;
+        for (var i = nodes.Count - 1; i >= 0; i--)
+            if (nodes[i] is Element element)
+                return ReferenceEquals(element, el);
+        return false;
     }
 
     private static bool AttributeMatches(CssAttribute attr, Element el)

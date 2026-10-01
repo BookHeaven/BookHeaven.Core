@@ -278,6 +278,7 @@ public sealed class CssParser
         var nots = new List<SelectorCompound>();
         var isFirstLetter = false;
         PseudoKind? pseudo = null;
+        PseudoClass? pseudoClass = null;
 
         var i = 0;
         // Element name (or universal '*'). A leading '[', ':', '.' or '#' means no
@@ -354,6 +355,12 @@ public sealed class CssParser
                     // target a generated box, not the base element.
                     pseudo = name == "before" ? PseudoKind.Before : PseudoKind.After;
                 }
+                else if (name is "first-child" or "last-child")
+                {
+                    // Structural pseudo-class: matches the base element by its
+                    // position among its siblings.
+                    pseudoClass = name == "first-child" ? PseudoClass.FirstChild : PseudoClass.LastChild;
+                }
                 else if (name == "not" && i < token.Length && token[i] == '(')
                 {
                     var close = FindMatchingParen(token, i);
@@ -377,7 +384,7 @@ public sealed class CssParser
             }
         }
 
-        return new SelectorCompound { Element = element, Classes = classes, Ids = ids, Attributes = attributes, Not = nots, FirstLetter = isFirstLetter, Pseudo = pseudo };
+        return new SelectorCompound { Element = element, Classes = classes, Ids = ids, Attributes = attributes, Not = nots, FirstLetter = isFirstLetter, Pseudo = pseudo, PseudoClass = pseudoClass };
     }
 
     /// <summary>Parses an attribute selector body: <c>name</c>, <c>name=value</c>, <c>name~=value</c>, ...</summary>

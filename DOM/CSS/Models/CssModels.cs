@@ -11,6 +11,17 @@ public enum PseudoKind
     After
 }
 
+/// <summary>
+/// A structural pseudo-class matched on the base element's position among its
+/// siblings. Unlike <see cref="PseudoKind"/> (a generated box), these match the
+/// element itself.
+/// </summary>
+public enum PseudoClass
+{
+    FirstChild,
+    LastChild
+}
+
 /// <summary>A parsed CSS rule: a selector plus its declarations.</summary>
 public sealed class CssRule
 {
@@ -64,6 +75,8 @@ public sealed class SelectorCompound
     public bool FirstLetter { get; init; }
     /// <summary>The pseudo-element this compound is, or <c>null</c> for a base-element compound.</summary>
     public PseudoKind? Pseudo { get; init; }
+    /// <summary>The structural pseudo-class this compound is, or <c>null</c>.</summary>
+    public PseudoClass? PseudoClass { get; init; }
 }
 
 /// <summary>
