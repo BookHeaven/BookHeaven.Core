@@ -498,6 +498,20 @@ public sealed class LayoutEngine : IDisposable
                     contentHeight += child.MarginTop;
             }
         }
+        
+        var computed = GetComputedStyle(el);
+        var fontSize = ResolveFontSize(el);
+        var heightPx = ParseLengthToPx(computed.GetPropertyValue("height"), _options.PageHeightPx, fontSize);
+        var maxHeight = ParseLengthToPx(computed.GetPropertyValue("max-height"), _options.PageHeightPx, fontSize);
+
+        if (heightPx.HasValue)
+        {
+            contentHeight = heightPx.Value;
+        }
+        if(contentHeight > maxHeight)
+        {
+            contentHeight = maxHeight.Value;
+        }
 
         var containerBlock = new LayoutBlock
         {
