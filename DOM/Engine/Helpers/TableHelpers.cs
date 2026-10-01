@@ -62,7 +62,7 @@ internal static class TableHelpers
         public int ColSpan = 1;
         public int RowSpan = 1;
         public string Text = string.Empty;
-        public List<Element> Images = [];
+        public List<CellBlock> Blocks = [];
 
         public float? Percent;        // 0..1, from width: X%
         public float? FixedWidthPx;   // from width: Npx (a constrained column)
@@ -81,6 +81,28 @@ internal static class TableHelpers
         public float OuterMin => ContentMin + PaddingLeft + PaddingRight + BorderLeft + BorderRight;
         public float OuterMax => ContentMax + PaddingLeft + PaddingRight + BorderLeft + BorderRight;
         public float OuterHeight => 0f; // filled during row-height pass
+    }
+
+    /// <summary>
+    /// A block-level box in a cell's block flow: a <c>&lt;p&gt;</c>/<c>&lt;div&gt;</c> (or any
+    /// block-display element) or an anonymous block of inline content. Each carries its OWN
+    /// typography (font-size, line-height, style) and its vertical margins/padding/borders,
+    /// because the browser lays out a cell's content as a block flow — the cell's own
+    /// line-height does NOT apply to text nested inside a child block.
+    /// </summary>
+    private sealed class CellBlock
+    {
+        public string Text = string.Empty;
+        public float FontSize;
+        public FontStyle Style;
+        public float? LineHeightLengthPx;
+        public float? LineHeightMultiplier;
+
+        public float MarginTop, MarginBottom;
+        public float PaddingLeft, PaddingRight, PaddingTop, PaddingBottom;
+        public float BorderLeft, BorderRight, BorderTop, BorderBottom;
+
+        public List<Element> Images = [];
     }
 
     /// <summary>A column's accumulated inline-size constraints.</summary>
@@ -135,7 +157,7 @@ internal static class TableHelpers
                 while (col < columnCount && occupied[r, col]) col++;
                 if (col >= columnCount) break;
 
-                var cell = ParseCell(cellEl, r, col, getStyle, getFontSize, isHidden, measurer, options, context, parser);
+                var cell = ParseCell(cellEl, r, col, getStyle, getFontSize, isHidden, isBlockDisplay, measurer, options, context, parser);
                 cells.Add(cell);
                 for (var dr = 0; dr < cell.RowSpan && r + dr < rowElements.Count; dr++)
                     for (var dc = 0; dc < cell.ColSpan && col + dc < columnCount; dc++)
@@ -295,7 +317,7 @@ internal static class TableHelpers
     private static Cell ParseCell(
         Element el, int row, int column,
         Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
-        Func<Element, bool> isHidden,
+        Func<Element, bool> isHidden, Func<Element, bool> isBlockDisplay,
         ITextMeasurer measurer, PageCalculatorOptions options, RenderContext context,
         CssLengthParser parser)
     {
@@ -346,9 +368,10 @@ internal static class TableHelpers
         cell.ContentMin = MeasureMinContent(cell.Text, cell.FontSize, cell.Style, measurer);
         cell.ContentMax = MeasureMaxContent(cell.Text, cell.FontSize, cell.Style, measurer);
 
-        // Images contribute to the row height (a cell with a picture is as tall
-        // as the picture); collect them so the row-height pass can measure them.
-        CollectImages(el, isHidden, cell.Images);
+        // The cell's content is a block flow: each block-level child (and any
+        // anonymous block of inline content) is measured with its OWN typography
+        // and margins, matching the browser. See CollectBlocks.
+        cell.Blocks = CollectBlocks(el, cell, getStyle, getFontSize, isHidden, isBlockDisplay, parser);
         return cell;
     }
 
@@ -367,6 +390,134 @@ internal static class TableHelpers
         foreach (var child in el.Children)
             CollectImages(child, isHidden, result);
     }
+
+    /// <summary>
+    /// Splits a cell's content into its block-flow boxes. Each block-display child becomes
+    /// its own block (with its own typography and margins); runs of inline content that are
+    /// not inside a block child are gathered into an anonymous block inheriting the cell's
+    /// typography. A cell with no content yields a single empty anonymous block.
+    /// </summary>
+    private static List<CellBlock> CollectBlocks(
+        Element cellEl, Cell cell,
+        Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
+        Func<Element, bool> isHidden, Func<Element, bool> isBlockDisplay, CssLengthParser parser)
+    {
+        var blocks = new List<CellBlock>();
+        var anonText = new System.Text.StringBuilder();
+        var anonImages = new List<Element>();
+        var hasAnon = false;
+
+        // Flush the accumulated inline run (text and/or inline images) as an anonymous
+        // block. A run with only images (no text) still forms a block, so a cell whose
+        // sole content is a picture is measured correctly.
+        void FlushAnon()
+        {
+            if (!hasAnon) return;
+            blocks.Add(MakeAnonBlock(anonText.ToString().Trim(), anonImages, cell));
+            anonText.Clear();
+            anonImages.Clear();
+            hasAnon = false;
+        }
+
+        // Iterate ChildNodes (not Children): a cell's text lives in text nodes, which
+        // Children (elements only) would skip.
+        foreach (var node in cellEl.ChildNodes)
+        {
+            if (node is Element el)
+            {
+                if (isHidden(el)) continue;
+                if (isBlockDisplay(el))
+                {
+                    FlushAnon();
+                    blocks.Add(MakeBlock(el, getStyle, getFontSize, isHidden, parser));
+                }
+                else
+                {
+                    var text = Element.GetVisibleTextContent(el, isHidden);
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        if (anonText.Length > 0) anonText.Append(' ');
+                        anonText.Append(text);
+                    }
+                    CollectImages(el, isHidden, anonImages);
+                    if (!string.IsNullOrWhiteSpace(text) || anonImages.Count > 0) hasAnon = true;
+                }
+            }
+            else if (node is HTML.Models.Text text)
+            {
+                // Whitespace-only text (e.g. the newlines between block children) is
+                // ignored by CSS: it forms no anonymous block, so adjacent blocks'
+                // margins collapse exactly as in the browser.
+                if (string.IsNullOrWhiteSpace(text.Value)) continue;
+                if (anonText.Length > 0) anonText.Append(' ');
+                anonText.Append(text.Value);
+                hasAnon = true;
+            }
+        }
+
+        FlushAnon();
+
+        if (blocks.Count == 0)
+            blocks.Add(MakeAnonBlock(string.Empty, [], cell));
+
+        return blocks;
+    }
+
+    /// <summary>Builds a block from a block-display element, capturing its own typography and box.</summary>
+    private static CellBlock MakeBlock(
+        Element el, Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
+        Func<Element, bool> isHidden, CssLengthParser parser)
+    {
+        var style = getStyle(el);
+        var fontSize = getFontSize(el);
+        var block = new CellBlock
+        {
+            Text = Element.GetVisibleTextContent(el, isHidden),
+            FontSize = fontSize,
+            Style = CssValueParser.IsItalicStyle(style.GetPropertyValue("font-style")) ? FontStyle.Italic : FontStyle.Regular,
+            MarginTop = ParseLength(style, "margin-top", 0f, fontSize, parser) ?? 0f,
+            MarginBottom = ParseLength(style, "margin-bottom", 0f, fontSize, parser) ?? 0f,
+            PaddingLeft = ParseLength(style, "padding-left", 0f, fontSize, parser) ?? 0f,
+            PaddingRight = ParseLength(style, "padding-right", 0f, fontSize, parser) ?? 0f,
+            PaddingTop = ParseLength(style, "padding-top", 0f, fontSize, parser) ?? 0f,
+            PaddingBottom = ParseLength(style, "padding-bottom", 0f, fontSize, parser) ?? 0f,
+            BorderLeft = ParseLength(style, "border-left-width", 0f, fontSize, parser) ?? 0f,
+            BorderRight = ParseLength(style, "border-right-width", 0f, fontSize, parser) ?? 0f,
+            BorderTop = ParseLength(style, "border-top-width", 0f, fontSize, parser) ?? 0f,
+            BorderBottom = ParseLength(style, "border-bottom-width", 0f, fontSize, parser) ?? 0f,
+            LineHeightLengthPx = null,
+            LineHeightMultiplier = null
+        };
+
+        // Line-height form (length vs unitless multiplier); inherits the resolved value
+        // when the element declares none, exactly like the browser.
+        var lh = style.GetPropertyValue("line-height");
+        if (!string.IsNullOrWhiteSpace(lh) && !lh.Trim().Equals("normal", StringComparison.OrdinalIgnoreCase))
+        {
+            var len = ParseLength(style, "line-height", 0f, fontSize, parser);
+            if (len is > 0) block.LineHeightLengthPx = len;
+            else
+            {
+                var mult = parser.ParseUnitless(lh);
+                if (mult is > 0) block.LineHeightMultiplier = mult;
+            }
+        }
+
+        CollectImages(el, isHidden, block.Images);
+        return block;
+    }
+
+    /// <summary>Builds an anonymous block from inline content, inheriting the cell's typography.</summary>
+    private static CellBlock MakeAnonBlock(string text, List<Element> images, Cell cell) => new()
+    {
+        Text = text,
+        FontSize = cell.FontSize,
+        Style = cell.Style,
+        LineHeightLengthPx = cell.LineHeightLengthPx,
+        LineHeightMultiplier = cell.LineHeightMultiplier,
+        // Copy: the caller reuses/clears its working list after this returns.
+        Images = [.. images]
+    };
 
     // A <br> is serialized as U+FFFC (see DomModels.AppendDescendantText) and is a forced
     // break, exactly like the main text path (TextRunWrapper / HarfBuzzTextMeasurer).
@@ -920,26 +1071,50 @@ internal static class TableHelpers
         Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
         Func<Element, bool> isBlockDisplay)
     {
-        var lineHeightPx = cell.LineHeightLengthPx ?? (cell.LineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * cell.FontSize;
-        var textHeight = string.IsNullOrEmpty(cell.Text) ? 0f
-            : measurer.Measure(cell.Text, cell.FontSize, contentWidth, lineHeightPx: lineHeightPx, style: cell.Style, includeLineText: false).TotalHeightPx;
-
-        var blockImagesHeight = 0f;
-        var inlineImageHeight = 0f;
-        foreach (var img in cell.Images)
+        // The cell's content is a block flow. Each block is measured with its OWN
+        // typography (a nested <p> uses its own line-height, not the cell's); adjacent
+        // blocks' vertical margins collapse (max), while the first block's top margin
+        // and the last block's bottom margin are kept in full (a table cell establishes
+        // a block formatting context, so they never collapse with the cell's padding).
+        var blocks = cell.Blocks;
+        var total = 0f;
+        for (var i = 0; i < blocks.Count; i++)
         {
-            var (_, imgHeight) = ImageHelpers.MeasureImageSize(
-                img, getStyle(img), ParseLen, options, coreOptions,
-                contentWidth, contentWidth, getFontSize(img));
-            if (isBlockDisplay(img)) blockImagesHeight += imgHeight;
-            else inlineImageHeight = Math.Max(inlineImageHeight, imgHeight);
+            var block = blocks[i];
+            var lineHeightPx = block.LineHeightLengthPx
+                ?? (block.LineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * block.FontSize;
+            var textWidth = Math.Max(0f, contentWidth - block.PaddingLeft - block.PaddingRight - block.BorderLeft - block.BorderRight);
+            var textHeight = string.IsNullOrEmpty(block.Text) ? 0f
+                : measurer.Measure(block.Text, block.FontSize, textWidth, lineHeightPx: lineHeightPx, style: block.Style, includeLineText: false).TotalHeightPx;
+
+            var blockImagesHeight = 0f;
+            var inlineImageHeight = 0f;
+            foreach (var img in block.Images)
+            {
+                var (_, imgHeight) = ImageHelpers.MeasureImageSize(
+                    img, getStyle(img), ParseLen, options, coreOptions,
+                    textWidth, textWidth, getFontSize(img));
+                if (isBlockDisplay(img)) blockImagesHeight += imgHeight;
+                else inlineImageHeight = Math.Max(inlineImageHeight, imgHeight);
+            }
+
+            var hasText = !string.IsNullOrEmpty(block.Text);
+            var inlineContribution = inlineImageHeight <= 0 ? 0f
+                : hasText ? Math.Max(0f, inlineImageHeight - lineHeightPx)   // stretches its text line
+                : Math.Max(inlineImageHeight, lineHeightPx);                // forms its own line
+
+            total += block.BorderTop + block.PaddingTop + textHeight + inlineContribution + blockImagesHeight
+                + block.PaddingBottom + block.BorderBottom;
         }
 
-        var hasText = !string.IsNullOrEmpty(cell.Text);
-        var inlineContribution = inlineImageHeight <= 0 ? 0f
-            : hasText ? Math.Max(0f, inlineImageHeight - lineHeightPx)   // stretches its text line
-            : Math.Max(inlineImageHeight, lineHeightPx);                // forms its own line
-        return textHeight + inlineContribution + blockImagesHeight;
+        if (blocks.Count > 0)
+        {
+            total += blocks[0].MarginTop;
+            total += blocks[^1].MarginBottom;
+            for (var i = 0; i + 1 < blocks.Count; i++)
+                total += Math.Max(blocks[i].MarginBottom, blocks[i + 1].MarginTop);
+        }
+        return total;
 
         float? ParseLen(string? value, float reference, float? emReference)
             => parser.ParseLengthToPx(value, new RenderContext(reference, reference, emReference ?? 0f), reference, emReference);
