@@ -160,16 +160,21 @@ public static class PageSplitter
         /// <summary>
         /// A child's top margin is trimmed (folded into the container's effective top
         /// margin) when the container has no padding-top and every preceding sibling is
-        /// a zero-height spacer — the CSS collapse then ran through those spacers to
+        /// a zero-height spacer OR a float — the CSS collapse then ran through those to
         /// this child, so its top margin is already part of the container's effective
-        /// top margin and must not be added again as a gap. Only the first child is
-        /// trimmed when the leading siblings are content blocks (the common case).
+        /// top margin and must not be added again as a gap. A float is out of flow and
+        /// does not block the collapse run (it is not a zero-height spacer, but it also
+        /// does not stop the run). Only the first child is trimmed when the leading
+        /// siblings are content blocks (the common case).
         /// </summary>
         private static bool ShouldTrimTopMargin(LayoutBlock container, int childIdx)
         {
             if (container.PaddingTop > 0f) return false;
             for (var i = 0; i < childIdx; i++)
-                if (!LayoutBlock.IsZeroHeightSpacer(container.Children[i])) return false;
+            {
+                var sibling = container.Children[i];
+                if (!sibling.Floats && !LayoutBlock.IsZeroHeightSpacer(sibling)) return false;
+            }
             return true;
         }
 
@@ -196,7 +201,10 @@ public static class PageSplitter
             //    block's top margin (clipped at the new page's edge) is consumed. This
             //    also covers the case where the gap itself does not fit below the
             //    previous sibling and forces a page break.
-            var topMargin = trimTopMargin ? 0f : LayoutBlock.EffectiveTopMargin(block);
+            // A float's top margin is never trimmed: a float is out of flow, so its
+            // margin does not collapse with the parent's (it is not folded into the
+            // parent's effective top margin) and is always consumed as a gap.
+            var topMargin = (trimTopMargin && !block.Floats) ? 0f : LayoutBlock.EffectiveTopMargin(block);
             // A zero-height spacer (no content, padding or border) collapses its top and
             // bottom margins through itself: the spacer and the following sibling share the
             // same point, and the spacer's margins are consumed as a single gap rather than

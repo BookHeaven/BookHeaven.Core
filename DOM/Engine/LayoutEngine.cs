@@ -58,6 +58,12 @@ public sealed class LayoutEngine : IDisposable
     private List<CssRule> _rules = [];
     private int[] _specificities = [];
 
+    // Per-document indexes of the rules that target each pseudo-element (their last
+    // compound is that pseudo). Precomputed once per document so the per-element
+    // pseudo resolution scans only the (few) relevant rules, not the whole sheet.
+    private List<int> _beforeRules = [];
+    private List<int> _afterRules = [];
+
     /// <summary>
     /// A memoized resolution: the resolved style plus the hidden verdict, both pure
     /// functions of the element's signature (tag, attributes, inline style) and its
@@ -69,6 +75,10 @@ public sealed class LayoutEngine : IDisposable
     {
         public required CssStyle Style;
         public required bool Hidden;
+        /// <summary>Resolved <c>::before</c> style, or null when no rule targets it.</summary>
+        public CssStyle? Before;
+        /// <summary>Resolved <c>::after</c> style, or null when no rule targets it.</summary>
+        public CssStyle? After;
     }
 
     public LayoutEngine(
@@ -113,6 +123,7 @@ public sealed class LayoutEngine : IDisposable
         var (doc, rules) = _parser.Parse(html, css);
         _rules = rules;
         _specificities = PrecomputeSpecificities(rules);
+        (_beforeRules, _afterRules) = PrecomputePseudoRules(rules);
         cancellationToken.ThrowIfCancellationRequested();
 
         var body = doc.Body;
@@ -187,6 +198,26 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
+    /// Indexes of the rules whose last compound is a <c>::before</c> / <c>::after</c>
+    /// pseudo-element, per document. The pseudo resolution scans only these (a few),
+    /// not the whole sheet.
+    /// </summary>
+    private static (List<int> Before, List<int> After) PrecomputePseudoRules(List<CssRule> rules)
+    {
+        var before = new List<int>();
+        var after = new List<int>();
+        for (var i = 0; i < rules.Count; i++)
+        {
+            switch (rules[i].Selector.Pseudo)
+            {
+                case PseudoKind.Before: before.Add(i); break;
+                case PseudoKind.After: after.Add(i); break;
+            }
+        }
+        return (before, after);
+    }
+
+    /// <summary>
     /// Memoized style entry. The resolved style is a pure function of the element's own
     /// signature (tag, full attribute set, inline style), its parent's resolved style,
     /// and its structural context: the preceding element-siblings (sibling combinators
@@ -206,10 +237,34 @@ public sealed class LayoutEngine : IDisposable
         entry = new StyleEntry
         {
             Style = style,
-            Hidden = CssValueParser.IsHidden(el.HasAttribute("hidden"), el.Style, style.GetPropertyValue("display"))
+            Hidden = CssValueParser.IsHidden(el.HasAttribute("hidden"), el.Style, style.GetPropertyValue("display")),
+            // The pseudo-elements inherit from the element's own resolved style and
+            // match only the rules whose last compound is that pseudo.
+            Before = ResolvePseudo(el, PseudoKind.Before, style),
+            After = ResolvePseudo(el, PseudoKind.After, style)
         };
         _styleMemo[key] = entry;
         return entry;
+    }
+
+    /// <summary>
+    /// Resolves a pseudo-element's style against the (few) rules that target it,
+    /// inheriting from the element's resolved style. Returns null when no rule
+    /// targets the pseudo (nothing to resolve).
+    /// </summary>
+    private CssStyle? ResolvePseudo(Element el, PseudoKind pseudo, CssStyle parent)
+    {
+        var indexes = pseudo == PseudoKind.Before ? _beforeRules : _afterRules;
+        if (indexes.Count == 0)
+            return null;
+        var rules = new List<CssRule>(indexes.Count);
+        var specs = new int[indexes.Count];
+        for (var i = 0; i < indexes.Count; i++)
+        {
+            rules.Add(_rules[indexes[i]]);
+            specs[i] = _specificities[indexes[i]];
+        }
+        return StyleResolver.ResolvePseudo(el, pseudo, rules, specs, parent, _scope);
     }
 
     /// <summary>
@@ -379,6 +434,13 @@ public sealed class LayoutEngine : IDisposable
 
         var childSink = new List<LayoutBlock>();
 
+        // The ::before generated box is the element's first block child (document
+        // order); it participates in the child flow like any other block child.
+        var entry = GetStyleEntry(el);
+        var beforeBox = BuildGeneratedBoxBlock(el, entry.Before, isBefore: true);
+        if (beforeBox != null)
+            childSink.Add(beforeBox);
+
         // Measure own inline text (text nodes not inside block children) and own
         // inline images. It is an anonymous box: no margins of its own.
         var ownText = TextRunBuilder.GetOwnInlineText(el, blockChildren, IsHidden);
@@ -404,6 +466,12 @@ public sealed class LayoutEngine : IDisposable
             ProcessElement(blockChildren[ci], childSink, ct);
         }
 
+        // The ::after generated box is the element's last block child (document
+        // order); it participates in the child flow like any other block child.
+        var afterBox = BuildGeneratedBoxBlock(el, entry.After, isBefore: false);
+        if (afterBox != null)
+            childSink.Add(afterBox);
+
         // A container's content height is the sum of its children's content boxes
         // (content + their vertical padding). An empty container occupies space
         // only through an explicit CSS height / <br> lines.
@@ -417,8 +485,18 @@ public sealed class LayoutEngine : IDisposable
         }
         else
         {
-            foreach (var child in childSink)
+            for (var ci = 0; ci < childSink.Count; ci++)
+            {
+                var child = childSink[ci];
                 contentHeight += child.ContentHeight + child.PaddingTop + child.PaddingBottom;
+                // A float's margin-top sits at the top of the content box (a float is
+                // out of flow, so its margin is inside the content box, not collapsed
+                // with the parent's). Only the FIRST child's margin-top is at the top;
+                // a later float's margin-top collapses with the preceding sibling's
+                // margin-bottom (handled by the splitter's gap, not the content box).
+                if (child.Floats && ci == 0)
+                    contentHeight += child.MarginTop;
+            }
         }
 
         var containerBlock = new LayoutBlock
@@ -492,6 +570,93 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
+    /// Builds the block for a pseudo-element's generated box, or null when the box
+    /// does not occupy space. A generated box exists only when <c>content</c> is set
+    /// to a value other than <c>none</c>; it is a BLOCK child only when its
+    /// <c>display</c> is explicitly block-like (the pseudo default is inline). The
+    /// box's geometry (height, margins, paddings, float) comes from its resolved
+    /// style. A float box is marked <see cref="LayoutBlock.Floats"/> so the splitter
+    /// keeps its margins out of the parent's collapse.
+    /// </summary>
+    private LayoutBlock? BuildGeneratedBoxBlock(Element el, CssStyle? style, bool isBefore)
+    {
+        if (style is null)
+            return null;
+
+        // A generated box exists only when content is set to something other than none.
+        var content = style.GetPropertyValue("content");
+        if (string.IsNullOrWhiteSpace(content) || string.Equals(content, "none", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        // The pseudo default display is inline; only an EXPLICIT block-like display
+        // makes the generated box a block child of the element.
+        var display = style.GetPropertyValue("display");
+        if (!style.IsExplicit("display") || !CssValueParser.IsBlockDisplay(display, el.TagName))
+            return null;
+
+        var fontSize = ResolveFontSize(el);
+        var containerRefWidth = GetContainingBlockContentWidth(el);
+
+        var marginTop = TryGetComputedBoxPx(style, "margin-top", containerRefWidth, fontSize) ?? 0f;
+        var marginBottom = TryGetComputedBoxPx(style, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
+        var paddingTop = TryGetComputedBoxPx(style, "padding-top", containerRefWidth, fontSize) ?? 0f;
+        var paddingBottom = TryGetComputedBoxPx(style, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
+        var heightPx = ParseLengthToPx(style.GetPropertyValue("height"), _options.PageHeightPx, fontSize) ?? 0f;
+
+        var floatValue = style.GetPropertyValue("float");
+        var floats = string.Equals(floatValue, "left", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(floatValue, "right", StringComparison.OrdinalIgnoreCase);
+
+        return new LayoutBlock
+        {
+            TagName = el.TagName + (isBefore ? "::before" : "::after"),
+            Kind = BlockKind.Text,
+            ContentHeight = heightPx,
+            MarginTop = marginTop,
+            MarginBottom = marginBottom,
+            PaddingTop = paddingTop,
+            PaddingBottom = paddingBottom,
+            LineCount = 0,
+            LineHeightPx = 0f,
+            Floats = floats,
+            Links = []
+        };
+    }
+
+    /// <summary>
+    /// The vertical space a LEAF element's generated boxes add to its block, folded
+    /// in with CSS parent-child margin collapse. Returns the box height to add to the
+    /// content, plus the margin to fold into the element's own margin:
+    /// <list type="bullet">
+    /// <item>With padding, the box's margin does NOT collapse with the element's — the
+    /// full margin is added to the content (returned in <c>Height</c>), nothing folds.</item>
+    /// <item>Without padding, the box's margin collapses with the element's own margin —
+    /// the caller takes <c>max(ownMargin, MarginToFold)</c>, then adds <c>Height</c>.</item>
+    /// <item>A float box's margin never collapses (out of flow) — it is added in full
+    /// to <c>Height</c> and never folded.</item>
+    /// </list>
+    /// Returns (0, 0) when the element has no block-level generated box.
+    /// </summary>
+    private (float MarginToFold, float Height) GetGeneratedBoxContribution(Element el, bool hasPadding)
+    {
+        var entry = GetStyleEntry(el);
+        var margin = 0f;
+        var height = 0f;
+        foreach (var (style, isBefore) in new[] { (entry.Before, true), (entry.After, false) })
+        {
+            var box = BuildGeneratedBoxBlock(el, style, isBefore);
+            if (box is null) continue;
+            var boxMargin = box.MarginTop + box.MarginBottom;
+            height += box.ContentHeight + box.PaddingTop + box.PaddingBottom;
+            if (box.Floats || hasPadding)
+                height += boxMargin; // no collapse: the margin is inside the content box
+            else
+                margin = Math.Max(margin, boxMargin); // collapses with the element's margin
+        }
+        return (margin, height);
+    }
+
+    /// <summary>
     /// Measures a leaf element (text or image) and builds its block with its
     /// INTRINSIC geometry. Returns null when the element is hidden, or when it has
     /// no content AND occupies no space.
@@ -521,6 +686,11 @@ public sealed class LayoutEngine : IDisposable
         var paddingBottom = TryGetComputedBoxPx(computed, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
         var paddingLeft = TryGetComputedBoxPx(computed, "padding-left", containerRefWidth, fontSize) ?? 0f;
         var paddingRight = TryGetComputedBoxPx(computed, "padding-right", containerRefWidth, fontSize) ?? 0f;
+
+        // The element's generated boxes (::before / ::after), folded into this block
+        // with CSS parent-child margin collapse (see GetGeneratedBoxContribution).
+        // Applied at every return point below.
+        var (genMargin, genHeight) = GetGeneratedBoxContribution(el, hasPadding: paddingTop > 0f || paddingBottom > 0f);
 
         // Empty leaf (no text, no inline images, not an image element): it
         // occupies space only through an explicit CSS height, padding or margins.
@@ -591,7 +761,8 @@ public sealed class LayoutEngine : IDisposable
             var srcEl = ImageHelpers.FindImageWithSrc(el);
             var srcComputed = srcEl != null ? GetComputedStyle(srcEl) : null;
             var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize, srcComputed);
-            contentHeight = imgHeight;
+            contentHeight = imgHeight + genHeight;
+            if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
 
             return new LayoutBlock
             {
@@ -684,7 +855,8 @@ public sealed class LayoutEngine : IDisposable
                 imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight, strutDescent, fontSize, metrics.XHeight, ParseLengthToPx));
             }
 
-            contentHeight = imgLineHeights.Count > 0 ? imgLineHeights.Sum() : 0f;
+            contentHeight = (imgLineHeights.Count > 0 ? imgLineHeights.Sum() : 0f) + genHeight;
+            if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
             return new LayoutBlock
             {
                 TagName = el.TagName,
@@ -707,7 +879,8 @@ public sealed class LayoutEngine : IDisposable
             // Spacer box: its content is the explicit CSS height. (<br> elements
             // flow through the text path as U+FFFC markers, so they never reach
             // here.)
-            contentHeight = spacerHeight;
+            contentHeight = spacerHeight + genHeight;
+            if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
 
             return new LayoutBlock
             {
@@ -759,6 +932,9 @@ public sealed class LayoutEngine : IDisposable
                 lineHeights = Enumerable.Repeat(dropCapHeight / initialLetter.Value, initialLetter.Value).ToArray();
             }
         }
+
+        contentHeight += genHeight;
+        if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
 
         return new LayoutBlock
         {
@@ -989,6 +1165,8 @@ public sealed class LayoutEngine : IDisposable
         _contentWidthMemo = null;
         _styleMemo.Clear();
         _specificities = [];
+        _beforeRules = [];
+        _afterRules = [];
 
         // HarfBuzz/Skia measurers hold native resources; only the engine that created
         // the measurer releases them (a shared measurer outlives every engine that

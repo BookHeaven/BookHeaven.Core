@@ -79,6 +79,15 @@ public class LayoutBlock
     public float PaddingTop;
     public float PaddingBottom;
 
+    /// <summary>
+    /// True when the block is a CSS float (<c>float: left/right</c>). Floats are out
+    /// of flow: their margins do NOT collapse with the parent's margins (so a
+    /// padding-less container does not fold a float child's margin into its effective
+    /// margin), and a float child never blocks the parent-child collapse run of the
+    /// in-flow children that follow it.
+    /// </summary>
+    public bool Floats;
+
     /// <summary>Number of measured text lines (text blocks only; non-text blocks use 0).</summary>
     public int LineCount;
 
@@ -135,9 +144,12 @@ public class LayoutBlock
     /// True when the block is a zero-height spacer: no content, no padding, no border.
     /// Such a block collapses its top and bottom margins through itself, so the margins
     /// of the blocks on either side merge into a single gap (CSS margin collapsing).
+    /// A float is never a spacer: it is out of flow and its margins do not collapse
+    /// through it.
     /// </summary>
     public static bool IsZeroHeightSpacer(LayoutBlock block)
-        => block.Kind == BlockKind.Text
+        => !block.Floats
+           && block.Kind == BlockKind.Text
            && block.LineCount == 0
            && block.ContentHeight <= 0f
            && block.PaddingTop <= 0f
@@ -157,6 +169,9 @@ public class LayoutBlock
         for (var i = 0; i < children.Count; i++)
         {
             var child = children[i];
+            // A float is out of flow: its margin does not collapse with the parent's,
+            // so it is skipped (it neither contributes nor blocks the collapse run).
+            if (child.Floats) continue;
             max = Math.Max(max, EffectiveTopMargin(child));
             if (!IsZeroHeightSpacer(child)) break;
             max = Math.Max(max, EffectiveBottomMargin(child));
@@ -176,6 +191,9 @@ public class LayoutBlock
         for (var i = children.Count - 1; i >= 0; i--)
         {
             var child = children[i];
+            // A float is out of flow: its margin does not collapse with the parent's,
+            // so it is skipped (it neither contributes nor blocks the collapse run).
+            if (child.Floats) continue;
             max = Math.Max(max, EffectiveBottomMargin(child));
             if (!IsZeroHeightSpacer(child)) break;
             max = Math.Max(max, EffectiveTopMargin(child));

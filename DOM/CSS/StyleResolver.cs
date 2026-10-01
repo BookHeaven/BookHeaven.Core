@@ -32,6 +32,27 @@ public static class StyleResolver
         => Resolve(el, rules, specificities, parent, new ParseScope());
 
     public static CssStyle Resolve(Element el, List<CssRule> rules, int[] specificities, CssStyle? parent, ParseScope scope)
+        => ResolveCore(el, rules, specificities, parent, scope, rule => Matches(rule.Selector, el), isPseudo: false);
+
+    /// <summary>
+    /// Resolves the style of a pseudo-element (<c>::before</c> / <c>::after</c>) of
+    /// <paramref name="el"/>. Only rules whose LAST compound is that pseudo-element
+    /// apply (a pseudo-element rule never matches the base element, and vice versa).
+    /// A pseudo-element has no presentational hints and no inline style of its own;
+    /// it inherits from the element's resolved style (passed as <paramref name="parent"/>).
+    /// </summary>
+    public static CssStyle ResolvePseudo(
+        Element el, PseudoKind pseudo, List<CssRule> rules, int[] specificities, CssStyle? parent, ParseScope scope)
+        => ResolveCore(el, rules, specificities, parent, scope, rule => MatchesPseudo(rule.Selector, el, pseudo), isPseudo: true);
+
+    /// <summary>
+    /// The cascade core shared by base-element and pseudo-element resolution:
+    /// presentational hints (base only), the matching stylesheet rules, the inline
+    /// style (base only), inheritance, and <c>var()</c> resolution.
+    /// </summary>
+    private static CssStyle ResolveCore(
+        Element el, List<CssRule> rules, int[] specificities, CssStyle? parent, ParseScope scope,
+        Func<CssRule, bool> ruleMatches, bool isPseudo)
     {
         var style = new CssStyle();
         // Pre-sized: a typical element matches a handful of declarations, so the
@@ -40,26 +61,32 @@ public static class StyleResolver
 
         // Presentational hints (HTML attributes → CSS) are the lowest-priority cascade
         // layer: applied first with order -1 so every stylesheet rule overrides them.
-        ApplyPresentationalHints(el, best, scope);
+        // A pseudo-element has none of its own.
+        if (!isPseudo)
+            ApplyPresentationalHints(el, best, scope);
 
         // Stylesheet rules.
         for (var r = 0; r < rules.Count; r++)
         {
             var rule = rules[r];
-            if (!Matches(rule.Selector, el))
+            if (!ruleMatches(rule))
                 continue;
             var spec = specificities[r];
             foreach (var decl in rule.Declarations)
                 ConsiderDecl(best, decl, decl.Important ? 1 : 0, spec, r, scope);
         }
 
-        // Inline style: highest specificity, after all stylesheet rules.
-        var inline = el.Style;
-        if (!string.IsNullOrWhiteSpace(inline))
+        // Inline style: highest specificity, after all stylesheet rules. A
+        // pseudo-element has no inline style of its own.
+        if (!isPseudo)
         {
-            var order = rules.Count;
-            foreach (var decl in ParseInline(inline))
-                ConsiderDecl(best, decl, decl.Important ? 1 : 0, InlineSpecificity, order, scope);
+            var inline = el.Style;
+            if (!string.IsNullOrWhiteSpace(inline))
+            {
+                var order = rules.Count;
+                foreach (var decl in ParseInline(inline))
+                    ConsiderDecl(best, decl, decl.Important ? 1 : 0, InlineSpecificity, order, scope);
+            }
         }
 
         foreach (var (prop, w) in best)
@@ -287,16 +314,45 @@ public static class StyleResolver
     {
         var spec = c.Ids.Count * 10_000 + c.Classes.Count * 100 + (c.Element is null ? 0 : 1);
         spec += c.Attributes.Count * 100; // attribute selectors are class-level
+        if (c.Pseudo is not null)
+            spec += 100; // pseudo-elements are class-level
         foreach (var n in c.Not)
             spec += CompoundSpecificity(n); // :not(S) carries the specificity of S
         return spec;
     }
 
     /// <summary>
-    /// Matches a selector: the last compound on the element, earlier compounds on
-    /// ancestors or siblings according to the combinator between them.
+    /// Matches a BASE-element selector: the last compound on the element, earlier
+    /// compounds on ancestors or siblings according to the combinator between them.
+    /// A selector whose last compound is a pseudo-element (<c>::before</c> /
+    /// <c>::after</c>) targets the generated box, not the element, so it never
+    /// matches the base element.
     /// </summary>
     private static bool Matches(CssSelector selector, Element el)
+    {
+        if (selector.Compounds[^1].Pseudo is not null)
+            return false;
+        return MatchesCore(selector, el);
+    }
+
+    /// <summary>
+    /// Matches a pseudo-element selector: the last compound must be the requested
+    /// pseudo-element, and the compound's base parts (plus the earlier compounds, per
+    /// their combinators) must match <paramref name="el"/> — the pseudo-element's base.
+    /// </summary>
+    private static bool MatchesPseudo(CssSelector selector, Element el, PseudoKind pseudo)
+    {
+        if (selector.Compounds[^1].Pseudo != pseudo)
+            return false;
+        return MatchesCore(selector, el);
+    }
+
+    /// <summary>
+    /// The shared selector walk: the last compound on the element, earlier compounds
+    /// on ancestors or siblings per their combinators. <c>CompoundMatches</c> ignores
+    /// the pseudo part, so the last compound's base parts are what are tested here.
+    /// </summary>
+    private static bool MatchesCore(CssSelector selector, Element el)
     {
         var compounds = selector.Compounds;
         if (!CompoundMatches(compounds[^1], el))

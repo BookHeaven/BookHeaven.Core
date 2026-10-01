@@ -6,8 +6,9 @@ namespace BookHeaven.Core.DOM.CSS;
 /// A minimal CSS parser for ebook styling. Parses rules, simple selectors
 /// (element / class / id / universal / compound / attribute / <c>:not()</c>) with the
 /// descendant, child ('&gt;'), adjacent ('+') and general ('~') combinators and comma
-/// lists, and declarations with <c>!important</c>. Flattens <c>@media</c> blocks and
-/// skips at-rules that do not affect layout (<c>@font-face</c>, <c>@keyframes</c>, ...).
+/// lists, and declarations with <c>!important</c>. Flattens <c>@media</c> (screen) and
+/// <c>@supports</c> blocks and skips at-rules that do not affect layout
+/// (<c>@font-face</c>, <c>@keyframes</c>, ...).
 /// </summary>
 public sealed class CssParser
 {
@@ -85,6 +86,13 @@ public sealed class CssParser
                     var mediaList = prelude["@media".Length..].Trim();
                     if (MediaMatchesScreen(mediaList))
                         ParseBlock(text, open + 1, bodyEnd, rules, inMedia: true);
+                }
+                else if (atName is "supports")
+                {
+                    // Feature queries are assumed to match: the ground-truth renderer
+                    // (Chromium) supports the features books query (float, flex, ...),
+                    // so the block's rules apply. Mirrors the @media screen assumption.
+                    ParseBlock(text, open + 1, bodyEnd, rules, inMedia: true);
                 }
                 // Other at-rules (@font-face, @keyframes, @page, ...) are skipped.
             }
@@ -195,6 +203,7 @@ public sealed class CssParser
         var combinatorGaps = new List<(int Gap, char C)>();
         var pendingCombinator = false;
         var firstLetter = false;
+        PseudoKind? pseudo = null;
         foreach (var token in NormalizeCombinators(selector).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (token is ">" or "+" or "~")
@@ -214,6 +223,7 @@ public sealed class CssParser
             compounds.Add(compound);
             pendingCombinator = false;
             if (compound.FirstLetter) firstLetter = true;
+            if (compound.Pseudo is { } p) pseudo = p;
         }
         // A trailing combinator (e.g. "p >") leaves a pending combinator with no
         // compound after it. Gaps without an explicit combinator are descendants.
@@ -223,7 +233,7 @@ public sealed class CssParser
         combinators.AsSpan().Fill(' ');
         foreach (var (gap, c) in combinatorGaps)
             combinators[gap] = c;
-        return new CssSelector { Compounds = compounds, Combinators = combinators, FirstLetter = firstLetter };
+        return new CssSelector { Compounds = compounds, Combinators = combinators, FirstLetter = firstLetter, Pseudo = pseudo };
     }
 
     /// <summary>
@@ -267,6 +277,7 @@ public sealed class CssParser
         var attributes = new List<CssAttribute>();
         var nots = new List<SelectorCompound>();
         var isFirstLetter = false;
+        PseudoKind? pseudo = null;
 
         var i = 0;
         // Element name (or universal '*'). A leading '[', ':', '.' or '#' means no
@@ -337,6 +348,12 @@ public sealed class CssParser
                     // ::first-letter — the declarations apply to the base element.
                     isFirstLetter = true;
                 }
+                else if (name is "before" or "after")
+                {
+                    // ::before / ::after (and the legacy single-colon :before / :after)
+                    // target a generated box, not the base element.
+                    pseudo = name == "before" ? PseudoKind.Before : PseudoKind.After;
+                }
                 else if (name == "not" && i < token.Length && token[i] == '(')
                 {
                     var close = FindMatchingParen(token, i);
@@ -360,7 +377,7 @@ public sealed class CssParser
             }
         }
 
-        return new SelectorCompound { Element = element, Classes = classes, Ids = ids, Attributes = attributes, Not = nots, FirstLetter = isFirstLetter };
+        return new SelectorCompound { Element = element, Classes = classes, Ids = ids, Attributes = attributes, Not = nots, FirstLetter = isFirstLetter, Pseudo = pseudo };
     }
 
     /// <summary>Parses an attribute selector body: <c>name</c>, <c>name=value</c>, <c>name~=value</c>, ...</summary>

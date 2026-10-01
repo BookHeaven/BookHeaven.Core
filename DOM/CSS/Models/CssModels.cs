@@ -1,5 +1,16 @@
 ﻿namespace BookHeaven.Core.DOM.CSS.Models;
 
+/// <summary>
+/// A pseudo-element the selector targets. <c>::before</c> and <c>::after</c> generate
+/// boxes (styled by <c>content</c> plus the usual box properties) that the layout
+/// engine models as generated child boxes.
+/// </summary>
+public enum PseudoKind
+{
+    Before,
+    After
+}
+
 /// <summary>A parsed CSS rule: a selector plus its declarations.</summary>
 public sealed class CssRule
 {
@@ -22,6 +33,8 @@ public sealed class CssSelector
     public char[] Combinators { get; init; } = [];
     /// <summary>True when the selector targets a <c>::first-letter</c> pseudo-element.</summary>
     public bool FirstLetter { get; init; }
+    /// <summary>The pseudo-element the selector targets, or <c>null</c> for a base-element selector.</summary>
+    public PseudoKind? Pseudo { get; init; }
 }
 
 /// <summary>An attribute selector: <c>[name]</c>, <c>[name=value]</c>, <c>[name~=value]</c>, ...</summary>
@@ -49,6 +62,8 @@ public sealed class SelectorCompound
     public List<SelectorCompound> Not { get; init; } = [];
     /// <summary>True when this compound is a <c>::first-letter</c> pseudo-element.</summary>
     public bool FirstLetter { get; init; }
+    /// <summary>The pseudo-element this compound is, or <c>null</c> for a base-element compound.</summary>
+    public PseudoKind? Pseudo { get; init; }
 }
 
 /// <summary>
