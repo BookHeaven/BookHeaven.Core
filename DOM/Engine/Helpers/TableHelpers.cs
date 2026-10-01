@@ -9,16 +9,24 @@ using BookHeaven.Core.DOM.Text.Enums;
 namespace BookHeaven.Core.DOM.Engine.Helpers;
 
 /// <summary>
-/// Faithful implementation of Chromium's <c>table-layout: auto</c> column-width
-/// distribution (Blink <c>TableLayoutUtils::DistributeInlineSizeToComputedInlineSizeAuto</c>)
-/// plus row-height computation, so the engine can predict a table's total height
+/// Faithful implementation of Chromium's table column-width algorithms plus
+/// row-height computation, so the engine can predict a table's total height
 /// without a browser.
 ///
-/// The distribution matches the browser's EMPIRICAL behaviour: in the percentage
+/// <c>table-layout: auto</c> (the default) uses Blink's
+/// <c>TableLayoutUtils::DistributeInlineSizeToComputedInlineSizeAuto</c>: the
+/// distribution matches the browser's EMPIRICAL behaviour — in the percentage
 /// case a percent column whose percentage size falls below its min-content is
 /// clamped to min-content, and the growth is distributed to the remaining percent
 /// columns in proportion to their (percentSize − min) increases. This was verified
 /// against Playwright/Chromium (see <c>.browser-test/test_clamp.html</c>).
+///
+/// <c>table-layout: fixed</c> follows the CSS spec: the table's width is its
+/// explicit <c>width</c> (or the full containing-block width when auto), column
+/// widths come ONLY from the first row's cells and <c>&lt;col&gt;</c> elements
+/// (content never influences them), percentages summing above 100% are scaled
+/// down proportionally, and the remaining space is shared equally by the auto
+/// columns.
 /// </summary>
 internal static class TableHelpers
 {
@@ -123,27 +131,6 @@ internal static class TableHelpers
         }
         if (cells.Count == 0) return null;
 
-        // --- Build per-column constraints from single-span cells. ---
-        var columns = new Column[columnCount];
-        for (var c = 0; c < columnCount; c++) columns[c] = new Column();
-
-        foreach (var cell in cells)
-        {
-            if (cell.ColSpan > 1) continue; // colspan handled below
-            var col = columns[cell.Column];
-            col.Min = Math.Max(col.Min, cell.OuterMin);
-            col.Max = Math.Max(col.Max, cell.OuterMax);
-            if (cell.Percent is { } p)
-                col.Percent = col.Percent is { } cp ? Math.Max(cp, p) : p;
-            else if (cell.FixedWidthPx is { } f)
-            {
-                col.IsFixed = true;
-                var outer = f + cell.PaddingLeft + cell.PaddingRight + cell.BorderLeft + cell.BorderRight;
-                col.Min = Math.Max(col.Min, outer);
-                col.Max = Math.Max(col.Max, outer);
-            }
-        }
-
         // --- Table box metrics (border-spacing, padding, border). ---
         var tableStyle = getStyle(table);
         var tableFontSize = getFontSize(table);
@@ -157,32 +144,66 @@ internal static class TableHelpers
         var tableBorderT = ParseLength(tableStyle, "border-top-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
         var tableBorderB = ParseLength(tableStyle, "border-bottom-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
 
-        // --- Process colspan cells (percent-surplus, then min/max distribution). ---
-        foreach (var cell in cells.Where(c => c.ColSpan > 1))
-            DistributeColspanCell(cell, borderSpacing, columns);
-
-        // --- Clamp cumulative percentages to 100% (auto tables). ---
-        var totalPercent = 0f;
-        foreach (var col in columns)
-        {
-            if (col.Percent is { } p)
-            {
-                var clamped = p + totalPercent > 1f ? Math.Max(0f, 1f - totalPercent) : p;
-                col.Percent = clamped;
-                totalPercent += clamped;
-            }
-        }
-
-        // --- Table used width (explicit, or shrink-to-fit with the percent-aware model). ---
-        var usedWidth = ResolveTableUsedWidth(tableStyle, columns.ToArray(), containingBlockContentWidth, context, parser);
-
         // --- Assignable width = used width − undistributable space. ---
         var undistributable = (tableBorderL + tableBorderR + tablePadL + tablePadR)
             + (isCollapsed ? 0f : (columnCount + 1) * borderSpacing);
-        var assignable = Math.Max(0f, usedWidth - undistributable);
 
-        // --- Distribute the assignable width across columns. ---
-        var columnWidths = DistributeAuto(assignable, columns.ToArray(), treatTargetAsConstrained: false);
+        // --- Column widths: the algorithm depends on table-layout. ---
+        float[] columnWidths;
+        if (IsFixedLayout(tableStyle))
+        {
+            // FIXED: the table's width is its explicit width (or the full
+            // containing-block width); column widths come from the first row's
+            // cells and <col> elements only — content never influences them.
+            var usedWidth = ResolveFixedTableUsedWidth(tableStyle, containingBlockContentWidth, parser);
+            columnWidths = DistributeFixed(
+                table, Math.Max(0f, usedWidth - undistributable), cells, columnCount,
+                getStyle, getFontSize, context, parser);
+        }
+        else
+        {
+            // AUTO: content-driven shrink-to-fit plus Chromium's distribution.
+            // Build per-column constraints from single-span cells.
+            var columns = new Column[columnCount];
+            for (var c = 0; c < columnCount; c++) columns[c] = new Column();
+
+            foreach (var cell in cells)
+            {
+                if (cell.ColSpan > 1) continue; // colspan handled below
+                var col = columns[cell.Column];
+                col.Min = Math.Max(col.Min, cell.OuterMin);
+                col.Max = Math.Max(col.Max, cell.OuterMax);
+                if (cell.Percent is { } p)
+                    col.Percent = col.Percent is { } cp ? Math.Max(cp, p) : p;
+                else if (cell.FixedWidthPx is { } f)
+                {
+                    col.IsFixed = true;
+                    var outer = f + cell.PaddingLeft + cell.PaddingRight + cell.BorderLeft + cell.BorderRight;
+                    col.Min = Math.Max(col.Min, outer);
+                    col.Max = Math.Max(col.Max, outer);
+                }
+            }
+
+            // Process colspan cells (percent-surplus, then min/max distribution).
+            foreach (var cell in cells.Where(c => c.ColSpan > 1))
+                DistributeColspanCell(cell, borderSpacing, columns);
+
+            // Clamp cumulative percentages to 100% (auto tables).
+            var totalPercent = 0f;
+            foreach (var col in columns)
+            {
+                if (col.Percent is { } p)
+                {
+                    var clamped = p + totalPercent > 1f ? Math.Max(0f, 1f - totalPercent) : p;
+                    col.Percent = clamped;
+                    totalPercent += clamped;
+                }
+            }
+
+            // Table used width (explicit, or shrink-to-fit with the percent-aware model).
+            var usedWidth = ResolveTableUsedWidth(tableStyle, columns, containingBlockContentWidth, context, parser);
+            columnWidths = DistributeAuto(Math.Max(0f, usedWidth - undistributable), columns, treatTargetAsConstrained: false);
+        }
 
         // --- Row heights: wrap each cell's text to its (spanned) content width. ---
         var rowHeights = new float[rowElements.Count];
@@ -293,21 +314,9 @@ internal static class TableHelpers
         }
 
         // Width: percent or fixed length.
-        var width = style.GetPropertyValue("width");
-        if (!string.IsNullOrWhiteSpace(width))
-        {
-            var t = width.Trim();
-            if (t.EndsWith('%'))
-            {
-                if (float.TryParse(t[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var pct))
-                    cell.Percent = pct / 100f;
-            }
-            else if (!t.Equals("auto", StringComparison.OrdinalIgnoreCase))
-            {
-                var px = ParseLength(style, "width", 0f, fontSize, parser);
-                if (px is > 0) cell.FixedWidthPx = px;
-            }
-        }
+        var (percent, fixedPx) = ParseWidth(style, fontSize, parser);
+        cell.Percent = percent;
+        cell.FixedWidthPx = fixedPx;
 
         // Intrinsic content sizes: min = longest unbreakable word, max = single line.
         cell.ContentMin = MeasureMinContent(cell.Text, cell.FontSize, cell.Style, measurer);
@@ -665,6 +674,179 @@ internal static class TableHelpers
     }
 
     // ------------------------------------------------------------------
+    // table-layout: fixed
+    // ------------------------------------------------------------------
+
+    private static bool IsFixedLayout(CssStyle style)
+        => string.Equals(style.GetPropertyValue("table-layout").Trim(), "fixed", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Fixed-layout table width: an explicit <c>width</c> (clamped to the available
+    /// width), or the FULL available width when <c>width</c> is auto — content never
+    /// shrinks a fixed table, so it can never exceed the containing block.
+    /// </summary>
+    private static float ResolveFixedTableUsedWidth(CssStyle style, float available, CssLengthParser parser)
+    {
+        var width = style.GetPropertyValue("width");
+        if (!string.IsNullOrWhiteSpace(width) && !width.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            var px = ParseLength(style, "width", available, 0f, parser);
+            if (px is > 0) return Math.Min(px.Value, available);
+        }
+        return available;
+    }
+
+    /// <summary>
+    /// CSS <c>table-layout: fixed</c> column-width algorithm: column widths are
+    /// determined by the <c>&lt;col&gt;</c> elements and the FIRST row's cells only —
+    /// content never influences them. Percent widths resolve against the assignable
+    /// width; percentages summing above 100% are scaled down proportionally,
+    /// specified widths exceeding the assignable width are scaled down
+    /// proportionally, and the remaining space is shared EQUALLY by the auto
+    /// columns.
+    /// </summary>
+    private static float[] DistributeFixed(
+        Element table, float assignable, List<Cell> cells, int columnCount,
+        Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
+        RenderContext context, CssLengthParser parser)
+    {
+        var percents = new float[columnCount];
+        var fixedWidths = new float[columnCount];
+        var isAuto = new bool[columnCount];
+        for (var c = 0; c < columnCount; c++) isAuto[c] = true;
+
+        // <col> elements (direct children, or inside <colgroup>) set column widths first.
+        var colIndex = 0;
+        foreach (var colEl in CollectColElements(table))
+        {
+            var span = ParseSpan(colEl, "span");
+            var (percent, fixedPx) = ParseWidth(getStyle(colEl), getFontSize(colEl), parser);
+            if (percent is not null || fixedPx is not null)
+            {
+                var start = Math.Min(colIndex, columnCount - 1);
+                ApplyFixedSpan(start, Math.Min(span, columnCount - start), percent, fixedPx, percents, fixedWidths, isAuto);
+            }
+            colIndex += span;
+        }
+
+        // The first row's cells set (or override) the widths of the columns they span.
+        foreach (var cell in cells.Where(c => c.Row == 0))
+        {
+            var start = cell.Column;
+            var span = Math.Min(cell.ColSpan, columnCount - start);
+            if (span <= 0) continue;
+            if (cell.Percent is { } p)
+            {
+                ApplyFixedSpan(start, span, p, null, percents, fixedWidths, isAuto);
+            }
+            else if (cell.FixedWidthPx is { } f)
+            {
+                var outer = f + cell.PaddingLeft + cell.PaddingRight + cell.BorderLeft + cell.BorderRight;
+                ApplyFixedSpan(start, span, null, outer, percents, fixedWidths, isAuto);
+            }
+        }
+
+        // Percentages summing above 100% are scaled down proportionally (spec).
+        var totalPercent = 0f;
+        for (var c = 0; c < columnCount; c++) totalPercent += percents[c];
+        if (totalPercent > 1f)
+            for (var c = 0; c < columnCount; c++) percents[c] /= totalPercent;
+
+        var computed = new float[columnCount];
+        var specifiedTotal = 0f;
+        for (var c = 0; c < columnCount; c++)
+        {
+            if (isAuto[c]) continue;
+            computed[c] = percents[c] * assignable + fixedWidths[c];
+            specifiedTotal += computed[c];
+        }
+
+        // Specified widths exceeding the assignable width are scaled down proportionally.
+        if (specifiedTotal > assignable && specifiedTotal > 0f)
+        {
+            var scale = assignable / specifiedTotal;
+            for (var c = 0; c < columnCount; c++)
+                if (!isAuto[c]) computed[c] *= scale;
+            specifiedTotal = assignable;
+        }
+
+        // The remaining space is shared equally by the auto columns.
+        var autoCount = 0;
+        for (var c = 0; c < columnCount; c++) if (isAuto[c]) autoCount++;
+        var autoShare = autoCount > 0 ? (assignable - specifiedTotal) / autoCount : 0f;
+        for (var c = 0; c < columnCount; c++)
+            if (isAuto[c]) computed[c] = autoShare;
+
+        return computed;
+    }
+
+    /// <summary>
+    /// Applies a specified width to the columns a <c>&lt;col&gt;</c> element or
+    /// first-row cell spans. A single column is set directly (the later source
+    /// wins); a span shares the percent proportionally to the spanned columns'
+    /// existing percents (equally when none), and the fixed width proportionally
+    /// to their existing fixed widths (equally when none).
+    /// </summary>
+    private static void ApplyFixedSpan(
+        int start, int span, float? percent, float? fixedPx,
+        float[] percents, float[] fixedWidths, bool[] isAuto)
+    {
+        if (span == 1)
+        {
+            if (percent is { } singlePercent) { percents[start] = singlePercent; fixedWidths[start] = 0f; }
+            else if (fixedPx is { } singleFixed) { fixedWidths[start] = singleFixed; percents[start] = 0f; }
+            isAuto[start] = false;
+            return;
+        }
+
+        if (percent is { } p)
+        {
+            var existing = 0f;
+            for (var i = start; i < start + span; i++) existing += percents[i];
+            for (var i = start; i < start + span; i++)
+            {
+                percents[i] += existing > 0f ? p * percents[i] / existing : p / span;
+                isAuto[i] = false;
+            }
+        }
+
+        if (fixedPx is { } f)
+        {
+            var existing = 0f;
+            for (var i = start; i < start + span; i++) existing += fixedWidths[i];
+            for (var i = start; i < start + span; i++)
+            {
+                fixedWidths[i] += existing > 0f ? f * fixedWidths[i] / existing : f / span;
+                isAuto[i] = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Collects the table's <c>&lt;col&gt;</c> elements in document order: direct
+    /// children of the table, plus children of a <c>&lt;colgroup&gt;</c> that is a
+    /// direct child of the table.
+    /// </summary>
+    private static List<Element> CollectColElements(Element table)
+    {
+        var cols = new List<Element>();
+        foreach (var child in table.Children)
+        {
+            if (child.TagName.Equals("col", StringComparison.OrdinalIgnoreCase))
+            {
+                cols.Add(child);
+            }
+            else if (child.TagName.Equals("colgroup", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var grandchild in child.Children)
+                    if (grandchild.TagName.Equals("col", StringComparison.OrdinalIgnoreCase))
+                        cols.Add(grandchild);
+            }
+        }
+        return cols;
+    }
+
+    // ------------------------------------------------------------------
     // Row-height helpers
     // ------------------------------------------------------------------
 
@@ -695,6 +877,28 @@ internal static class TableHelpers
 
     private static float? ParseLength(CssStyle style, string name, float reference, float emReference, CssLengthParser parser)
         => parser.ParseLengthToPx(style.GetPropertyValue(name), new RenderContext(reference, reference, emReference), reference, emReference);
+
+    /// <summary>
+    /// Parses a <c>width</c> declaration into a percent (0..1) and/or a fixed pixel
+    /// width; <c>auto</c> (or an unparseable value) yields both null.
+    /// </summary>
+    private static (float? Percent, float? FixedPx) ParseWidth(CssStyle style, float fontSize, CssLengthParser parser)
+    {
+        var width = style.GetPropertyValue("width");
+        if (string.IsNullOrWhiteSpace(width)) return (null, null);
+        var t = width.Trim();
+        if (t.EndsWith('%'))
+        {
+            if (float.TryParse(t[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var pct))
+                return (pct / 100f, null);
+        }
+        else if (!t.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            var px = ParseLength(style, "width", 0f, fontSize, parser);
+            if (px is > 0) return (null, px.Value);
+        }
+        return (null, null);
+    }
 
     private static (float Spacing, bool Collapsed) ParseBorderSpacing(CssStyle style, RenderContext context, CssLengthParser parser)
     {

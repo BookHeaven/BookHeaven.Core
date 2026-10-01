@@ -404,8 +404,9 @@ public sealed class LayoutEngine : IDisposable
             return;
         }
 
-        // Tables: a faithful Chromium <c>table-layout: auto</c> computation predicts
-        // the table's column widths and total height without a browser.
+        // Tables: a faithful Chromium computation (table-layout: auto, or the CSS
+        // fixed algorithm when declared) predicts the table's column widths and
+        // total height without a browser.
         if (el.TagName.Equals("table", StringComparison.OrdinalIgnoreCase))
         {
             var tableBlock = BuildTableBlock(el);
@@ -539,8 +540,9 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// Computes a table's layout with a faithful Chromium <c>table-layout: auto</c>
-    /// algorithm and emits it as a single block. The table's full border-box height
+    /// Computes a table's layout with a faithful Chromium algorithm —
+    /// <c>table-layout: auto</c> by default, or the CSS <c>fixed</c> algorithm when
+    /// declared — and emits it as a single block. The table's full border-box height
     /// is reported as <see cref="LayoutBlock.ContentHeight"/> so the page splitter
     /// can slice tall tables across pages; the internal column/row structure is
     /// consumed by the algorithm and not exposed as child blocks.
