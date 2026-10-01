@@ -229,26 +229,10 @@ public class PageBlockSlice
 
     /// <summary>Height of the fragment in px.</summary>
     public float Height;
-
-    public LayoutBlockFlags Flags;
-}
-
-/// <summary>
-/// Footnote representation attached to a page.
-/// </summary>
-public sealed class PageFootnoteInfo
-{
-    public int LineIndex { get; init; }
-    public string Content { get; init; } = string.Empty;
 }
 
 public class BlockPageInfo
-{
-    public int Index;
-    public int Start;
-    public int Height;
-    public uint PageFlags;
-    public List<PageFootnoteInfo> Footnotes = [];
+{ 
     /// <summary>The block fragments placed on this page, in reading order.</summary>
     public List<PageBlockSlice> Blocks = [];
 }

@@ -105,11 +105,6 @@ public static class PageSplitter
         {
             pages.Add(new BlockPageInfo
             {
-                Index = p,
-                Start = p * pageHeight,
-                Height = pageHeight,
-                PageFlags = 0,
-                Footnotes = context.PageFootnotes[p],
                 Blocks = context.PageBlocks[p]
             });
         }
@@ -118,13 +113,7 @@ public static class PageSplitter
         // (e.g. zero-height blocks only) still yields one page.
         if (pages.Count == 0)
         {
-            pages.Add(new BlockPageInfo
-            {
-                Index = 0,
-                Start = 0,
-                Height = pageHeight,
-                PageFlags = 0
-            });
+            pages.Add(new BlockPageInfo());
         }
 
         return new BlockPageMap(pages);
@@ -143,8 +132,6 @@ public static class PageSplitter
         private bool DryRun { get; } = dryRun;
 
         public List<List<PageBlockSlice>> PageBlocks { get; } = [];
-
-        public List<List<PageFootnoteInfo>> PageFootnotes { get; } = [];
 
         private int CurrentPage { get; set; }
 
@@ -180,6 +167,10 @@ public static class PageSplitter
 
         public void PlaceBlock(LayoutBlock block, int blockIdx, int childIdx, bool trimTopMargin, LayoutBlock? nextBlock, ref float prevBottomMargin, ref float prevZeroHeightMargin)
         {
+            if (block.TagName == "figure")
+            {
+                Debugger.Break();
+            }
             var flags = block.Flags;
 
             // 1. Forced page break before the block.
@@ -229,7 +220,7 @@ public static class PageSplitter
             //     boundary (step 3), so it is excluded from the fresh-page check. A block
             //     taller than a page cannot honor the hint and falls through to the normal
             //     (breaking) placement. At the top of a page there is nothing to avoid.
-            var isMonolithic = block.Kind == BlockKind.Text && block.LineCount == 1;
+            var isMonolithic = block is { Kind: BlockKind.Text, LineCount: 1 };
             if (((flags & LayoutBlockFlags.AvoidBreakInside) != 0 || isMonolithic) && UsedOnPage > 0f)
             {
                 var contentH = MeasureContentFlow(block, blockIdx);
@@ -340,13 +331,28 @@ public static class PageSplitter
 
         private void PlaceContainer(LayoutBlock container, int blockIdx)
         {
-            // Browser behaviour: a container is a sequence of block boxes, not one
-            // indivisible box. Every child is placed individually in the shared page
-            // flow with its own margins and paddings; a page break inside the
-            // container simply resumes its remaining children on the next page.
-            // The container's own PaddingTop/Bottom are consumed by PlaceBlock around
-            // the child flow, and its propagated PageBreakBefore/After double-break
-            // safely: the guard (usedOnPage > 0) skips a break on an empty page.
+            // If the whole container fits on the page, place it as a single box: the
+            // content height already reflects any explicit height / max-height, so a
+            // fixed-height container is clipped to its box and its children need not
+            // be traversed. The container's PaddingTop was consumed by PlaceBlock
+            // before this call and its PaddingBottom is consumed after it, so only the
+            // content box is placed here.
+            if (container.ContentHeight <= PageHeight - UsedOnPage)
+            {
+                RecordSlice(blockIdx, childIdx: -1, 0, 0, UsedOnPage, container.ContentHeight);
+                UsedOnPage += container.ContentHeight;
+                if (UsedOnPage >= PageHeight) NewPage();
+                return;
+            }
+
+            // Does not fit the page remainder: a container is a sequence of block
+            // boxes, not one indivisible box. Every child is placed individually in
+            // the shared page flow with its own margins and paddings; a page break
+            // inside the container simply resumes its remaining children on the next
+            // page. The container's own PaddingTop/Bottom are consumed by PlaceBlock
+            // around the child flow, and its propagated PageBreakBefore/After
+            // double-break safely: the guard (usedOnPage > 0) skips a break on an
+            // empty page.
             var childPrevBottom = 0f;
             var childPrevZeroHeight = 0f;
             for (var ci = 0; ci < container.Children.Count; ci++)
@@ -472,7 +478,7 @@ public static class PageSplitter
             return scratch.Paged ? float.PositiveInfinity : scratch.UsedOnPage;
         }
 
-        private void RecordSlice(LayoutBlock block, int blockIdx, int childIdx, int lineStart, int lineCount, float y, float height, bool firstPiece)
+        private void RecordSlice(int blockIdx, int childIdx, int lineStart, int lineCount, float y, float height)
         {
             if (DryRun) return;   // measurement only: the caller still updates UsedOnPage
             EnsurePage(CurrentPage);
@@ -483,17 +489,8 @@ public static class PageSplitter
                 LineStart = lineStart,
                 LineCount = lineCount,
                 Y = y,
-                Height = height,
-                Flags = block.Flags
+                Height = height
             });
-            if (firstPiece && block.Links.Count > 0)
-            {
-                PageFootnotes[CurrentPage].Add(new PageFootnoteInfo
-                {
-                    LineIndex = blockIdx,
-                    Content = string.Join(",", block.Links)
-                });
-            }
         }
 
         private void EnsurePage(int idx)
@@ -502,7 +499,6 @@ public static class PageSplitter
             while (PageBlocks.Count <= idx)
             {
                 PageBlocks.Add([]);
-                PageFootnotes.Add([]);
             }
         }
 
@@ -553,7 +549,7 @@ public static class PageSplitter
                         // the top of a page it stays in place and the overflow is
                         // clipped; mid-page it moves to a fresh page, clipped there.
                         if (UsedOnPage > 0f) NewPage();
-                        RecordSlice(block, blockIdx, childIdx, placed, 1, UsedOnPage, nextLineHeight, firstPiece: placed == 0);
+                        RecordSlice(blockIdx, childIdx, placed, 1, UsedOnPage, nextLineHeight);
                         UsedOnPage = PageHeight;
                         remaining--;
                         placed++;
@@ -571,13 +567,13 @@ public static class PageSplitter
                     // Uniform: the whole block height is remaining × lineHeight (original
                     // formula). Per-line: sliceHeight already accumulated the exact sum.
                     var fullHeight = havePerLine ? sliceHeight : remaining * lineHeight;
-                    RecordSlice(block, blockIdx, childIdx, placed, remaining, UsedOnPage, fullHeight, firstPiece: placed == 0);
+                    RecordSlice(blockIdx, childIdx, placed, remaining, UsedOnPage, fullHeight);
                     UsedOnPage += fullHeight;
                     remaining = 0;
                 }
                 else
                 {
-                    RecordSlice(block, blockIdx, childIdx, placed, fit, UsedOnPage, sliceHeight, firstPiece: placed == 0);
+                    RecordSlice(blockIdx, childIdx, placed, fit, UsedOnPage, sliceHeight);
                     UsedOnPage += sliceHeight;
                     remaining -= fit;
                     placed += fit;
@@ -598,7 +594,7 @@ public static class PageSplitter
 
             if (UsedOnPage + h <= PageHeight)
             {
-                RecordSlice(block, blockIdx, childIdx, 0, 0, UsedOnPage, h, firstPiece: true);
+                RecordSlice(blockIdx, childIdx, 0, 0, UsedOnPage, h);
                 UsedOnPage += h;
                 if (UsedOnPage >= PageHeight) NewPage();
                 return;
@@ -608,7 +604,7 @@ public static class PageSplitter
             {
                 // Does not fit the page remainder but fits a fresh page: move whole.
                 NewPage();
-                RecordSlice(block, blockIdx, childIdx, 0, 0, 0f, h, firstPiece: true);
+                RecordSlice(blockIdx, childIdx, 0, 0, 0f, h);
                 UsedOnPage += h;
                 if (UsedOnPage >= PageHeight) NewPage();
                 return;
@@ -618,7 +614,7 @@ public static class PageSplitter
             // place when it starts at the top of a page and clips the overflow;
             // mid-page it moves to a fresh page, clipped there.
             if (UsedOnPage > 0f) NewPage();
-            RecordSlice(block, blockIdx, childIdx, 0, 0, UsedOnPage, h, firstPiece: true);
+            RecordSlice(blockIdx, childIdx, 0, 0, UsedOnPage, h);
             UsedOnPage = PageHeight;
             if (UsedOnPage >= PageHeight) NewPage();
         }
