@@ -562,6 +562,11 @@ public static class PageSplitter
                         UsedOnPage = PageHeight;
                         remaining--;
                         placed++;
+                        // The clipped line filled the page: start the next one and
+                        // skip the fit bookkeeping below (with remaining == 0 it
+                        // would record a phantom zero-height slice).
+                        if (UsedOnPage >= PageHeight) NewPage();
+                        continue;
                     }
                     else
                     {

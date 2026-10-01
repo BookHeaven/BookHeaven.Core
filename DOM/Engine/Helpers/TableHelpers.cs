@@ -36,8 +36,19 @@ internal static class TableHelpers
         /// <summary>Content-box height (rows + inter-row border-spacing).</summary>
         public required float ContentHeight { get; init; }
 
-        /// <summary>Border-box height (content + vertical padding + vertical border).</summary>
-        public required float BorderBoxHeight { get; init; }
+        /// <summary>
+        /// Per-row outer heights (cell content + cell padding + cell border), with the
+        /// trailing inter-row border-spacing folded into every row but the last — so
+        /// the rows sum exactly to <see cref="ContentHeight"/> and the page splitter
+        /// can place them individually without losing the spacing.
+        /// </summary>
+        public required float[] RowHeights { get; init; }
+
+        /// <summary>Space above the content box: padding-top + border-top.</summary>
+        public required float TopEdge { get; init; }
+
+        /// <summary>Space below the content box: padding-bottom + border-bottom.</summary>
+        public required float BottomEdge { get; init; }
 
         /// <summary>Computed column widths (border-box of each column).</summary>
         public required float[] ColumnWidths { get; init; }
@@ -220,13 +231,21 @@ internal static class TableHelpers
             rowHeights[r] = rowHeight;
         }
 
-        var contentHeight = rowHeights.Sum() + Math.Max(0, rowElements.Count - 1) * (isCollapsed ? 0f : borderSpacing);
-        var borderBoxHeight = contentHeight + tablePadT + tablePadB + tableBorderT + tableBorderB;
+        // Fold the inter-row border-spacing into each row (trailing) so the row
+        // heights sum exactly to the content height: the page splitter places the
+        // rows individually, and the spacing must travel with its row.
+        var rowSpacing = isCollapsed ? 0f : borderSpacing;
+        for (var r = 0; r < rowHeights.Length - 1; r++)
+            rowHeights[r] += rowSpacing;
+
+        var contentHeight = rowHeights.Sum();
 
         return new Result
         {
             ContentHeight = contentHeight,
-            BorderBoxHeight = borderBoxHeight,
+            RowHeights = rowHeights,
+            TopEdge = tablePadT + tableBorderT,
+            BottomEdge = tablePadB + tableBorderB,
             ColumnWidths = columnWidths
         };
     }

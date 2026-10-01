@@ -542,10 +542,13 @@ public sealed class LayoutEngine : IDisposable
     /// <summary>
     /// Computes a table's layout with a faithful Chromium algorithm —
     /// <c>table-layout: auto</c> by default, or the CSS <c>fixed</c> algorithm when
-    /// declared — and emits it as a single block. The table's full border-box height
-    /// is reported as <see cref="LayoutBlock.ContentHeight"/> so the page splitter
-    /// can slice tall tables across pages; the internal column/row structure is
-    /// consumed by the algorithm and not exposed as child blocks.
+    /// declared — and emits it as a container whose children are the table's ROWS:
+    /// one single-line text block per row (<c>LineCount = 1</c>,
+    /// <c>LineHeightPx = row height</c>). The page splitter then places the rows
+    /// individually — a page break lands on a row boundary, and a row that does not
+    /// fit the page remainder moves whole to the next page (single-line text is
+    /// monolithic), exactly as a browser breaks tall tables. The table's own
+    /// padding/border bound the row flow as the container's PaddingTop/Bottom.
     /// </summary>
     private LayoutBlock? BuildTableBlock(Element el)
     {
@@ -568,18 +571,35 @@ public sealed class LayoutEngine : IDisposable
         var marginTop = TryGetComputedBoxPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
         var marginBottom = TryGetComputedBoxPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
 
+        // One block per row: a single "line" as tall as the row. The splitter
+        // treats single-line text as monolithic (moved whole, never split), so
+        // page breaks inside the table land on row boundaries.
+        var rows = new List<LayoutBlock>(result.RowHeights.Length);
+        for (var r = 0; r < result.RowHeights.Length; r++)
+        {
+            var rowHeight = result.RowHeights[r];
+            rows.Add(new LayoutBlock
+            {
+                TagName = "tr",
+                Kind = BlockKind.Text,
+                ContentHeight = rowHeight,
+                LineCount = 1,
+                LineHeightPx = rowHeight
+            });
+        }
+
         return new LayoutBlock
         {
             TagName = el.TagName,
             Kind = BlockKind.Container,
-            ContentHeight = result.BorderBoxHeight,
+            ContentHeight = result.ContentHeight,
             MarginTop = marginTop,
             MarginBottom = marginBottom,
-            PaddingTop = 0f,
-            PaddingBottom = 0f,
+            PaddingTop = result.TopEdge,
+            PaddingBottom = result.BottomEdge,
             LineCount = 0,
             LineHeightPx = 0f,
-            Children = [],
+            Children = rows,
             Flags = ToBreakFlags(computed)
         };
     }
