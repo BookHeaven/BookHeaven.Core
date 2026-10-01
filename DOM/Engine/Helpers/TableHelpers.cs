@@ -158,7 +158,7 @@ internal static class TableHelpers
             var usedWidth = ResolveFixedTableUsedWidth(tableStyle, containingBlockContentWidth, parser);
             columnWidths = DistributeFixed(
                 table, Math.Max(0f, usedWidth - undistributable), cells, columnCount,
-                getStyle, getFontSize, context, parser);
+                getStyle, getFontSize, parser);
         }
         else
         {
@@ -708,7 +708,7 @@ internal static class TableHelpers
     private static float[] DistributeFixed(
         Element table, float assignable, List<Cell> cells, int columnCount,
         Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
-        RenderContext context, CssLengthParser parser)
+        CssLengthParser parser)
     {
         var percents = new float[columnCount];
         var fixedWidths = new float[columnCount];
