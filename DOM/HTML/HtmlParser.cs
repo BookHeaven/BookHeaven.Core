@@ -238,6 +238,10 @@ public sealed class HtmlParser
                     margin: 0;
                     padding: 0;
                  }
+                 :after, :before {
+                    display: none !important;
+                 }
+                 
                  html {
                      --font-size: {{o.FontSize.ToString("0.00", ci)}};
                      --line-height: {{o.LineHeight.ToString("0.00", ci)}};
