@@ -485,18 +485,13 @@ public sealed class LayoutEngine : IDisposable
         }
         else
         {
-            for (var ci = 0; ci < childSink.Count; ci++)
-            {
-                var child = childSink[ci];
-                contentHeight += child.ContentHeight + child.PaddingTop + child.PaddingBottom;
-                // A float's margin-top sits at the top of the content box (a float is
-                // out of flow, so its margin is inside the content box, not collapsed
-                // with the parent's). Only the FIRST child's margin-top is at the top;
-                // a later float's margin-top collapses with the preceding sibling's
-                // margin-bottom (handled by the splitter's gap, not the content box).
-                if (child.Floats && ci == 0)
-                    contentHeight += child.MarginTop;
-            }
+            // CSS margin collapse inside the content box: the first child's top
+            // margin collapses through a padding-less container (it becomes part of
+            // the container's effective top margin), sibling margins collapse to the
+            // max, and with padding-bottom the last child's bottom margin stays
+            // inside the box. The same rules the splitter applies when placing the
+            // children, so ContentHeight equals the flow's height in the box.
+            contentHeight = LayoutBlock.MeasureChildFlow(childSink, layout.PaddingTop, layout.PaddingBottom);
         }
         
         var computed = GetComputedStyle(el);
@@ -504,13 +499,19 @@ public sealed class LayoutEngine : IDisposable
         var heightPx = ParseLengthToPx(computed.GetPropertyValue("height"), _options.PageHeightPx, fontSize);
         var maxHeight = ParseLengthToPx(computed.GetPropertyValue("max-height"), _options.PageHeightPx, fontSize);
 
+        // An explicit height, or a max-height that caps the children, FIXES the
+        // content box: the children's overflow is clipped at the box (browser
+        // behaviour), so the splitter must treat ContentHeight as authoritative.
+        var fixedHeight = false;
         if (heightPx.HasValue)
         {
             contentHeight = heightPx.Value;
+            fixedHeight = true;
         }
-        if(contentHeight > maxHeight)
+        if (contentHeight > maxHeight)
         {
             contentHeight = maxHeight.Value;
+            fixedHeight = true;
         }
 
         var containerBlock = new LayoutBlock
@@ -524,9 +525,8 @@ public sealed class LayoutEngine : IDisposable
             PaddingBottom = layout.PaddingBottom,
             LineCount = 0,
             LineHeightPx = 0f,
-            Links = [],
             Children = childSink,
-            Flags = ToBreakFlags(GetComputedStyle(el))
+            Flags = ToBreakFlags(computed) | (fixedHeight ? LayoutBlockFlags.FixedHeight : 0)
         };
 
         if (childSink.Count > 0)
@@ -577,7 +577,6 @@ public sealed class LayoutEngine : IDisposable
             PaddingBottom = 0f,
             LineCount = 0,
             LineHeightPx = 0f,
-            Links = [],
             Children = [],
             Flags = ToBreakFlags(computed)
         };
@@ -632,8 +631,7 @@ public sealed class LayoutEngine : IDisposable
             PaddingBottom = paddingBottom,
             LineCount = 0,
             LineHeightPx = 0f,
-            Floats = floats,
-            Links = []
+            Floats = floats
         };
     }
 
@@ -789,8 +787,7 @@ public sealed class LayoutEngine : IDisposable
                 PaddingBottom = paddingBottom,
                 LineCount = 0,
                 LineHeightPx = lineHeightPx ?? 0f,
-                Flags = flags,
-                Links = []
+                Flags = flags
             };
         }
 
@@ -883,8 +880,7 @@ public sealed class LayoutEngine : IDisposable
                 LineCount = imgLineHeights.Count,
                 LineHeightPx = imgLineHeights.Count > 0 ? imgLineHeights.Max() : 0,
                 LineHeights = [.. imgLineHeights],
-                Flags = flags,
-                Links = []
+                Flags = flags
             };
         }
 
@@ -907,8 +903,7 @@ public sealed class LayoutEngine : IDisposable
                 PaddingBottom = paddingBottom,
                 LineCount = spacerLines,
                 LineHeightPx = spacerLineHeight,
-                Flags = flags,
-                Links = []
+                Flags = flags
             };
         }
 
@@ -962,8 +957,7 @@ public sealed class LayoutEngine : IDisposable
             LineCount = lineHeights?.Length ?? meas.LineCount,
             LineHeightPx = meas.LineHeightPx,
             LineHeights = lineHeights,
-            Flags = flags,
-            Links = []
+            Flags = flags
         };
     }
 

@@ -19,7 +19,15 @@ public enum LayoutBlockFlags
     PageBreakBefore = 1 << 0,
     PageBreakAfter = 1 << 1,
     AvoidBreakInside = 1 << 2,
-    AvoidBreakAfter = 1 << 3
+    AvoidBreakAfter = 1 << 3,
+
+    /// <summary>
+    /// The container's content box height is FIXED by CSS (<c>height</c> or a
+    /// <c>max-height</c> that caps the children): <see cref="LayoutBlock.ContentHeight"/>
+    /// is authoritative and the children's overflow is CLIPPED at the content box
+    /// (browser behaviour) instead of flowing on.
+    /// </summary>
+    FixedHeight = 1 << 4
 }
 
 /// <summary>
@@ -109,9 +117,6 @@ public class LayoutBlock
 
     public LayoutBlockFlags Flags;
 
-    /// <summary>Footnote link references found inside the block (dead data path, kept for parity).</summary>
-    public List<string> Links = [];
-
     /// <summary>
     /// Effective top margin for flow placement: the block's own top margin — except
     /// that, like a browser, a container WITHOUT padding-top lets its first child's
@@ -154,6 +159,67 @@ public class LayoutBlock
            && block.ContentHeight <= 0f
            && block.PaddingTop <= 0f
            && block.PaddingBottom <= 0f;
+
+    /// <summary>
+    /// True when the child's top margin is trimmed (folded into the container's
+    /// effective top margin): the container has no padding-top and every preceding
+    /// sibling is a zero-height spacer or a float — the CSS collapse ran through
+    /// those to reach this child. A float's top margin is never trimmed (out of flow).
+    /// </summary>
+    public static bool ShouldTrimTopMargin(List<LayoutBlock> children, int childIdx, float paddingTop)
+    {
+        if (paddingTop > 0f) return false;
+        for (var i = 0; i < childIdx; i++)
+        {
+            var sibling = children[i];
+            if (!sibling.Floats && !IsZeroHeightSpacer(sibling)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The height the container's child flow occupies inside the content box: the
+    /// same CSS margin collapse the splitter applies when placing the children
+    /// (trimmed leading margin, max-collapsed sibling gaps, zero-height spacers
+    /// collapsing through, float margins in flow), plus the children's paddings and
+    /// content. With padding-bottom the last child's bottom margin stays inside the
+    /// box; without it, it collapses through (part of the container's effective
+    /// bottom margin, not the content box).
+    /// </summary>
+    public static float MeasureChildFlow(List<LayoutBlock> children, float paddingTop, float paddingBottom)
+    {
+        var flow = 0f;
+        var prevBottom = 0f;
+        var prevZeroHeight = 0f;
+        for (var ci = 0; ci < children.Count; ci++)
+        {
+            var child = children[ci];
+            var topMargin = ShouldTrimTopMargin(children, ci, paddingTop) && !child.Floats
+                ? 0f
+                : EffectiveTopMargin(child);
+            var isSpacer = IsZeroHeightSpacer(child);
+            var ownTop = isSpacer && topMargin > 0f
+                ? Math.Max(child.MarginTop, child.MarginBottom)
+                : topMargin;
+            var gap = prevZeroHeight > 0f
+                ? Math.Max(0f, ownTop - prevZeroHeight)
+                : Math.Max(prevBottom, ownTop);
+            flow += gap + child.PaddingTop + child.ContentHeight + child.PaddingBottom;
+            if (isSpacer)
+            {
+                prevZeroHeight = Math.Max(Math.Max(prevZeroHeight, prevBottom), ownTop);
+                prevBottom = 0f;
+            }
+            else
+            {
+                prevBottom = EffectiveBottomMargin(child);
+                prevZeroHeight = 0f;
+            }
+        }
+        if (children.Count > 0 && paddingBottom > 0f)
+            flow += EffectiveBottomMargin(children[^1]);
+        return flow;
+    }
 
     /// <summary>
     /// The margin that collapses out of the TOP of a child sequence: the max of the top

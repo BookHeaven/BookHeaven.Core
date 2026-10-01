@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using BookHeaven.Core.DOM.Engine.Models;
 
 namespace BookHeaven.Core.DOM.Engine;
@@ -99,8 +98,11 @@ public static class PageSplitter
                 ref context.PrevBottomMargin, ref context.PrevZeroHeightMargin);
         }
 
-        // Only pages that actually received content are materialized (pageBlocks grows
-        // lazily in RecordSlice). A trailing empty page is intentionally not emitted.
+        // Only pages that actually received content are materialized (PageBlocks grows
+        // lazily in RecordSlice). A trailing empty page is intentionally not emitted,
+        // but a page that received carried content (e.g. a padding overflow) is not
+        // empty — materialize it.
+        context.MaterializeCurrentPageIfUsed();
         for (var p = 0; p < context.PageBlocks.Count; p++)
         {
             pages.Add(new BlockPageInfo
@@ -155,22 +157,10 @@ public static class PageSplitter
         /// siblings are content blocks (the common case).
         /// </summary>
         private static bool ShouldTrimTopMargin(LayoutBlock container, int childIdx)
-        {
-            if (container.PaddingTop > 0f) return false;
-            for (var i = 0; i < childIdx; i++)
-            {
-                var sibling = container.Children[i];
-                if (!sibling.Floats && !LayoutBlock.IsZeroHeightSpacer(sibling)) return false;
-            }
-            return true;
-        }
+            => LayoutBlock.ShouldTrimTopMargin(container.Children, childIdx, container.PaddingTop);
 
         public void PlaceBlock(LayoutBlock block, int blockIdx, int childIdx, bool trimTopMargin, LayoutBlock? nextBlock, ref float prevBottomMargin, ref float prevZeroHeightMargin)
         {
-            if (block.TagName == "figure")
-            {
-                Debugger.Break();
-            }
             var flags = block.Flags;
 
             // 1. Forced page break before the block.
@@ -339,7 +329,7 @@ public static class PageSplitter
             // content box is placed here.
             if (container.ContentHeight <= PageHeight - UsedOnPage)
             {
-                RecordSlice(blockIdx, childIdx: -1, 0, 0, UsedOnPage, container.ContentHeight);
+                RecordSlice(blockIdx, childIdx: -1, 0, container.LineCount, UsedOnPage, container.ContentHeight);
                 UsedOnPage += container.ContentHeight;
                 if (UsedOnPage >= PageHeight) NewPage();
                 return;
@@ -393,7 +383,11 @@ public static class PageSplitter
         /// the exact text height (per-line sum, or lines × line height — the same
         /// formula PlaceText uses), the content height for boxes, or — for
         /// containers — a dry run of the child flow through the same placement
-        /// rules (Infinity when the flow needs more than one page).
+        /// rules (Infinity when the flow needs more than one page). A FIXED-height
+        /// container is the exception: its content box is authoritative (the engine
+        /// already applied height / max-height) and the children's overflow is
+        /// clipped at the box, so the flow height is exactly ContentHeight and no
+        /// dry run is needed.
         /// </summary>
         private float MeasureContentFlow(LayoutBlock block, int blockIdx)
         {
@@ -408,7 +402,11 @@ public static class PageSplitter
                         return sum;
                     }
                     return block.LineCount * block.LineHeightPx;
-                case { Kind: BlockKind.Container, Children.Count: > 0 }:
+                // NOTE: a flags-enum pattern (Flags: not FixedHeight) would be an
+                // EQUALITY test, so a block carrying FixedHeight together with any
+                // other flag would still dry-run; use an explicit bit test.
+                case { Kind: BlockKind.Container, Children.Count: > 0 }
+                    when (block.Flags & LayoutBlockFlags.FixedHeight) == 0:
                     return MeasureContainerFlow(block, blockIdx);
                 default:
                     return block.ContentHeight;
@@ -500,6 +498,17 @@ public static class PageSplitter
             {
                 PageBlocks.Add([]);
             }
+        }
+
+        /// <summary>
+        /// Materializes the current page if it received content (e.g. a padding
+        /// overflow) even though it received no slice. A page that is empty for
+        /// real (UsedOnPage == 0) is intentionally not emitted.
+        /// </summary>
+        public void MaterializeCurrentPageIfUsed()
+        {
+            if (UsedOnPage > 0f)
+                EnsurePage(CurrentPage);
         }
 
         private void NewPage()
