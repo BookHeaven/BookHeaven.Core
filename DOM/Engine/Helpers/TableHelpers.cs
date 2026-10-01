@@ -62,6 +62,7 @@ internal static class TableHelpers
         public int ColSpan = 1;
         public int RowSpan = 1;
         public string Text = string.Empty;
+        public List<Element> Images = [];
 
         public float? Percent;        // 0..1, from width: X%
         public float? FixedWidthPx;   // from width: Npx (a constrained column)
@@ -103,6 +104,8 @@ internal static class TableHelpers
         Func<Element, bool> isHidden,
         ITextMeasurer measurer,
         PageCalculatorOptions options,
+        CoreOptions coreOptions,
+        Func<Element, bool> isBlockDisplay,
         RenderContext context,
         CssLengthParser parser)
     {
@@ -224,7 +227,9 @@ internal static class TableHelpers
             foreach (var cell in cells.Where(c => c.Row == r))
             {
                 var contentWidth = CellContentWidth(cell, columnWidths, borderSpacing, isCollapsed);
-                var cellContentHeight = MeasureCellContentHeight(cell, contentWidth, measurer);
+                var cellContentHeight = MeasureCellContentHeight(
+                    cell, contentWidth, measurer, options, coreOptions, context, parser,
+                    getStyle, getFontSize, isBlockDisplay);
                 var outerHeight = cellContentHeight + cell.PaddingTop + cell.PaddingBottom + cell.BorderTop + cell.BorderBottom;
                 rowHeight = Math.Max(rowHeight, outerHeight);
             }
@@ -340,7 +345,27 @@ internal static class TableHelpers
         // Intrinsic content sizes: min = longest unbreakable word, max = single line.
         cell.ContentMin = MeasureMinContent(cell.Text, cell.FontSize, cell.Style, measurer);
         cell.ContentMax = MeasureMaxContent(cell.Text, cell.FontSize, cell.Style, measurer);
+
+        // Images contribute to the row height (a cell with a picture is as tall
+        // as the picture); collect them so the row-height pass can measure them.
+        CollectImages(el, isHidden, cell.Images);
         return cell;
+    }
+
+    /// <summary>
+    /// Collects the cell's descendant image elements (skipping hidden subtrees)
+    /// into <paramref name="result"/>.
+    /// </summary>
+    private static void CollectImages(Element el, Func<Element, bool> isHidden, List<Element> result)
+    {
+        if (isHidden(el)) return;
+        if (ImageHelpers.IsImageElement(el))
+        {
+            result.Add(el);
+            return;
+        }
+        foreach (var child in el.Children)
+            CollectImages(child, isHidden, result);
     }
 
     // A <br> is serialized as U+FFFC (see DomModels.AppendDescendantText) and is a forced
@@ -882,12 +907,42 @@ internal static class TableHelpers
         return Math.Max(0f, width);
     }
 
-    private static float MeasureCellContentHeight(Cell cell, float contentWidth, ITextMeasurer measurer)
+    /// <summary>
+    /// Measures the cell's content-box height: the wrapped text plus any images.
+    /// Block-display images stack in the cell's block flow; an inline image
+    /// stretches the line it sits on (or forms a line of its own when the cell
+    /// has no text), matching the browser's replaced-element model.
+    /// </summary>
+    private static float MeasureCellContentHeight(
+        Cell cell, float contentWidth, ITextMeasurer measurer,
+        PageCalculatorOptions options, CoreOptions coreOptions, RenderContext context,
+        CssLengthParser parser,
+        Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
+        Func<Element, bool> isBlockDisplay)
     {
-        if (string.IsNullOrEmpty(cell.Text)) return 0f;
         var lineHeightPx = cell.LineHeightLengthPx ?? (cell.LineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * cell.FontSize;
-        var result = measurer.Measure(cell.Text, cell.FontSize, contentWidth, lineHeightPx: lineHeightPx, style: cell.Style, includeLineText: false);
-        return result.TotalHeightPx;
+        var textHeight = string.IsNullOrEmpty(cell.Text) ? 0f
+            : measurer.Measure(cell.Text, cell.FontSize, contentWidth, lineHeightPx: lineHeightPx, style: cell.Style, includeLineText: false).TotalHeightPx;
+
+        var blockImagesHeight = 0f;
+        var inlineImageHeight = 0f;
+        foreach (var img in cell.Images)
+        {
+            var (_, imgHeight) = ImageHelpers.MeasureImageSize(
+                img, getStyle(img), ParseLen, options, coreOptions,
+                contentWidth, contentWidth, getFontSize(img));
+            if (isBlockDisplay(img)) blockImagesHeight += imgHeight;
+            else inlineImageHeight = Math.Max(inlineImageHeight, imgHeight);
+        }
+
+        var hasText = !string.IsNullOrEmpty(cell.Text);
+        var inlineContribution = inlineImageHeight <= 0 ? 0f
+            : hasText ? Math.Max(0f, inlineImageHeight - lineHeightPx)   // stretches its text line
+            : Math.Max(inlineImageHeight, lineHeightPx);                // forms its own line
+        return textHeight + inlineContribution + blockImagesHeight;
+
+        float? ParseLen(string? value, float reference, float? emReference)
+            => parser.ParseLengthToPx(value, new RenderContext(reference, reference, emReference ?? 0f), reference, emReference);
     }
 
     // ------------------------------------------------------------------

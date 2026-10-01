@@ -564,6 +564,8 @@ public sealed class LayoutEngine : IDisposable
             IsHidden,
             _measurer,
             _options,
+            _coreOptions,
+            IsBlockDisplay,
             _context,
             _lengthParser);
         if (result is null) return null;
