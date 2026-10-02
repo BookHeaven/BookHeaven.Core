@@ -94,8 +94,8 @@ public sealed class LayoutEngine : IDisposable
 
         // Positive dimensions and font size, otherwise em/rem/% resolution breaks.
         _context = new RenderContext(
-            ClampPositive(_options.PageWidthPx, PageCalculatorOptions.DefaultPageWidthPx),
-            ClampPositive(_options.PageHeightPx, PageCalculatorOptions.DefaultPageHeightPx),
+            ClampPositive(_options.ViewportWidthPx, PageCalculatorOptions.DefaultPageWidthPx),
+            ClampPositive(_options.ViewportHeightPx, PageCalculatorOptions.DefaultPageHeightPx),
             ClampPositive(_options.RootFontSizePx, PageCalculatorOptions.DefaultRootFontSizePx));
 
         // The parser owns the HTML construction (global + chapter stylesheets injected
