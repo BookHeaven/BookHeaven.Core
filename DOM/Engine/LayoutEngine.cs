@@ -1,3 +1,4 @@
+using System.Text;
 using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.Engine.Helpers;
@@ -81,6 +82,20 @@ public sealed class LayoutEngine : IDisposable
         public CssStyle? After;
     }
 
+    /// <summary>
+    /// A run of consecutive inline content (text nodes and inline elements) between
+    /// block children, kept in document order: the source of one anonymous box.
+    /// </summary>
+    private sealed class InlineSegment
+    {
+        /// <summary>The top-level inline nodes, in document order (for text-run building).</summary>
+        public List<Node> Fragments = [];
+        /// <summary>The inline-display images inside the segment (for the image line model).</summary>
+        public List<Element> Images = [];
+        /// <summary>The segment's raw text (untrimmed; <c>&lt;br&gt;</c> as U+FFFC markers).</summary>
+        public StringBuilder Text = new();
+    }
+
     public LayoutEngine(
         PageCalculatorOptions options,
         IOptions<CoreOptions> coreOptions,
@@ -113,6 +128,20 @@ public sealed class LayoutEngine : IDisposable
     private static float ClampPositive(float? value, float fallback) => value is > 0 ? value.Value : fallback;
 
     /// <summary>
+    /// Trims CSS-collapsible whitespace from both ends: a non-collapsible character
+    /// (e.g. U+00A0) survives the trim and makes the text non-empty, so the engine
+    /// emits the anonymous block the browser renders for it.
+    /// </summary>
+    private static string TrimCollapsibleWhitespace(StringBuilder sb)
+    {
+        var start = 0;
+        var end = sb.Length;
+        while (start < end && TextRunWrapper.IsCollapsibleWhitespace(sb[start])) start++;
+        while (end > start && TextRunWrapper.IsCollapsibleWhitespace(sb[end - 1])) end--;
+        return sb.ToString(start, end - start);
+    }
+
+    /// <summary>
     /// Generates a flat list of layout blocks (in flow order) for the given HTML.
     /// </summary>
     public IReadOnlyList<LayoutBlock> GenerateLayoutBlocks(string html, IReadOnlyList<string>? css = null, CancellationToken cancellationToken = default)
@@ -137,7 +166,7 @@ public sealed class LayoutEngine : IDisposable
             var images = CollectInlineImages(body);
             if (string.IsNullOrEmpty(text) && images.Count == 0) return blocks;
 
-            var block = BuildLeafBlock(text, body, images);
+            var block = BuildLeafBlock(text, body, null, images);
             if (block != null) blocks.Add(block);
             return blocks;
         }
@@ -158,7 +187,7 @@ public sealed class LayoutEngine : IDisposable
             }
             if (pendingImages.Count > 0)
             {
-                var anon = BuildLeafBlock(string.Empty, body, pendingImages);
+                var anon = BuildLeafBlock(string.Empty, body, null, pendingImages);
                 if (anon != null) blocks.Add(anon);
                 pendingImages.Clear();
             }
@@ -166,7 +195,7 @@ public sealed class LayoutEngine : IDisposable
         }
         if (pendingImages.Count > 0)
         {
-            var anon = BuildLeafBlock(string.Empty, body, pendingImages);
+            var anon = BuildLeafBlock(string.Empty, body, null, pendingImages);
             if (anon != null) blocks.Add(anon);
         }
 
@@ -442,30 +471,36 @@ public sealed class LayoutEngine : IDisposable
         if (beforeBox != null)
             childSink.Add(beforeBox);
 
-        // Measure own inline text (text nodes not inside block children) and own
-        // inline images. It is an anonymous box: no margins of its own.
-        var ownText = TextRunBuilder.GetOwnInlineText(el, blockChildren, IsHidden);
-        var ownImages = CollectInlineImages(el, blockChildren);
-        if (!string.IsNullOrEmpty(ownText) || ownImages.Count > 0)
-        {
-            var ownBlock = BuildLeafBlock(ownText, el, ownImages, blockChildren);
-            if (ownBlock != null)
-            {
-                // Anonymous box: no margins of its own. The element's margins belong
-                // to the container, not to this box (resetting both avoids the
-                // element's margin-bottom being counted twice).
-                ownBlock.MarginTop = 0f;
-                ownBlock.MarginBottom = 0f;
-                childSink.Add(ownBlock);
-            }
-        }
-
-        // Recurse into block children.
-        for (var ci = 0; ci < blockChildren.Count; ci++)
+        // Walk the children in document order, exactly like a browser: consecutive
+        // inline content (text nodes and inline elements) forms an anonymous box at
+        // its document position — before the first block child, between two block
+        // children, or after the last one — and block children are recursed into
+        // in place.
+        var segment = new InlineSegment();
+        foreach (var node in el.ChildNodes)
         {
             ct.ThrowIfCancellationRequested();
-            ProcessElement(blockChildren[ci], childSink, ct);
+            if (node is Element childEl)
+            {
+                if (IsHidden(childEl)) continue;
+                if (blockChildren.Contains(childEl))
+                {
+                    EmitAnonymousBox(segment);
+                    segment = new InlineSegment();
+                    ProcessElement(childEl, childSink, ct);
+                    continue;
+                }
+                segment.Fragments.Add(childEl);
+                Element.AppendDescendantText(childEl, segment.Text, IsHidden);
+                CollectInlineImagesRecursive(childEl, segment.Images);
+            }
+            else if (node.NodeType == NodeType.Text)
+            {
+                segment.Fragments.Add(node);
+                segment.Text.Append(node.TextContent);
+            }
         }
+        EmitAnonymousBox(segment);
 
         // The ::after generated box is the element's last block child (document
         // order); it participates in the child flow like any other block child.
@@ -498,6 +533,7 @@ public sealed class LayoutEngine : IDisposable
         var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
         var heightPx = ParseLengthToPx(computed.GetPropertyValue("height"), _options.PageHeightPx, fontSize);
+        var minHeight = ParseLengthToPx(computed.GetPropertyValue("min-height"), _options.PageHeightPx, fontSize);
         var maxHeight = ParseLengthToPx(computed.GetPropertyValue("max-height"), _options.PageHeightPx, fontSize);
 
         // An explicit height, or a max-height that caps the children, FIXES the
@@ -512,6 +548,11 @@ public sealed class LayoutEngine : IDisposable
         if (contentHeight > maxHeight)
         {
             contentHeight = maxHeight.Value;
+            fixedHeight = true;
+        }
+        if(contentHeight < minHeight)
+        {
+            contentHeight = minHeight.Value;
             fixedHeight = true;
         }
 
@@ -537,6 +578,21 @@ public sealed class LayoutEngine : IDisposable
         }
 
         sink.Add(containerBlock);
+
+        // The segment's anonymous box: no margins of its own (the element's margins
+        // belong to the container, not to this box), and the "#text" tag marks it as
+        // an anonymous box rather than the element's own box.
+        void EmitAnonymousBox(InlineSegment seg)
+        {
+            var text = TrimCollapsibleWhitespace(seg.Text);
+            if (text.Length == 0 && seg.Images.Count == 0) return;
+            var ownBlock = BuildLeafBlock(text, el, seg.Fragments, seg.Images);
+            if (ownBlock == null) return;
+            ownBlock.TagName = "#text";
+            ownBlock.MarginTop = 0f;
+            ownBlock.MarginBottom = 0f;
+            childSink.Add(ownBlock);
+        }
     }
 
     /// <summary>
@@ -697,7 +753,7 @@ public sealed class LayoutEngine : IDisposable
     /// INTRINSIC geometry. Returns null when the element is hidden, or when it has
     /// no content AND occupies no space.
     /// </summary>
-    private LayoutBlock? BuildLeafBlock(string text, Element el, IReadOnlyList<Element>? inlineImages = null, List<Element>? blockChildren = null)
+    private LayoutBlock? BuildLeafBlock(string text, Element el, IReadOnlyList<Node>? fragments = null, IReadOnlyList<Element>? inlineImages = null)
     {
         var computed = GetComputedStyle(el);
         if (IsHidden(el)) return null;
@@ -705,6 +761,9 @@ public sealed class LayoutEngine : IDisposable
         // Inline-display images in this element's content (collected by the caller,
         // or gathered here for the leaf path).
         var images = inlineImages ?? CollectInlineImages(el);
+        // The top-level inline nodes the text was extracted from: the whole element
+        // for a leaf, the caller's segment for an anonymous box.
+        var inlineFragments = fragments ?? TextRunBuilder.CollectInlineFragments(el, IsBlockChild, IsInlineImage, IsHidden);
 
         var fontSize = ResolveFontSize(el);
         var bold = CssValueParser.IsBoldWeight(computed.GetPropertyValue("font-weight"));
@@ -832,7 +891,7 @@ public sealed class LayoutEngine : IDisposable
             // the first line with the text: the text wraps around it and line 1
             // gets height max(textLine1, imageContribution), matching the browser.
             // Trailing images keep the documented approximation (their own line).
-            var leadingImage = images.Count == 1 && HasLeadingImage(el, blockChildren);
+            var leadingImage = images.Count == 1 && HasLeadingImage(inlineFragments);
 
             // The single leading image's geometry: its border-box width narrows
             // line 1, and its vertical-align contribution sets line 1's height.
@@ -849,7 +908,7 @@ public sealed class LayoutEngine : IDisposable
             var imgLineHeights = new List<float>();
             if (!string.IsNullOrEmpty(text))
             {
-                var textRuns = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
+                var textRuns = TextRunBuilder.BuildFragments(inlineFragments, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
 
                 // A leading image narrows the first line by its border-box width
                 // (box-sizing:border-box includes its padding, so the text starts
@@ -932,7 +991,7 @@ public sealed class LayoutEngine : IDisposable
         }
 
         // Split the inline content into runs at their own font sizes (browser model).
-        var runs = TextRunBuilder.Build(el, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
+        var runs = TextRunBuilder.BuildFragments(inlineFragments, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
         var meas = runs.Count == 1
             ? _measurer.Measure(runs[0].Text, runs[0].FontSizePx, availableWidth,
                 lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
@@ -1129,55 +1188,53 @@ public sealed class LayoutEngine : IDisposable
     private bool IsInlineImage(Element el) => ImageHelpers.IsImageElement(el) && !IsBlockDisplay(el);
 
     /// <summary>
-    /// Collects the inline-display image descendants of <paramref name="el"/>,
-    /// skipping <paramref name="blockChildren"/> (their images belong to their
+    /// Collects the inline-display image descendants of <paramref name="el"/>
+    /// (block children are never descended into — their images belong to their
     /// own block flow, not to this element's inline content).
     /// </summary>
-    private List<Element> CollectInlineImages(Element el, List<Element>? blockChildren = null)
+    private List<Element> CollectInlineImages(Element el)
     {
         List<Element> result = [];
-        CollectInlineImagesRecursive(el, blockChildren, result);
+        CollectInlineImagesRecursive(el, result);
         return result;
     }
 
-    private void CollectInlineImagesRecursive(Element el, List<Element>? blockChildren, List<Element> result)
+    private void CollectInlineImagesRecursive(Element el, List<Element> result)
     {
         foreach (var child in el.Children)
         {
             if (IsHidden(child)) continue;
-            if (blockChildren is { Count: > 0 } && blockChildren.Contains(child)) continue;
             if (ImageHelpers.IsImageElement(child) && !IsBlockDisplay(child))
             {
                 result.Add(child);
                 continue;
             }
             if (!IsBlockChild(child))
-                CollectInlineImagesRecursive(child, null, result);
+                CollectInlineImagesRecursive(child, result);
         }
     }
 
     /// <summary>
-    /// True when the element's first inline content (document order, skipping
-    /// hidden nodes and <paramref name="blockChildren"/>) is an image — a leading
-    /// inline image that shares the first line with the text that follows it.
+    /// True when the first inline content (document order, skipping hidden nodes)
+    /// of the given nodes is an image — a leading inline image that shares the
+    /// first line with the text that follows it.
     /// </summary>
-    private bool HasLeadingImage(Element el, List<Element>? blockChildren)
+    private bool HasLeadingImage(IReadOnlyList<Node> nodes)
     {
-        return Walk(el);
+        return Walk(nodes);
 
-        bool Walk(Element e)
+        bool Walk(IReadOnlyList<Node> nodeList)
         {
-            foreach (var child in e.ChildNodes)
+            foreach (var child in nodeList)
             {
                 if (child is Element childEl)
                 {
                     if (IsHidden(childEl)) continue;
-                    if (blockChildren is { Count: > 0 } && blockChildren.Contains(childEl)) continue;
                     if (ImageHelpers.IsImageElement(childEl) && !IsBlockDisplay(childEl))
                         return true;
                     if (!IsBlockChild(childEl))
                     {
-                        if (Walk(childEl)) return true;
+                        if (Walk(childEl.ChildNodes)) return true;
                         if (!string.IsNullOrWhiteSpace(GetVisibleText(childEl)))
                             return false;
                     }

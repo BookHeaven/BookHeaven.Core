@@ -4,7 +4,6 @@ using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Text.Abstractions;
 using BookHeaven.Core.DOM.Text.Enums;
-using BookHeaven.Core.DOM.Text.Helpers;
 
 namespace BookHeaven.Core.DOM.Engine.Helpers;
 
@@ -27,21 +26,43 @@ public static class TextRunBuilder
         };
 
     /// <summary>
-    /// Splits the element's inline content into <see cref="TextRun"/>s at their
-    /// effective font size and style. Consecutive runs at the same size AND
-    /// style are merged. <paramref name="text"/> is the caller's precomputed
-    /// text for the uniform fast path: for a leaf it is <c>TrimmedTextContent</c>;
-    /// for a container's own inline content it is <see cref="GetOwnInlineText"/>
-    /// (the whole-subtree text would double-count the block children).
+    /// The element's top-level inline content in document order: text nodes and
+    /// visible inline elements. Hidden elements and block children are excluded
+    /// (the latter become sibling blocks, not inline content); inline-display
+    /// images are INCLUDED even when the tag heuristic calls them block — they
+    /// are part of the inline content (baseline model).
     /// </summary>
-    public static List<TextRun> Build(
-        Element el, string text, float ownFontSize, bool ownBold, bool ownItalic,
+    public static List<Node> CollectInlineFragments(Element el, Func<Element, bool> isBlockChild, Func<Element, bool> isInlineImage, Func<Element, bool> isHidden)
+    {
+        var fragments = new List<Node>();
+        foreach (var node in el.ChildNodes)
+        {
+            if (node.NodeType == NodeType.Text)
+            {
+                fragments.Add(node);
+            }
+            else if (node is Element childEl && !isHidden(childEl) && (!isBlockChild(childEl) || isInlineImage(childEl)))
+            {
+                fragments.Add(childEl);
+            }
+        }
+        return fragments;
+    }
+
+    /// <summary>
+    /// Splits a specific set of top-level inline nodes (document order) into
+    /// <see cref="TextRun"/>s. A browser's anonymous box holds only the inline
+    /// content of its own segment, so the runs must be built from the segment's
+    /// nodes, not the whole element.
+    /// </summary>
+    public static List<TextRun> BuildFragments(
+        IReadOnlyList<Node> fragments, string text, float ownFontSize, bool ownBold, bool ownItalic,
         Func<Element, CssStyle> getComputedStyle,
         Func<string?, float, float?, float?> parseLength,
         Func<Element, bool> isBlockChild,
         Func<Element, bool> isHidden)
     {
-        if (IsUniformInline(el, ownFontSize, ownBold, ownItalic, getComputedStyle, parseLength, isBlockChild, isHidden))
+        if (IsUniformFragments(fragments, ownFontSize, ownBold, ownItalic, getComputedStyle, parseLength, isBlockChild, isHidden))
         {
             // The measurer collapses leading/trailing whitespace anyway, and
             // reusing the caller's text avoids a second subtree walk.
@@ -49,24 +70,25 @@ public static class TextRunBuilder
         }
 
         var builders = new List<RunBuilder>();
-        WalkInlineRuns(el, ownFontSize, ownBold, ownItalic, builders, getComputedStyle, parseLength, isBlockChild, isHidden);
+        WalkFragments(fragments, ownFontSize, ownBold, ownItalic, builders, getComputedStyle, parseLength, isBlockChild, isHidden);
         var runs = new List<TextRun>(builders.Count);
         foreach (var b in builders) runs.Add(b.Build());
         return runs;
     }
 
     /// <summary>
-    /// True when every inline descendant renders at the inherited size and style,
-    /// so the whole element is a single run and the run walk can be skipped.
+    /// True when every inline descendant of the fragments renders at the inherited
+    /// size and style, so the whole content is a single run and the run walk can be
+    /// skipped.
     /// </summary>
-    private static bool IsUniformInline(
-        Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic,
+    private static bool IsUniformFragments(
+        IReadOnlyList<Node> fragments, float inheritedSize, bool inheritedBold, bool inheritedItalic,
         Func<Element, CssStyle> getComputedStyle,
         Func<string?, float, float?, float?> parseLength,
         Func<Element, bool> isBlockChild,
         Func<Element, bool> isHidden)
     {
-        foreach (var node in element.ChildNodes)
+        foreach (var node in fragments)
         {
             if (node is not Element childEl || isHidden(childEl) || isBlockChild(childEl)) continue;
 
@@ -76,21 +98,21 @@ public static class TextRunBuilder
             if (Math.Abs(childSize - inheritedSize) >= 0.001f || childBold != inheritedBold || childItalic != inheritedItalic)
                 return false;
 
-            if (!IsUniformInline(childEl, childSize, childBold, childItalic, getComputedStyle, parseLength, isBlockChild, isHidden))
+            if (!IsUniformFragments(childEl.ChildNodes, childSize, childBold, childItalic, getComputedStyle, parseLength, isBlockChild, isHidden))
                 return false;
         }
 
         return true;
     }
 
-    private static void WalkInlineRuns(
-        Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs,
+    private static void WalkFragments(
+        IReadOnlyList<Node> fragments, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs,
         Func<Element, CssStyle> getComputedStyle,
         Func<string?, float, float?, float?> parseLength,
         Func<Element, bool> isBlockChild,
         Func<Element, bool> isHidden)
     {
-        foreach (var node in element.ChildNodes)
+        foreach (var node in fragments)
         {
             if (node.NodeType == NodeType.Text)
             {
@@ -111,6 +133,16 @@ public static class TextRunBuilder
                 }
             }
         }
+    }
+
+    private static void WalkInlineRuns(
+        Element element, float inheritedSize, bool inheritedBold, bool inheritedItalic, List<RunBuilder> runs,
+        Func<Element, CssStyle> getComputedStyle,
+        Func<string?, float, float?, float?> parseLength,
+        Func<Element, bool> isBlockChild,
+        Func<Element, bool> isHidden)
+    {
+        WalkFragments(element.ChildNodes, inheritedSize, inheritedBold, inheritedItalic, runs, getComputedStyle, parseLength, isBlockChild, isHidden);
     }
 
     /// <summary>
@@ -177,33 +209,4 @@ public static class TextRunBuilder
         public TextRun Build() => new(_text.ToString(), Size, Style);
     }
 
-    /// <summary>Extracts text content that belongs directly to the element (not inside block-level children).</summary>
-    public static string GetOwnInlineText(Element el, List<Element> blockChildren, Func<Element, bool> isHidden)
-    {
-        var sb = new StringBuilder();
-        foreach (var node in el.ChildNodes)
-        {
-            if (node.NodeType == NodeType.Text)
-            {
-                sb.Append(node.TextContent);
-            }
-            else if (node is Element childEl && !blockChildren.Contains(childEl))
-            {
-                // Inline element (span, em, strong, a, etc.) - include its text,
-                // skipping display:none descendants.
-                if (isHidden(childEl)) continue;
-                Element.AppendDescendantText(childEl, sb, isHidden);
-            }
-            // Block children are skipped (their text is handled by recursion).
-        }
-
-        // Trim only CSS-collapsible whitespace: a non-collapsible character
-        // (e.g. U+00A0) survives the trim and makes the text non-empty, so the
-        // engine emits the anonymous block the browser renders for it.
-        var start = 0;
-        var end = sb.Length;
-        while (start < end && TextRunWrapper.IsCollapsibleWhitespace(sb[start])) start++;
-        while (end > start && TextRunWrapper.IsCollapsibleWhitespace(sb[end - 1])) end--;
-        return sb.ToString(start, end - start);
-    }
 }
