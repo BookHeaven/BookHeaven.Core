@@ -5,6 +5,9 @@ public sealed class PageCalculatorOptions
     public const int DefaultPageWidthPx = 1024;
     public const int DefaultPageHeightPx = 768;
     public const float DefaultRootFontSizePx = 16;
+    
+    public int ViewportWidthPx { get; set; }
+    public int ViewportHeightPx { get; set; }
 
     /// <summary>Page width in pixels.</summary>
     public int PageWidthPx { get; set; }
