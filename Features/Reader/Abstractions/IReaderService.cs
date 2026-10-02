@@ -17,7 +17,7 @@ public interface IReaderService : IDisposable
     void PauseTimer();
     void ResumeTimer();
     void SetTotalPages(int[] pageArray);
-    Task CalculatePagesAsync(int pageWidthPx, int pageHeightPx);
+    Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx);
     void NavigateToInitialPage();
     void NavigateToChapter(TocEntry chapter);
     void NextPage();

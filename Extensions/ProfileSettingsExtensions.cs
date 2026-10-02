@@ -22,10 +22,12 @@ public static class ProfileSettingsExtensions
             settings.SelectedFont = updatedSettings.SelectedFont;
         }
         
-        public PageCalculatorOptions ToPageCalculatorOptions(int pageWidthPx, int pageHeightPx)
+        public PageCalculatorOptions ToPageCalculatorOptions(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx)
         {
             return new PageCalculatorOptions
             {
+                ViewportWidthPx = viewportWidthPx,
+                ViewportHeightPx = viewportHeightPx,
                 PageWidthPx = pageWidthPx,
                 PageHeightPx = pageHeightPx,
                 FontSize = (float)settings.FontSize,

@@ -112,7 +112,7 @@ public class ReaderService(
         _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.PagesPerChapter);
     }
     
-    public async Task CalculatePagesAsync(int pageWidthPx, int pageHeightPx)
+    public async Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx)
     {
         if (State?.Ebook is null || Settings is null) return;
 
@@ -126,7 +126,7 @@ public class ReaderService(
         var cts = new CancellationTokenSource();
         _calcCts = cts;
 
-        var options = Settings.ToPageCalculatorOptions(pageWidthPx, pageHeightPx);
+        var options = Settings.ToPageCalculatorOptions(viewportWidthPx, viewportHeightPx, pageWidthPx, pageHeightPx);
         try
         {
             var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options, cts.Token);
