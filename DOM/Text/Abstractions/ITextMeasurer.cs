@@ -33,6 +33,16 @@ public interface ITextMeasurer
     static float QuantizeLineHeight(float px) => (float)(Math.Truncate(px * 64.0) / 64.0);
 
     /// <summary>
+    /// Quantizes a horizontal position to Blink's <c>LayoutUnit</c> grid (1/64px),
+    /// ceiling exactly as <c>LayoutUnit::ToCeil</c> does. Blink decides a line break by
+    /// comparing each glyph's START position (ceiled to this grid) against the available
+    /// width, so a word stays on the line when its start is within the width even if its
+    /// advance overflows it. The multiply is done in double (as Blink does) so a value
+    /// sitting on the 1/64px boundary is not pushed over it by float rounding.
+    /// </summary>
+    static float QuantizeCeil(float px) => (float)(Math.Ceiling(px * 64.0) / 64.0);
+
+    /// <summary>
     /// Measures text. When <paramref name="includeLineText"/> is false the measurer
     /// skips building the per-line strings (only line count and heights are produced),
     /// which callers that never read <see cref="TextMeasurementResult.Lines"/> — like
