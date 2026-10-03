@@ -112,7 +112,7 @@ public sealed class LayoutEngine : IDisposable
         _context = new RenderContext(
             _options.ViewportWidthPx,
             _options.ViewportHeightPx,
-            _options.RootFontSizePx);
+            PageCalculatorOptions.RootFontSizePx);
 
         // The parser owns the HTML construction (global + chapter stylesheets injected
         // around the fragment); the engine only passes the fragment and styles down.
@@ -1130,10 +1130,10 @@ public sealed class LayoutEngine : IDisposable
         var computed = GetComputedStyle(el);
         var fs = computed.GetPropertyValue("font-size");
         if (string.IsNullOrWhiteSpace(fs))
-            return _options.RootFontSizePx;
+            return PageCalculatorOptions.RootFontSizePx;
 
         // em/% in font-size resolve against the parent's RESOLVED font-size.
-        var parentFontSize = _options.RootFontSizePx;
+        var parentFontSize = PageCalculatorOptions.RootFontSizePx;
         if (el.ParentElement is { } parent)
             parentFontSize = ResolveFontSize(parent);
 

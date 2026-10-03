@@ -220,7 +220,7 @@ public sealed class HtmlParser
         var key = $"{o.FontSize.ToString(ci)}|{o.LineHeight.ToString(ci)}|{o.LetterSpacing.ToString(ci)}|" +
                   $"{o.WordSpacing.ToString(ci)}|{o.ParagraphSpacing.ToString(ci)}|{o.TextIndent.ToString(ci)}|" +
                   $"{o.VerticalMargin.ToString(ci)}|{o.HorizontalMargin.ToString(ci)}|" +
-                  $"{o.PageHeightPx.ToString(ci)}|{o.PageWidthPx.ToString(ci)}|{o.RootFontSizePx.ToString(ci)}";
+                  $"{o.PageHeightPx.ToString(ci)}|{o.PageWidthPx.ToString(ci)}|{PageCalculatorOptions.RootFontSizePx.ToString(ci)}";
         if (_scope.GlobalCss.TryGetValue(key, out var cached)) return cached;
 
         var css = BuildGlobalCssCore(o);
@@ -256,7 +256,7 @@ public sealed class HtmlParser
                      --page-height: calc({{o.PageHeightPx}} * 1px);
                      --page-width: calc({{o.PageWidthPx}} * 1px);
 
-                     font-size: calc({{o.RootFontSizePx.ToString("0.00", ci)}} * 1px);
+                     font-size: calc({{PageCalculatorOptions.RootFontSizePx.ToString("0.00", ci)}} * 1px);
                      line-height: {{ITextMeasurer.NormalLineHeightMultiplier.ToString("0.00", ci)}};
                      height: var(--page-height);
                      width: var(--page-width);

@@ -2,6 +2,9 @@ namespace BookHeaven.Core.DOM.Services;
 
 public sealed class PageCalculatorOptions
 {
+    /// <summary>Root font size in pixels (used to resolve em/rem).</summary>
+    public const float RootFontSizePx = 16;
+
     public int ViewportWidthPx { get; set; } = 1024;
     public int ViewportHeightPx { get; set; } = 768;
 
@@ -10,9 +13,6 @@ public sealed class PageCalculatorOptions
 
     /// <summary>Page height in pixels.</summary>
     public int PageHeightPx { get; set; }
-
-    /// <summary>Root font size in pixels (used to resolve em/rem).</summary>
-    public float RootFontSizePx { get; } = 16;
 
     /// <summary>Enable hyphenation during line breaking.</summary>
     public bool EnableHyphenation { get; set; } = false;
@@ -23,8 +23,7 @@ public sealed class PageCalculatorOptions
     /// <summary>Fallback image height in pixels when aspect ratio is not specified.</summary>
     public float DefaultImageHeightPx { get; set; } = 150f;
 
-    // Profile-like reader settings (same as BookHeaven.Core.Entities.ProfileSettings, excluding Ids and SelectedLayout)
-    public float FontSize { get; set; }
+    public float FontSize { get; set; } = RootFontSizePx;
     public float HorizontalMargin { get; set; }
     public float VerticalMargin { get; set; }
     public float LineHeight { get; set; }
