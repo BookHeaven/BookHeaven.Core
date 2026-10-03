@@ -251,13 +251,13 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
 
         void PlaceWord(string w)
         {
-            var limit = ((lineCount == 0 && firstLineWidthPx.HasValue) ? firstLineWidthPx.Value : maxWidthPx);
+            var limit = lineCount == 0 && firstLineWidthPx.HasValue ? firstLineWidthPx.Value : maxWidthPx;
             var wWidth = GetWordWidth(w, fontSizePx, style);
             if (letterSpacingPx.HasValue && w.Length > 1)
             {
                 wWidth += (w.Length - 1) * letterSpacingPx.Value;
             }
-            var tokenWidth = (lineEmpty ? wWidth : (currentWidth + spaceWidth + wWidth));
+            var tokenWidth = lineEmpty ? wWidth : currentWidth + spaceWidth + wWidth;
             if (tokenWidth <= limit || lineEmpty)
             {
                 if (!lineEmpty)
@@ -266,7 +266,6 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                 }
                 sb?.Append(w);
                 currentWidth = tokenWidth;
-                lineEmpty = false;
             }
             else
             {
@@ -302,7 +301,6 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     currentWidth = GetWordWidth(tail, fontSizePx, style);
                     if (letterSpacingPx.HasValue && tail.Length > 1)
                         currentWidth += (tail.Length - 1) * letterSpacingPx.Value;
-                    lineEmpty = false;
                 }
                 else
                 {
@@ -314,9 +312,10 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     lineCount++;
                     sb?.Append(w);
                     currentWidth = wWidth;
-                    lineEmpty = false;
                 }
             }
+
+            lineEmpty = false;
         }
 
         // A <br> (U+FFFC) materializes the current line — even an empty one — and
@@ -402,7 +401,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     // per unique word, as AddUtf8 would allocate).
                     buffer.AddUtf16(text.AsSpan());
                     buffer.GuessSegmentProperties();
-                    shaper.HbFont.Shape(buffer, []);
+                    shaper.HbFont.Shape(buffer);
                     var positions = buffer.GetGlyphPositionSpan();
                     advanceSum = 0f;
                     foreach (var position in positions)
