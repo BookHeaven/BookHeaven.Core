@@ -281,13 +281,13 @@ public static partial class TextRunWrapper
         {
             if (string.IsNullOrEmpty(run.Text) || run.FontSizePx <= 0f) continue;
             var sawWord = false;
-            ForEachSegment(run.Text, part =>
+            ForEachSegment(run.Text, seg =>
             {
-                if (part.Length == 0)
+                if (seg.Word.Length == 0)
                 {
-                    // Leading/trailing whitespace of this run: remember its size and
-                    // style as the owner of a space that carries over to the next word.
-                    if (!pendingSpace.HasValue)
+                    // Leading/trailing separator of this run: only a real space carries
+                    // over as the owner of a boundary space; a zero-width break does not.
+                    if (seg.SpaceBefore && !pendingSpace.HasValue)
                     {
                         pendingSpace = run.FontSizePx;
                         pendingSpaceStyle = run.Style;
@@ -296,18 +296,21 @@ public static partial class TextRunWrapper
                 }
                 // A <br> (U+FFFC) inside the segment is a forced break: it emits a
                 // break token and resets the space state (no space after a break).
-                if (part.IndexOf('\uFFFC') < 0)
+                if (seg.Word.IndexOf('\uFFFC') < 0)
                 {
-                    // No break in the segment (the common case): no Split array.
-                    var space = sawWord ? run.FontSizePx : pendingSpace;
-                    var spaceStyle = sawWord ? run.Style : pendingSpaceStyle;
-                    tokens.Add(new Token(part, run.FontSizePx, run.Style, space, spaceStyle));
+                    // No break in the segment (the common case): no Split array. A real
+                    // space is internal (owned by this run) after the first word, or a
+                    // boundary space carried over from a previous run; a zero-width break
+                    // (or nothing) owns no space.
+                    var space = seg.SpaceBefore ? (sawWord ? run.FontSizePx : pendingSpace) : null;
+                    var spaceStyle = seg.SpaceBefore ? (sawWord ? run.Style : pendingSpaceStyle) : null;
+                    tokens.Add(new Token(seg.Word, run.FontSizePx, run.Style, space, spaceStyle));
                     sawWord = true;
                     pendingSpace = null;
                     pendingSpaceStyle = null;
                     return;
                 }
-                var segments = part.Split('\uFFFC');
+                var segments = seg.Word.Split('\uFFFC');
                 for (var i = 0; i < segments.Length; i++)
                 {
                     if (i > 0)
@@ -317,14 +320,15 @@ public static partial class TextRunWrapper
                         pendingSpace = null;
                         pendingSpaceStyle = null;
                     }
-                    var seg = segments[i];
-                    if (seg.Length == 0) continue;
-                    // A word. The space before it is internal (owned by this run) for
-                    // any word after the first, otherwise it's a boundary space carried
-                    // over from a previous run (or absent).
-                    var space = sawWord ? run.FontSizePx : pendingSpace;
-                    var spaceStyle = sawWord ? run.Style : pendingSpaceStyle;
-                    tokens.Add(new Token(seg, run.FontSizePx, run.Style, space, spaceStyle));
+                    var word = segments[i];
+                    if (word.Length == 0) continue;
+                    // The first sub-segment uses the segment's own separator; sub-segments
+                    // after a <br> use the internal/boundary space (the break resets the
+                    // state, so the first word after it owns no space).
+                    var spaceBefore = i == 0 ? seg.SpaceBefore : true;
+                    var space = spaceBefore ? (sawWord ? run.FontSizePx : pendingSpace) : null;
+                    var spaceStyle = spaceBefore ? (sawWord ? run.Style : pendingSpaceStyle) : null;
+                    tokens.Add(new Token(word, run.FontSizePx, run.Style, space, spaceStyle));
                     sawWord = true;
                     pendingSpace = null;
                     pendingSpaceStyle = null;
@@ -349,31 +353,63 @@ public static partial class TextRunWrapper
         c is ' ' or '\t' or '\r' or '\n' or '\f' or '\u0085' or '\u2028' or '\u2029';
 
     /// <summary>
+    /// Zero-width characters that create a line-break opportunity (UAX #14 class ZW):
+    /// the zero-width space. The joiners (U+200C/U+200D, class CJ) and the BOM
+    /// (U+FEFF, class WJ) do NOT break, so they are deliberately excluded.
+    /// </summary>
+    public static bool IsZeroWidthBreak(char c) => c is '\u200B';
+
+    /// <summary>
+    /// Any character that creates a line-break opportunity: collapsible whitespace
+    /// (a real, measurable space) or a zero-width break (a break with no width).
+    /// </summary>
+    public static bool IsBreakOpportunity(char c) => IsCollapsibleWhitespace(c) || IsZeroWidthBreak(c);
+
+    /// <summary>
+    /// A word produced by <see cref="ForEachSegment"/> plus whether the break that
+    /// precedes it is a real (measurable) space. <c>SpaceBefore</c> is false for the
+    /// first word, for a word preceded only by zero-width breaks, and for the empty
+    /// segments a leading/trailing separator yields.
+    /// </summary>
+    public readonly record struct TextSegment(string Word, bool SpaceBefore);
+
+    /// <summary>
     /// Invokes <paramref name="onSegment"/> for each maximal word and for the empty
-    /// segments that a leading/trailing whitespace run produces, in order — the same
+    /// segments that a leading/trailing separator run produces, in order — the same
     /// sequence as <c>CollapsibleWhitespace().Split(text)</c> but without the regex
     /// engine and without the <see cref="string"/>[] allocation. Only the word
     /// substrings themselves are allocated (callers need them as cache keys / tokens).
+    /// A separator run is a break opportunity made of collapsible whitespace and/or
+    /// zero-width breaks; <see cref="TextSegment.SpaceBefore"/> is true only when the
+    /// run contains at least one collapsible-whitespace character (a real space).
     /// </summary>
-    public static void ForEachSegment(string text, Action<string> onSegment)
+    public static void ForEachSegment(string text, Action<TextSegment> onSegment)
     {
         var n = text.Length;
         var i = 0;
         var seenWord = false;
+        var pendingSpace = false;
         while (i < n)
         {
-            if (IsCollapsibleWhitespace(text[i]))
+            if (IsBreakOpportunity(text[i]))
             {
-                while (i < n && IsCollapsibleWhitespace(text[i])) i++;
-                // A whitespace run yields an empty segment only when it leads (before
+                var sawRealSpace = false;
+                while (i < n && IsBreakOpportunity(text[i]))
+                {
+                    if (IsCollapsibleWhitespace(text[i])) sawRealSpace = true;
+                    i++;
+                }
+                // A separator run yields an empty segment only when it leads (before
                 // the first word) or trails (after the last word); internal runs are
                 // pure separators and emit nothing — matching Regex.Split with '+'.
-                if (!seenWord || i >= n) onSegment(string.Empty);
+                if (!seenWord || i >= n) onSegment(new TextSegment(string.Empty, sawRealSpace));
+                pendingSpace = sawRealSpace;
                 continue;
             }
             var start = i;
-            while (i < n && !IsCollapsibleWhitespace(text[i])) i++;
-            onSegment(text.AsSpan(start, i - start).ToString());
+            while (i < n && !IsBreakOpportunity(text[i])) i++;
+            onSegment(new TextSegment(text.AsSpan(start, i - start).ToString(), pendingSpace));
+            pendingSpace = false;
             seenWord = true;
         }
     }
