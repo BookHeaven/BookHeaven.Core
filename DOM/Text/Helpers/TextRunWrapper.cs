@@ -298,12 +298,17 @@ public static partial class TextRunWrapper
                 // break token and resets the space state (no space after a break).
                 if (seg.Word.IndexOf('\uFFFC') < 0)
                 {
-                    // No break in the segment (the common case): no Split array. A real
-                    // space is internal (owned by this run) after the first word, or a
-                    // boundary space carried over from a previous run; a zero-width break
-                    // (or nothing) owns no space.
-                    var space = seg.SpaceBefore ? (sawWord ? run.FontSizePx : pendingSpace) : null;
-                    var spaceStyle = seg.SpaceBefore ? (sawWord ? run.Style : pendingSpaceStyle) : null;
+                    // No break in the segment (the common case): no Split array. After the
+                    // first word a real space is internal and owned by this run. For the
+                    // first word, a boundary space carried over from the previous run wins
+                    // (CSS collapses adjacent spaces into one, attributed to the first run);
+                    // failing that, the run's own leading space applies.
+                    var space = !sawWord && pendingSpace.HasValue
+                        ? pendingSpace
+                        : seg.SpaceBefore ? run.FontSizePx : null;
+                    var spaceStyle = !sawWord && pendingSpace.HasValue
+                        ? pendingSpaceStyle
+                        : seg.SpaceBefore ? run.Style : null;
                     tokens.Add(new Token(seg.Word, run.FontSizePx, run.Style, space, spaceStyle));
                     sawWord = true;
                     pendingSpace = null;
