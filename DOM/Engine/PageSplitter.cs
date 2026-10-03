@@ -343,6 +343,8 @@ public static class PageSplitter
             // around the child flow, and its propagated PageBreakBefore/After
             // double-break safely: the guard (usedOnPage > 0) skips a break on an
             // empty page.
+            var flowStart = UsedOnPage;
+            var flowStartPage = CurrentPage;
             var childPrevBottom = 0f;
             var childPrevZeroHeight = 0f;
             for (var ci = 0; ci < container.Children.Count; ci++)
@@ -350,6 +352,36 @@ public static class PageSplitter
                 PlaceBlock(container.Children[ci], blockIdx, ci, ShouldTrimTopMargin(container, ci),
                     nextBlock: ci + 1 < container.Children.Count ? container.Children[ci + 1] : null,
                     ref childPrevBottom, ref childPrevZeroHeight);
+            }
+
+            // A FIXED-height container's box is authoritative (height / min-height /
+            // max-height): it occupies exactly ContentHeight in the flow, whatever
+            // the children consume. When the children underflow the box (e.g. a
+            // min-height taller than the content) the box's remaining height is
+            // consumed after them — and, like paddings, it is never truncated at a
+            // break: if it does not fit the page remainder it overflows the page
+            // edge and the excess carries into the next page, pushing the following
+            // block down (browser behaviour). A box taller than a page therefore
+            // pushes the following content to the next page even when every child
+            // fit the first one.
+            if ((container.Flags & LayoutBlockFlags.FixedHeight) != 0)
+            {
+                // Total flow distance the children consumed, counting the full
+                // height of every page they broke across (UsedOnPage alone only
+                // measures the last page).
+                var consumed = (CurrentPage - flowStartPage) * PageHeight + (UsedOnPage - flowStart);
+                var deficit = container.ContentHeight - consumed;
+                if (deficit > 0f)
+                {
+                    if (UsedOnPage + deficit > PageHeight && UsedOnPage > 0f) NewPage();
+                    UsedOnPage += deficit;
+                    if (UsedOnPage > PageHeight)
+                    {
+                        var overflow = UsedOnPage - PageHeight;
+                        NewPage();
+                        UsedOnPage = overflow;
+                    }
+                }
             }
 
             // WITH padding-bottom the last child's effective bottom margin does NOT
