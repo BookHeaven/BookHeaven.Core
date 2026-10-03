@@ -58,6 +58,7 @@ public sealed class HtmlParser
         ["deg"] = "\u00B0", ["plusmn"] = "\u00B1", ["sup2"] = "\u00B2", ["sup3"] = "\u00B3",
         ["frac12"] = "\u00BD", ["frac14"] = "\u00BC", ["frac34"] = "\u00BE",
         ["euro"] = "\u20AC", ["pound"] = "\u00A3", ["cent"] = "\u00A2", ["yen"] = "\u00A5",
+        ["ZeroWidthSpace"] = "\u200B", ["zwnj"] = "\u200C", ["zwj"] = "\u200D",
     };
 
     /// <summary>
