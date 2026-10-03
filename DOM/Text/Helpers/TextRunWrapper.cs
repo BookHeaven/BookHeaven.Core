@@ -419,7 +419,9 @@ public static partial class TextRunWrapper
     /// the current line. Returns the index where the tail begins, or -1 if none. Hyphens
     /// (HY/HH/BA) break only after the dash, so the dash stays on the head line; em
     /// dashes (B2) break on both sides, so the dash goes to whichever side yields the
-    /// longer line (UAX #14). <paramref name="headWidth"/> measures a head substring at
+    /// longer line — except a break after the dash is skipped when the following
+    /// character may not start a line (UAX #14 LB13/LB19/LB21), in which case the dash
+    /// goes to the tail. <paramref name="headWidth"/> measures a head substring at
     /// the caller's own font size/style/letter-spacing, so the multi-run <see cref="Wrap"/>
     /// and the single-string measurer fast path share this one rule.
     /// </summary>
@@ -435,7 +437,13 @@ public static partial class TextRunWrapper
             }
             else if (IsBreakBothSidesDash(ch))
             {
-                if (Fits(word.AsSpan(0, i + 1).ToString()))
+                // A break AFTER the dash is only legal if the following character may
+                // start a line. LB13/LB19/LB21 forbid a break before IS/EX/CL/SY/QU/BA/
+                // HY/NS, so when the dash is followed by one of those (e.g. "Toh—."),
+                // the dash must go to the tail (break before the dash), matching the
+                // browser.
+                var canBreakAfter = i + 1 < word.Length && !IsNoBreakBefore(word[i + 1]);
+                if (canBreakAfter && Fits(word.AsSpan(0, i + 1).ToString()))
                     return i + 1; // dash on the head (longer line)
                 if (Fits(word.AsSpan(0, i).ToString()))
                     return i; // dash on the tail
@@ -473,4 +481,26 @@ public static partial class TextRunWrapper
     /// </summary>
     public static bool IsBreakBothSidesDash(char c) =>
         c is '\u2014'; // em dash (B2)
+
+    /// <summary>
+    /// Characters that may not start a line (UAX #14 LB13/LB19/LB21): sentence and
+    /// closing punctuation (IS/EX/CL/SY), quotes (QU), and non-starters (BA/HY/NS).
+    /// A break before any of these is forbidden, so a preceding B2 dash must move to
+    /// the tail line (e.g. "Toh—." breaks as "Toh" / "—.", not "Toh—" / ".").
+    /// </summary>
+    public static bool IsNoBreakBefore(char c) => c is
+        // IS — infix separators (LB13)
+        '\u002C' or '\u002E' or '\u003A' or '\u003B'
+        // SY — symbols (LB13)
+        or '\u002F'
+        // EX — exclamation / interrogation (LB13)
+        or '\u0021' or '\u003F'
+        // CL — closing punctuation (LB13)
+        or '\u0029' or '\u005D' or '\u007D'
+        // QU — quotation marks (LB19)
+        or '\u0022' or '\u0027'
+        // BA — break before/after (LB21)
+        or '\u007C' or '\u2012' or '\u2013'
+        // HY — hyphen (LB21)
+        or '\u002D';
 }
