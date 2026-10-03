@@ -41,12 +41,19 @@ public static class ImageHelpers
     /// Computes the box size of an image element (CSS replaced-element model):
     /// computed width/height, then attributes, then the intrinsic size from the
     /// cached file, deriving the missing dimension from the aspect ratio.
+    /// Explicitly declared dimensions are used as-is (distortion allowed); the
+    /// aspect ratio only fills a dimension that is <c>auto</c>.
     /// </summary>
+    /// <param name="containerRefHeight">
+    /// Height of the containing block in px, or 0 when it is <c>auto</c> (normal
+    /// flow). A percentage height resolves against it; against an auto height it
+    /// is indeterminate and falls through to the intrinsic size, per CSS.
+    /// </param>
     public static (float Width, float Height) MeasureImageSize(
         Element el, CssStyle computed,
         Func<string?, float, float?, float?> parseLength,
         PageCalculatorOptions options, CoreOptions coreOptions,
-        float availableWidth, float containerRefWidth, float fontSize,
+        float availableWidth, float containerRefWidth, float containerRefHeight, float fontSize,
         CssStyle? srcComputed = null)
     {
         // A wrapper (e.g. <figure>) carries no src of its own: use the first
@@ -64,45 +71,35 @@ public static class ImageHelpers
         var imgWidth = float.NaN;
         var imgHeight = float.NaN;
 
-        bool computedWidthParsed = false, computedHeightParsed = false;
-        bool attrWidthParsed = false, attrHeightParsed = false;
-        float parsedAttrWidth = 0f, parsedAttrHeight = 0f;
-        float computedWidth = 0f, computedHeight = 0f;
+        bool computedWidthParsed = false, attrWidthParsed = false;
 
         var wp = parseLength(srcStyle.GetPropertyValue("width"), containerRefWidth, fontSize);
-        var hp = parseLength(srcStyle.GetPropertyValue("height"), options.PageHeightPx, fontSize);
-        if (wp is > 0) { imgWidth = wp.Value; computedWidthParsed = true; computedWidth = wp.Value; }
-        if (hp is > 0) { imgHeight = hp.Value; computedHeightParsed = true; computedHeight = hp.Value; }
+        // Percentage heights resolve against the containing block's height, not
+        // the page's: with containerRefHeight == 0 a percentage parses to 0 and
+        // the dimension stays auto (indeterminate, per CSS).
+        var hp = parseLength(srcStyle.GetPropertyValue("height"), containerRefHeight, fontSize);
+        if (wp is > 0) { imgWidth = wp.Value; computedWidthParsed = true; }
+        if (hp is > 0) imgHeight = hp.Value;
 
+        // Non-positive attribute values are invalid and ignored.
         if (srcEl.GetAttribute("width") is { } aw && !string.IsNullOrWhiteSpace(aw))
         {
-            if (float.TryParse(aw, NumberStyles.Float, CultureInfo.InvariantCulture, out var aval))
+            var aval = float.TryParse(aw, NumberStyles.Float | NumberStyles.AllowExponent, CultureInfo.InvariantCulture, out var n) && n > 0
+                ? n
+                : parseLength(aw, containerRefWidth, fontSize);
+            if (aval is > 0)
             {
                 attrWidthParsed = true;
-                parsedAttrWidth = aval;
-            }
-            else
-            {
-                var px = parseLength(aw, containerRefWidth, fontSize);
-                if (px.HasValue) { attrWidthParsed = true; parsedAttrWidth = px.Value; }
+                if (float.IsNaN(imgWidth)) imgWidth = aval.Value;
             }
         }
         if (srcEl.GetAttribute("height") is { } ah && !string.IsNullOrWhiteSpace(ah))
         {
-            if (float.TryParse(ah, NumberStyles.Float, CultureInfo.InvariantCulture, out var aval))
-            {
-                attrHeightParsed = true;
-                parsedAttrHeight = aval;
-            }
-            else
-            {
-                var px = parseLength(ah, options.PageHeightPx, fontSize);
-                if (px.HasValue) { attrHeightParsed = true; parsedAttrHeight = px.Value; }
-            }
+            var ahal = float.TryParse(ah, NumberStyles.Float | NumberStyles.AllowExponent, CultureInfo.InvariantCulture, out var n) && n > 0
+                ? n
+                : parseLength(ah, containerRefHeight, fontSize);
+            if (ahal is > 0 && float.IsNaN(imgHeight)) imgHeight = ahal.Value;
         }
-
-        if (float.IsNaN(imgWidth) && attrWidthParsed) imgWidth = parsedAttrWidth;
-        if (float.IsNaN(imgHeight) && attrHeightParsed) imgHeight = parsedAttrHeight;
 
         // Intrinsic image size from cache (a width-only or height-only
         // declaration must keep the image's aspect ratio).
@@ -145,8 +142,10 @@ public static class ImageHelpers
         var maxW = mw is > 0 ? Math.Min(availableWidth, mw.Value) : availableWidth;
         if (imgWidth > maxW) imgWidth = maxW;
 
-        // Derive the missing dimension from the intrinsic aspect ratio
-        // (CSS replaced-element model).
+        // Derive the missing (auto) dimension(s) from the intrinsic aspect
+        // ratio (CSS replaced-element model). Explicitly declared dimensions
+        // are never re-derived: a max-width clamp on an explicit width keeps
+        // the explicit height (distortion allowed, per CSS).
         if (intrinsicParsed)
         {
             bool widthMissing = float.IsNaN(imgWidth) || imgWidth <= 0;
@@ -162,36 +161,27 @@ public static class ImageHelpers
             }
             else if (widthMissing)
             {
-                imgWidth = imgHeight * (intrinsicW / (float)intrinsicH);
-                if (imgWidth > maxW)
-                {
-                    imgWidth = maxW;
-                    imgHeight = imgWidth * (intrinsicH / (float)intrinsicW);
-                }
+                imgWidth = Math.Min(imgHeight * (intrinsicW / (float)intrinsicH), maxW);
             }
         }
 
-        if (attrWidthParsed && attrHeightParsed)
-        {
-            if (parsedAttrWidth > 0) imgHeight = imgWidth * (parsedAttrHeight / parsedAttrWidth);
-        }
-        else if (computedWidthParsed && computedHeightParsed)
-        {
-            if (computedWidth > 0)
-            {
-                if (Math.Abs(imgWidth - computedWidth) > 0.001f) imgHeight = imgWidth * (computedHeight / computedWidth);
-                else imgHeight = computedHeight;
-            }
-        }
-
+        // Last-resort fallbacks so the caller never receives a NaN dimension.
+        if (float.IsNaN(imgWidth) || imgWidth <= 0) imgWidth = availableWidth;
         if (float.IsNaN(imgHeight) || imgHeight <= 0)
         {
             if (options.DefaultImageAspectRatio > 0) imgHeight = imgWidth / options.DefaultImageAspectRatio;
             else imgHeight = options.DefaultImageHeightPx;
         }
 
-        var mh = parseLength(srcStyle.GetPropertyValue("max-height"), options.PageHeightPx, fontSize);
-        if (mh is > 0 && !float.IsNaN(imgHeight) && imgHeight > mh.Value) imgHeight = mh.Value;
+        var mh = parseLength(srcStyle.GetPropertyValue("max-height"), containerRefHeight, fontSize);
+        if (mh is > 0 && imgHeight > mh.Value)
+        {
+            imgHeight = mh.Value;
+            // A capped auto height re-derives the width to keep the aspect
+            // ratio; an explicit width stays (distortion allowed, per CSS).
+            if (!computedWidthParsed && !attrWidthParsed && intrinsicParsed)
+                imgWidth = imgHeight * (intrinsicW / (float)intrinsicH);
+        }
 
         return (imgWidth, imgHeight);
     }
