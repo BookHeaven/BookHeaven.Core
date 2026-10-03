@@ -45,7 +45,6 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         var chapters = ebook.Content.Chapters;
 
         var results = new int[chapters.Count];
-        var normalized = options.Normalize();
 
         // Chapter CSS depends only on the chapter, so build it all up front
         // (it used to be rebuilt inside the loop, once per chapter).
@@ -60,7 +59,7 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         // family are resolved from the database; otherwise the sync path (default
         // font directory only) is used.
         var sharedMeasurer = sender != null && urlBuilder != null
-            ? await TextMeasurerFactory.CreateMeasurerAsync(normalized, sender, urlBuilder, cancellationToken)
+            ? await TextMeasurerFactory.CreateMeasurerAsync(options, sender, urlBuilder, cancellationToken)
             : TextMeasurerFactory.CreateMeasurer(coreOptions.Value.DefaultFontDirectory);
 
         // One shared, thread-safe CSS parser for the whole book: its rule cache
@@ -87,9 +86,9 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
                 await foreach (var i in queue.Reader.ReadAllAsync(cancellationToken))
                 {
                     // Generate layout blocks and split them into pages (block-based path).
-                    using var engine = new LayoutEngine(normalized, coreOptions, sharedMeasurer, sharedCssParser, scope);
+                    using var engine = new LayoutEngine(options, coreOptions, sharedMeasurer, sharedCssParser, scope);
                     var blocks = engine.GenerateLayoutBlocks(chapters[i].Content, chapterCss[i], cancellationToken);
-                    var map = PageSplitter.SplitToPages(blocks, normalized.PageHeightPx);
+                    var map = PageSplitter.SplitToPages(blocks, options.PageHeightPx);
 
                     // Indexed write: output is identical to a sequential run, no locking needed.
                     results[i] = map.Pages.Count;

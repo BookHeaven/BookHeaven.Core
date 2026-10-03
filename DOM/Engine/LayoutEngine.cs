@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.CSS.Models;
@@ -103,15 +104,15 @@ public sealed class LayoutEngine : IDisposable
         CssParser? sharedCssParser = null,
         ParseScope? scope = null)
     {
-        _options = (options ?? throw new ArgumentNullException(nameof(options))).Normalize();
+        _options = (options ?? throw new ArgumentNullException(nameof(options)));
         ArgumentNullException.ThrowIfNull(coreOptions);
         _coreOptions = coreOptions.Value;
 
         // Positive dimensions and font size, otherwise em/rem/% resolution breaks.
         _context = new RenderContext(
-            ClampPositive(_options.ViewportWidthPx, PageCalculatorOptions.DefaultPageWidthPx),
-            ClampPositive(_options.ViewportHeightPx, PageCalculatorOptions.DefaultPageHeightPx),
-            ClampPositive(_options.RootFontSizePx, PageCalculatorOptions.DefaultRootFontSizePx));
+            _options.ViewportWidthPx,
+            _options.ViewportHeightPx,
+            _options.RootFontSizePx);
 
         // The parser owns the HTML construction (global + chapter stylesheets injected
         // around the fragment); the engine only passes the fragment and styles down.
@@ -855,7 +856,7 @@ public sealed class LayoutEngine : IDisposable
             // image itself.
             var srcEl = ImageHelpers.FindImageWithSrc(el);
             var srcComputed = srcEl != null ? GetComputedStyle(srcEl) : null;
-            var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize, srcComputed);
+            var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, 0f, fontSize, srcComputed);
             contentHeight = imgHeight + genHeight;
             if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
 
@@ -899,7 +900,7 @@ public sealed class LayoutEngine : IDisposable
             if (leadingImage)
             {
                 var imgStyle = GetComputedStyle(images[0]);
-                var (w, h) = ImageHelpers.MeasureImageSize(images[0], imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
+                var (w, h) = ImageHelpers.MeasureImageSize(images[0], imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, 0f, fontSize);
                 leadingImgWidth = w;
                 leadingImgContribution = ImageHelpers.LineContribution(
                     imgStyle.GetPropertyValue("vertical-align"), h, resolvedLineHeight, strutDescent, fontSize, metrics.XHeight, ParseLengthToPx);
@@ -943,7 +944,7 @@ public sealed class LayoutEngine : IDisposable
                 foreach (var img in images)
                 {
                     var imgStyle = GetComputedStyle(img);
-                    var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, fontSize);
+                    var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, 0f, fontSize);
                     imageBoxes.Add((imgWidth, imgHeight, imgStyle.GetPropertyValue("vertical-align")));
                 }
                 imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight, strutDescent, fontSize, metrics.XHeight, ParseLengthToPx));
@@ -995,9 +996,9 @@ public sealed class LayoutEngine : IDisposable
         var meas = runs.Count == 1
             ? _measurer.Measure(runs[0].Text, runs[0].FontSizePx, availableWidth,
                 lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
-                letterSpacingPx, wordSpacingPx, firstLineWidthPx, runs[0].Style, includeLineText: false)
-            : _measurer.MeasureRuns(runs, availableWidth, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx, includeLineText: false);
-
+                letterSpacingPx, wordSpacingPx, firstLineWidthPx, runs[0].Style, includeLineText: true)
+            : _measurer.MeasureRuns(runs, availableWidth, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx, includeLineText: true);
+        
         var lineHeights = meas.LineHeights.Length > 0 ? meas.LineHeights : null;
         for (var li = 0; li < meas.LineCount; li++)
         {

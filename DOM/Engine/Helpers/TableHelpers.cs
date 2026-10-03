@@ -1093,7 +1093,7 @@ internal static class TableHelpers
             {
                 var (_, imgHeight) = ImageHelpers.MeasureImageSize(
                     img, getStyle(img), ParseLen, options, coreOptions,
-                    textWidth, textWidth, getFontSize(img));
+                    textWidth, textWidth, 0f, getFontSize(img));
                 if (isBlockDisplay(img)) blockImagesHeight += imgHeight;
                 else inlineImageHeight = Math.Max(inlineImageHeight, imgHeight);
             }
