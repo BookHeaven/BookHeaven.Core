@@ -142,6 +142,17 @@ public static class PageSplitter
         /// <summary>True once the dry run needed more than one page.</summary>
         private bool Paged { get; set; }
 
+        /// <summary>
+        /// True when the block currently being placed forced a page break BEFORE its
+        /// content was placed (forced break, avoid hint, margin gap or padding that
+        /// did not fit the page remainder). The browser creates a fresh column for
+        /// such a block even when it is zero-height, so a zero-height block with
+        /// margins must materialize the page it forced (see PlaceBox). Reset at the
+        /// top of every PlaceBlock; post-placement breaks (line/box overflow,
+        /// PageBreakAfter) do not set it.
+        /// </summary>
+        private bool ForcedPageBreak;
+
         public float PrevBottomMargin;
 
         public float PrevZeroHeightMargin;
@@ -162,9 +173,14 @@ public static class PageSplitter
         public void PlaceBlock(LayoutBlock block, int blockIdx, int childIdx, bool trimTopMargin, LayoutBlock? nextBlock, ref float prevBottomMargin, ref float prevZeroHeightMargin)
         {
             var flags = block.Flags;
+            ForcedPageBreak = false;
 
             // 1. Forced page break before the block.
-            if ((flags & LayoutBlockFlags.PageBreakBefore) != 0 && UsedOnPage > 0) NewPage();
+            if ((flags & LayoutBlockFlags.PageBreakBefore) != 0 && UsedOnPage > 0)
+            {
+                ForcedPageBreak = true;
+                NewPage();
+            }
 
             // 2. Margin collapse (CSS): gap = max(this block's effective top margin,
             //    the previous sibling's effective bottom margin). A block's top margin
@@ -216,7 +232,11 @@ public static class PageSplitter
                 var contentH = MeasureContentFlow(block, blockIdx);
                 var fitsInPlace = UsedOnPage + gap + block.PaddingTop + contentH + block.PaddingBottom <= PageHeight;
                 var fitsOnFresh = contentH <= PageHeight && block.PaddingTop + contentH + block.PaddingBottom <= PageHeight;
-                if (!fitsInPlace && fitsOnFresh) NewPage();
+                if (!fitsInPlace && fitsOnFresh)
+                {
+                    ForcedPageBreak = true;
+                    NewPage();
+                }
             }
 
             // 2c. AvoidBreakAfter (CSS break-after: avoid): a page break must not land
@@ -234,7 +254,11 @@ public static class PageSplitter
                 if (fitsInPlace)
                 {
                     var usedAfter = UsedOnPage + gap + block.PaddingTop + contentH + block.PaddingBottom;
-                    if (!CanStartOnPage(nextBlock, usedAfter, block)) NewPage();
+                    if (!CanStartOnPage(nextBlock, usedAfter, block))
+                    {
+                        ForcedPageBreak = true;
+                        NewPage();
+                    }
                 }
             }
 
@@ -245,6 +269,7 @@ public static class PageSplitter
                     // The gap does not fit below the previous sibling: break the page.
                     // The new page is never the first, so the collapsed margin is
                     // trimmed at the boundary (gap -> 0).
+                    ForcedPageBreak = true;
                     NewPage();
                 }
                 else if (UsedOnPage == 0f && CurrentPage > 0)
@@ -264,7 +289,11 @@ public static class PageSplitter
             //    (with its padding) moves to a new page.
             if (block.PaddingTop > 0f)
             {
-                if (UsedOnPage + block.PaddingTop > PageHeight && UsedOnPage > 0f) NewPage();
+                if (UsedOnPage + block.PaddingTop > PageHeight && UsedOnPage > 0f)
+                {
+                    ForcedPageBreak = true;
+                    NewPage();
+                }
                 UsedOnPage = Math.Min(UsedOnPage + block.PaddingTop, PageHeight);
             }
 
@@ -535,7 +564,10 @@ public static class PageSplitter
         /// <summary>
         /// Materializes the current page if it received content (e.g. a padding
         /// overflow) even though it received no slice. A page that is empty for
-        /// real (UsedOnPage == 0) is intentionally not emitted.
+        /// real (UsedOnPage == 0) is intentionally not emitted — e.g. the page a
+        /// trailing PageBreakAfter starts. (A zero-height block with margins that
+        /// forced the page break materializes its page itself, via its slice in
+        /// PlaceBox.)
         /// </summary>
         public void MaterializeCurrentPageIfUsed()
         {
@@ -634,7 +666,20 @@ public static class PageSplitter
             var h = block.ContentHeight;
             if (h <= 0f)
             {
-                // Zero-height block: nothing is placed, no page is materialized (old behavior).
+                // Zero-height block: it occupies space only through its margins/padding.
+                // With none of them it occupies nothing — the browser creates no column
+                // for it, so nothing is recorded and no page is materialized (old behavior).
+                // With margins/padding it gets a zero-height slice (debug trace). Recording
+                // the slice also materializes the page when the block FORCED the page break
+                // (its margin did not fit below the previous sibling): the browser spills it
+                // into a fresh column and counts that column. At the top of a page created by
+                // the PREVIOUS block's overflow (the margin is trimmed at the boundary) the
+                // browser does not create a column for a zero-height block, so the slice is
+                // skipped unless the page is already materialized.
+                var occupiesSpace = block.MarginTop > 0f || block.MarginBottom > 0f
+                    || block.PaddingTop > 0f || block.PaddingBottom > 0f;
+                if (occupiesSpace && (ForcedPageBreak || UsedOnPage > 0f || CurrentPage < PageBlocks.Count))
+                    RecordSlice(blockIdx, childIdx, 0, 0, UsedOnPage, 0f);
                 return;
             }
 
