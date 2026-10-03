@@ -207,28 +207,29 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         var lineCount = 0;
         var lineEmpty = true;
 
-        TextRunWrapper.ForEachSegment(text, part =>
+        TextRunWrapper.ForEachSegment(text, seg =>
         {
-            if (part.Length == 0)
+            if (seg.Word.Length == 0)
             {
-                // Leading/trailing whitespace: a browser collapses and drops it.
+                // Leading/trailing separator: a browser collapses and drops it.
                 return;
             }
             // Fast path: the vast majority of segments contain no embedded
             // object placeholder, so skip the Split array allocation entirely.
-            var objIndex = part.IndexOf('\uFFFC');
-            if (objIndex < 0)
+            if (seg.Word.IndexOf('\uFFFC') < 0)
             {
-                PlaceWord(part);
+                PlaceWord(seg.Word, seg.SpaceBefore);
             }
             else
             {
-                var segments = part.Split('\uFFFC');
+                var segments = seg.Word.Split('\uFFFC');
                 for (var i = 0; i < segments.Length; i++)
                 {
                     if (i > 0) ForceBreak();
                     if (segments[i].Length == 0) continue;
-                    PlaceWord(segments[i]);
+                    // The first sub-segment uses the segment's own separator; after a
+                    // <br> the space state is reset (no space).
+                    PlaceWord(segments[i], i == 0 ? seg.SpaceBefore : false);
                 }
             }
         });
@@ -249,7 +250,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             TotalHeightPx = total
         };
 
-        void PlaceWord(string w)
+        void PlaceWord(string w, bool spaceBefore)
         {
             var limit = lineCount == 0 && firstLineWidthPx.HasValue ? firstLineWidthPx.Value : maxWidthPx;
             var wWidth = GetWordWidth(w, fontSizePx, style);
@@ -257,10 +258,13 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             {
                 wWidth += (w.Length - 1) * letterSpacingPx.Value;
             }
-            var tokenWidth = lineEmpty ? wWidth : currentWidth + spaceWidth + wWidth;
+            // A real space has width; a zero-width break (U+200B) is a break
+            // opportunity with no width, so it adds nothing between the words.
+            var spaceW = spaceBefore ? spaceWidth : 0f;
+            var tokenWidth = lineEmpty ? wWidth : currentWidth + spaceW + wWidth;
             if (tokenWidth <= limit || lineEmpty)
             {
-                if (!lineEmpty)
+                if (!lineEmpty && spaceBefore)
                 {
                     sb?.Append(' ');
                 }
@@ -275,7 +279,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                 // pushes the dash + remainder to the next. Without this, a word like
                 // "oeste—." is atomic and wraps whole, adding a line the browser
                 // doesn't have.
-                var dashIndex = TextRunWrapper.FindBreakableDash(w, currentWidth, spaceWidth, limit, head =>
+                var dashIndex = TextRunWrapper.FindBreakableDash(w, currentWidth, spaceW, limit, head =>
                 {
                     var width = GetWordWidth(head, fontSizePx, style);
                     if (letterSpacingPx.HasValue && head.Length > 1)
@@ -289,8 +293,9 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     var headWidth = GetWordWidth(head, fontSizePx, style);
                     if (letterSpacingPx.HasValue && head.Length > 1)
                         headWidth += (head.Length - 1) * letterSpacingPx.Value;
-                    sb?.Append(' ').Append(head);
-                    currentWidth += spaceWidth + headWidth;
+                    if (spaceBefore) sb?.Append(' ');
+                    sb?.Append(head);
+                    currentWidth += spaceW + headWidth;
                     if (sb is not null)
                     {
                         lines.Add(sb.ToString());
