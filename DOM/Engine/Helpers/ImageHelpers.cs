@@ -17,11 +17,7 @@ public static class ImageHelpers
     /// <summary>True for the tags the engine treats as image (replaced) elements.</summary>
     public static bool IsImageElement(Element el)
     {
-        return el.TagName.ToUpperInvariant() switch
-        {
-            "IMG" or "IMAGE" => true,
-            _ => false
-        };
+        return el.TagName is "img" or "image";
     }
 
     /// <summary>First descendant image element with a non-empty src/href, if any.</summary>

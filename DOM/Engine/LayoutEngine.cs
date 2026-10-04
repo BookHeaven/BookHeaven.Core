@@ -44,13 +44,16 @@ public sealed class LayoutEngine : IDisposable
     // Per-document state, cleared per call. The key includes the element's structural
     // context (preceding siblings + ancestor chain) so sibling/descendant combinators
     // can't poison the cache across structurally-different elements.
-    // Two-level memo: parent style (reference) → 64-bit fingerprint → entry. The fingerprint
-    // packs tag/attrs/inline/sibling/ancestor into a long (no tuple boxing); the entry stores
-    // the raw components so a hit is verified for exact equality (a hash collision degrades to
-    // a re-resolve, never a wrong style). Cleared per GenerateLayoutBlocks call and on Dispose.
-    // Sentinel outer key for elements with no parent (the root); Dictionary keys must be non-null.
-    private static readonly CssStyle NoParent = new();
-
+    // Two-level memo: parent FINGERPRINT (long) → element 64-bit fingerprint → entry.
+    // The outer key is the parent's fingerprint, NOT its CssStyle reference: ResolveCore
+    // allocates a fresh CssStyle per element, so a reference key would be unique per
+    // element and the memo would degenerate into one single-entry inner dictionary per
+    // parent (no hits, pure overhead). Keying on the parent's fingerprint lets
+    // structurally-identical parents share one inner dictionary, so repeated
+    // (parent, element) shapes hit. Each fingerprint packs tag/attrs/inline/sibling/
+    // ancestor into a long (no tuple boxing); the entry stores the raw components so a
+    // hit is verified for exact equality (a hash collision degrades to a re-resolve,
+    // never a wrong style). Cleared per GenerateLayoutBlocks call and on Dispose.
     private readonly CoreOptions _coreOptions;
     private readonly CssLengthParser _lengthParser;
     private readonly ITextMeasurer _measurer;
@@ -59,7 +62,7 @@ public sealed class LayoutEngine : IDisposable
     private readonly bool _ownsMeasurer;
     private readonly HtmlParser _parser;
     private readonly ParseScope _scope;
-    private readonly Dictionary<CssStyle, Dictionary<long, StyleEntry>> _styleMemo = [];
+    private readonly Dictionary<long, Dictionary<long, StyleEntry>> _styleMemo = [];
     private List<int> _afterRules = [];
 
     // Per-document indexes of the rules that target each pseudo-element (their last
@@ -158,7 +161,10 @@ public sealed class LayoutEngine : IDisposable
         }
 
         var matchedSet = new HashSet<Element>(all);
-        var topLevel = all.Where(e => !HasAncestorInSet(e, matchedSet)).ToList();
+        var topLevel = new List<Element>(all.Count);
+        foreach (var e in all)
+            if (!HasAncestorInSet(e, matchedSet))
+                topLevel.Add(e);
 
         // A top-level INLINE image (no block ancestor) is not a block box: the
         // browser wraps it in an anonymous block. Consecutive ones share one.
@@ -251,14 +257,30 @@ public sealed class LayoutEngine : IDisposable
     /// </summary>
     private StyleEntry GetStyleEntry(Element el)
     {
-        var parent = el.ParentElement is { } p ? GetStyleEntry(p).Style : null;
-        var parentKey = parent ?? NoParent;
+        // Resolve the parent first (top-down) and use its FINGERPRINT as the outer
+        // memo key (see the _styleMemo comment): a CssStyle reference would be unique
+        // per element and defeat the cache. The root has no parent → fingerprint 0.
+        CssStyle? parent;
+        long parentFingerprint;
+        if (el.ParentElement is { } p)
+        {
+            var parentEntry = GetStyleEntry(p);
+            parent = parentEntry.Style;
+            parentFingerprint = parentEntry.Fingerprint;
+        }
+        else
+        {
+            parent = null;
+            parentFingerprint = 0;
+        }
+
         var inline = el.Style;
         var siblingCtx = el.SiblingContextHash;
         var ancestorCtx = el.AncestorContextHash;
         var fingerprint = StyleFingerprint(el, inline, siblingCtx, ancestorCtx);
-        if (_styleMemo.TryGetValue(parentKey, out var inner)
+        if (_styleMemo.TryGetValue(parentFingerprint, out var inner)
             && inner.TryGetValue(fingerprint, out var cached)
+            && cached.ParentFingerprint == parentFingerprint
             && cached.Tag == el.TagName
             && cached.Attrs == el.AttributeSignature
             && cached.Inline == inline
@@ -278,10 +300,12 @@ public sealed class LayoutEngine : IDisposable
             Tag = el.TagName,
             Attrs = el.AttributeSignature,
             SiblingCtx = siblingCtx,
-            AncestorCtx = ancestorCtx
+            AncestorCtx = ancestorCtx,
+            Fingerprint = fingerprint,
+            ParentFingerprint = parentFingerprint
         };
         if (inner is null)
-            _styleMemo[parentKey] = inner = [];
+            _styleMemo[parentFingerprint] = inner = [];
         inner[fingerprint] = entry;
         return entry;
     }
@@ -445,9 +469,13 @@ public sealed class LayoutEngine : IDisposable
 
         // Inline-display images are NOT block children: they belong to the
         // element's inline content (baseline model), not to its block flow.
-        var blockChildren = el.Children
-            .Where(c => IsBlockChild(c) && !IsHidden(c) && !IsInlineImage(c))
-            .ToList();
+        // Pre-sized (like LINQ ToList) so the manual loop doesn't pay array-resize
+        // allocations; the filter only ever shrinks the count. Children is a List, so
+        // .Count is a field read (no iteration, no alloc).
+        var blockChildren = new List<Element>(el.Children.Count);
+        foreach (var c in el.Children)
+            if (IsBlockChild(c) && !IsHidden(c) && !IsInlineImage(c))
+                blockChildren.Add(c);
         if (blockChildren.Count == 0)
         {
             // Leaf block: measure its full text content. An EMPTY leaf still
@@ -1305,10 +1333,17 @@ public sealed class LayoutEngine : IDisposable
         /// <summary>Resolved <c>::before</c> style, or null when no rule targets it.</summary>
         public CssStyle? Before;
 
+        /// <summary>This element's 64-bit fingerprint (the inner memo key).</summary>
+        public long Fingerprint;
+
         public required bool Hidden;
 
         // Raw key components, stored so a fingerprint hit is verified for exact equality.
         public string? Inline;
+
+        /// <summary>The parent's fingerprint (the outer memo key); verified on a hit.</summary>
+        public long ParentFingerprint;
+
         public long SiblingCtx;
         public required CssStyle Style;
         public string Tag = null!;

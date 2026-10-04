@@ -143,7 +143,7 @@ public static class StyleResolver
     {
         const int order = -1;
 
-        switch (el.TagName.ToLowerInvariant())
+        switch (el.TagName)
         {
             case "table":
                 Hint("cellspacing", "border-spacing", isLength: true);

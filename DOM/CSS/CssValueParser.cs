@@ -151,15 +151,17 @@ public static partial class CssValueParser
     /// True when the computed <c>display</c> is block-like. Images are inline by
     /// UA default; <c>figure</c> is block.
     /// </summary>
+    // display values are trimmed at parse time (CssParser/ParseInline), so a direct
+    // case-insensitive set lookup is allocation-free (the old Trim().ToLowerInvariant()
+    // allocated a string per call on the per-element hot path).
+    private static readonly HashSet<string> InlineDisplayValues =
+        new(StringComparer.OrdinalIgnoreCase) { "inline", "inline-block", "inline-flex", "inline-grid", "none" };
+
     public static bool IsBlockDisplay(string? display, string tagName)
     {
         if (string.IsNullOrWhiteSpace(display))
             return tagName.Equals("figure", StringComparison.OrdinalIgnoreCase);
-        return display.Trim().ToLowerInvariant() switch
-        {
-            "inline" or "inline-block" or "inline-flex" or "inline-grid" or "none" => false,
-            _ => true
-        };
+        return !InlineDisplayValues.Contains(display);
     }
 
     private static bool EqualsValue(string? value, string expected)

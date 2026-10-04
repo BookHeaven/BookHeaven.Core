@@ -63,6 +63,10 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     // times per book, and a fresh StringBuilder per call was a steady allocation
     // source. Lines are copied out via ToString before the buffer is reused.
     private readonly ThreadLocal<StringBuilder> _lineBuilder = new(() => new StringBuilder(512));
+    // The width probes are stable for the life of the measurer (the delegates capture
+    // this), so they're built once here instead of per MeasureRuns call (which boxed
+    // three delegates per text block).
+    private readonly TextWidthProbes _probes;
 
     /// <summary>
     /// Creates a measurer with one font file per style variant. Missing or
@@ -95,6 +99,11 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             }
             _shapers[i] = shaper;
         }
+
+        _probes = TextWidthProbes.Create(
+            wordWidth: GetWordWidth,
+            spaceWidth: (size, style) => GetWordWidth(" ", size, style),
+            charWidth: (ch, size, style) => MeasureShapedTextWidth(ch.ToString(), size, style));
     }
 
     /// <summary>
@@ -348,10 +357,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     public TextMeasurementResult MeasureRuns(IReadOnlyList<TextRun> runs, float maxWidthPx, float? lineHeightLengthPx = null, float? lineHeightMultiplier = null, float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true)
     {
         ArgumentNullException.ThrowIfNull(runs);
-        return TextRunWrapper.Wrap(runs, TextWidthProbes.Create(
-            wordWidth: GetWordWidth,
-            spaceWidth: (size, style) => GetWordWidth(" ", size, style),
-            charWidth: (ch, size, style) => MeasureShapedTextWidth(ch.ToString(), size, style)),
+        return TextRunWrapper.Wrap(runs, _probes,
             maxWidthPx, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx, includeLineText);
     }
 

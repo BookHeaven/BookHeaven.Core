@@ -61,23 +61,19 @@ public sealed class Element(string tagName) : Node
     /// <summary>Number of attributes on this element.</summary>
     public int AttributeCount => _attributes.Length;
 
-    // Lazily cached: the tree is immutable after parsing, and the engine walks
-    // Children several times per element — caching avoids an OfType iterator per call.
-    private List<Element>? _elementChildren;
-
-    /// <summary>Element children only (text nodes excluded), matching AngleSharp's <c>Children</c>.</summary>
-    public IEnumerable<Element> Children
+    /// <summary>Element children only (text nodes excluded).</summary>
+    public List<Element> Children
     {
         get
         {
-            if (_elementChildren is { } cached) return cached;
+            if (field is { } cached) return cached;
             var list = new List<Element>();
             foreach (var child in ChildNodes)
             {
                 if (child is Element element) list.Add(element);
             }
-            _elementChildren = list;
-            return _elementChildren;
+            field = list;
+            return field;
         }
     }
 
