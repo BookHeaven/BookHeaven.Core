@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
@@ -9,114 +10,28 @@ using BookHeaven.Core.DOM.Text.Enums;
 namespace BookHeaven.Core.DOM.Engine.Helpers;
 
 /// <summary>
-/// Faithful implementation of Chromium's table column-width algorithms plus
-/// row-height computation, so the engine can predict a table's total height
-/// without a browser.
-///
-/// <c>table-layout: auto</c> (the default) uses Blink's
-/// <c>TableLayoutUtils::DistributeInlineSizeToComputedInlineSizeAuto</c>: the
-/// distribution matches the browser's EMPIRICAL behaviour — in the percentage
-/// case a percent column whose percentage size falls below its min-content is
-/// clamped to min-content, and the growth is distributed to the remaining percent
-/// columns in proportion to their (percentSize − min) increases. This was verified
-/// against Playwright/Chromium (see <c>.browser-test/test_clamp.html</c>).
-///
-/// <c>table-layout: fixed</c> follows the CSS spec: the table's width is its
-/// explicit <c>width</c> (or the full containing-block width when auto), column
-/// widths come ONLY from the first row's cells and <c>&lt;col&gt;</c> elements
-/// (content never influences them), percentages summing above 100% are scaled
-/// down proportionally, and the remaining space is shared equally by the auto
-/// columns.
+///     Faithful implementation of Chromium's table column-width algorithms plus
+///     row-height computation, so the engine can predict a table's total height
+///     without a browser.
+///     <c>table-layout: auto</c> (the default) uses Blink's
+///     <c>TableLayoutUtils::DistributeInlineSizeToComputedInlineSizeAuto</c>: the
+///     distribution matches the browser's EMPIRICAL behaviour — in the percentage
+///     case a percent column whose percentage size falls below its min-content is
+///     clamped to min-content, and the growth is distributed to the remaining percent
+///     columns in proportion to their (percentSize − min) increases. This was verified
+///     against Playwright/Chromium (see <c>.browser-test/test_clamp.html</c>).
+///     <c>table-layout: fixed</c> follows the CSS spec: the table's width is its
+///     explicit <c>width</c> (or the full containing-block width when auto), column
+///     widths come ONLY from the first row's cells and <c>&lt;col&gt;</c> elements
+///     (content never influences them), percentages summing above 100% are scaled
+///     down proportionally, and the remaining space is shared equally by the auto
+///     columns.
 /// </summary>
 internal static class TableHelpers
 {
-    /// <summary>The computed geometry of a table.</summary>
-    public sealed class Result
-    {
-        /// <summary>Content-box height (rows + inter-row border-spacing).</summary>
-        public required float ContentHeight { get; init; }
-
-        /// <summary>
-        /// Per-row outer heights (cell content + cell padding + cell border), with the
-        /// trailing inter-row border-spacing folded into every row but the last — so
-        /// the rows sum exactly to <see cref="ContentHeight"/> and the page splitter
-        /// can place them individually without losing the spacing.
-        /// </summary>
-        public required float[] RowHeights { get; init; }
-
-        /// <summary>Space above the content box: padding-top + border-top.</summary>
-        public required float TopEdge { get; init; }
-
-        /// <summary>Space below the content box: padding-bottom + border-bottom.</summary>
-        public required float BottomEdge { get; init; }
-
-        /// <summary>Computed column widths (border-box of each column).</summary>
-        public required float[] ColumnWidths { get; init; }
-    }
-
-    /// <summary>A parsed table cell with its intrinsic content constraints.</summary>
-    private sealed class Cell
-    {
-        public int Row;
-        public int Column;
-        public int ColSpan = 1;
-        public int RowSpan = 1;
-        public string Text = string.Empty;
-        public List<CellBlock> Blocks = [];
-
-        public float? Percent;        // 0..1, from width: X%
-        public float? FixedWidthPx;   // from width: Npx (a constrained column)
-
-        public float PaddingLeft, PaddingRight, PaddingTop, PaddingBottom;
-        public float BorderLeft, BorderRight, BorderTop, BorderBottom;
-
-        public float FontSize;
-        public FontStyle Style;
-        public float? LineHeightLengthPx;
-        public float? LineHeightMultiplier;
-
-        public float ContentMin; // longest unbreakable word
-        public float ContentMax; // single-line width
-
-        public float OuterMin => ContentMin + PaddingLeft + PaddingRight + BorderLeft + BorderRight;
-        public float OuterMax => ContentMax + PaddingLeft + PaddingRight + BorderLeft + BorderRight;
-        public float OuterHeight => 0f; // filled during row-height pass
-    }
-
     /// <summary>
-    /// A block-level box in a cell's block flow: a <c>&lt;p&gt;</c>/<c>&lt;div&gt;</c> (or any
-    /// block-display element) or an anonymous block of inline content. Each carries its OWN
-    /// typography (font-size, line-height, style) and its vertical margins/padding/borders,
-    /// because the browser lays out a cell's content as a block flow — the cell's own
-    /// line-height does NOT apply to text nested inside a child block.
-    /// </summary>
-    private sealed class CellBlock
-    {
-        public string Text = string.Empty;
-        public float FontSize;
-        public FontStyle Style;
-        public float? LineHeightLengthPx;
-        public float? LineHeightMultiplier;
-
-        public float MarginTop, MarginBottom;
-        public float PaddingLeft, PaddingRight, PaddingTop, PaddingBottom;
-        public float BorderLeft, BorderRight, BorderTop, BorderBottom;
-
-        public List<Element> Images = [];
-    }
-
-    /// <summary>A column's accumulated inline-size constraints.</summary>
-    private sealed class Column
-    {
-        public float Min;
-        public float Max;
-        public float? Percent;
-        public bool IsFixed;
-    }
-
-    /// <summary>
-    /// Computes the table's column widths and total height. Returns null when the
-    /// element has no usable rows/columns.
+    ///     Computes the table's column widths and total height. Returns null when the
+    ///     element has no usable rows/columns.
     /// </summary>
     public static Result? Compute(
         Element table,
@@ -128,7 +43,6 @@ internal static class TableHelpers
         PageCalculatorOptions options,
         CoreOptions coreOptions,
         Func<Element, bool> isBlockDisplay,
-        RenderContext context,
         CssLengthParser parser)
     {
         // --- Collect rows and cells into a grid (colspan + rowspan aware). ---
@@ -145,6 +59,7 @@ internal static class TableHelpers
                 sum += ParseSpan(cellEl, "colspan");
             columnCount = Math.Max(columnCount, sum);
         }
+
         if (columnCount == 0) return null;
 
         var cells = new List<Cell>();
@@ -157,32 +72,41 @@ internal static class TableHelpers
                 while (col < columnCount && occupied[r, col]) col++;
                 if (col >= columnCount) break;
 
-                var cell = ParseCell(cellEl, r, col, getStyle, getFontSize, isHidden, isBlockDisplay, measurer, options, context, parser);
+                var cell = ParseCell(cellEl, r, col, getStyle, getFontSize, isHidden, isBlockDisplay, measurer, parser);
                 cells.Add(cell);
                 for (var dr = 0; dr < cell.RowSpan && r + dr < rowElements.Count; dr++)
-                    for (var dc = 0; dc < cell.ColSpan && col + dc < columnCount; dc++)
-                        occupied[r + dr, col + dc] = true;
+                for (var dc = 0; dc < cell.ColSpan && col + dc < columnCount; dc++)
+                    occupied[r + dr, col + dc] = true;
                 col += cell.ColSpan;
             }
         }
+
         if (cells.Count == 0) return null;
 
         // --- Table box metrics (border-spacing, padding, border). ---
         var tableStyle = getStyle(table);
         var tableFontSize = getFontSize(table);
-        var (borderSpacing, isCollapsed) = ParseBorderSpacing(tableStyle, context, parser);
-        var tablePadL = ParseLength(tableStyle, "padding-left", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
-        var tablePadR = ParseLength(tableStyle, "padding-right", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
-        var tablePadT = ParseLength(tableStyle, "padding-top", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
-        var tablePadB = ParseLength(tableStyle, "padding-bottom", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
-        var tableBorderL = ParseLength(tableStyle, "border-left-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
-        var tableBorderR = ParseLength(tableStyle, "border-right-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
-        var tableBorderT = ParseLength(tableStyle, "border-top-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
-        var tableBorderB = ParseLength(tableStyle, "border-bottom-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var (borderSpacing, isCollapsed) = ParseBorderSpacing(tableStyle, parser);
+        var tablePadL = ParseLength(tableStyle, "padding-left", containingBlockContentWidth, tableFontSize, parser) ??
+                        0f;
+        var tablePadR = ParseLength(tableStyle, "padding-right", containingBlockContentWidth, tableFontSize, parser) ??
+                        0f;
+        var tablePadT = ParseLength(tableStyle, "padding-top", containingBlockContentWidth, tableFontSize, parser) ??
+                        0f;
+        var tablePadB = ParseLength(tableStyle, "padding-bottom", containingBlockContentWidth, tableFontSize, parser) ??
+                        0f;
+        var tableBorderL =
+            ParseLength(tableStyle, "border-left-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tableBorderR =
+            ParseLength(tableStyle, "border-right-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tableBorderT =
+            ParseLength(tableStyle, "border-top-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
+        var tableBorderB =
+            ParseLength(tableStyle, "border-bottom-width", containingBlockContentWidth, tableFontSize, parser) ?? 0f;
 
         // --- Assignable width = used width − undistributable space. ---
-        var undistributable = (tableBorderL + tableBorderR + tablePadL + tablePadR)
-            + (isCollapsed ? 0f : (columnCount + 1) * borderSpacing);
+        var undistributable = tableBorderL + tableBorderR + tablePadL + tablePadR
+                              + (isCollapsed ? 0f : (columnCount + 1) * borderSpacing);
 
         // --- Column widths: the algorithm depends on table-layout. ---
         float[] columnWidths;
@@ -210,7 +134,9 @@ internal static class TableHelpers
                 col.Min = Math.Max(col.Min, cell.OuterMin);
                 col.Max = Math.Max(col.Max, cell.OuterMax);
                 if (cell.Percent is { } p)
+                {
                     col.Percent = col.Percent is { } cp ? Math.Max(cp, p) : p;
+                }
                 else if (cell.FixedWidthPx is { } f)
                 {
                     col.IsFixed = true;
@@ -227,18 +153,16 @@ internal static class TableHelpers
             // Clamp cumulative percentages to 100% (auto tables).
             var totalPercent = 0f;
             foreach (var col in columns)
-            {
                 if (col.Percent is { } p)
                 {
                     var clamped = p + totalPercent > 1f ? Math.Max(0f, 1f - totalPercent) : p;
                     col.Percent = clamped;
                     totalPercent += clamped;
                 }
-            }
 
             // Table used width (explicit, or shrink-to-fit with the percent-aware model).
-            var usedWidth = ResolveTableUsedWidth(tableStyle, columns, containingBlockContentWidth, context, parser);
-            columnWidths = DistributeAuto(Math.Max(0f, usedWidth - undistributable), columns, treatTargetAsConstrained: false);
+            var usedWidth = ResolveTableUsedWidth(tableStyle, columns, containingBlockContentWidth, parser);
+            columnWidths = DistributeAuto(Math.Max(0f, usedWidth - undistributable), columns, false);
         }
 
         // --- Row heights: wrap each cell's text to its (spanned) content width. ---
@@ -250,11 +174,13 @@ internal static class TableHelpers
             {
                 var contentWidth = CellContentWidth(cell, columnWidths, borderSpacing, isCollapsed);
                 var cellContentHeight = MeasureCellContentHeight(
-                    cell, contentWidth, measurer, options, coreOptions, context, parser,
+                    cell, contentWidth, measurer, options, coreOptions, parser,
                     getStyle, getFontSize, isBlockDisplay);
-                var outerHeight = cellContentHeight + cell.PaddingTop + cell.PaddingBottom + cell.BorderTop + cell.BorderBottom;
+                var outerHeight = cellContentHeight + cell.PaddingTop + cell.PaddingBottom + cell.BorderTop +
+                                  cell.BorderBottom;
                 rowHeight = Math.Max(rowHeight, outerHeight);
             }
+
             rowHeights[r] = rowHeight;
         }
 
@@ -281,30 +207,27 @@ internal static class TableHelpers
     // Cell parsing
     // ------------------------------------------------------------------
 
-    private static bool IsCellTag(Element el) =>
-        el.TagName is "td" or "th";
+    private static bool IsCellTag(Element el)
+    {
+        return el.TagName is "td" or "th";
+    }
 
     /// <summary>
-    /// Collects the table's <c>&lt;tr&gt;</c> rows in document order. A row is either a
-    /// direct child of the table or a child of a <c>&lt;thead&gt;</c>/<c>&lt;tbody&gt;</c>/
-    /// <c>&lt;tfoot&gt;</c> section that is a direct child of the table.
+    ///     Collects the table's <c>&lt;tr&gt;</c> rows in document order. A row is either a
+    ///     direct child of the table or a child of a <c>&lt;thead&gt;</c>/<c>&lt;tbody&gt;</c>/
+    ///     <c>&lt;tfoot&gt;</c> section that is a direct child of the table.
     /// </summary>
     private static List<Element> CollectRows(Element table)
     {
         var rows = new List<Element>();
         foreach (var child in table.Children)
-        {
             if (child.TagName.Equals("tr", StringComparison.OrdinalIgnoreCase))
-            {
                 rows.Add(child);
-            }
             else if (child.TagName is "thead" or "tbody" or "tfoot")
-            {
                 foreach (var row in child.Children)
                     if (row.TagName.Equals("tr", StringComparison.OrdinalIgnoreCase))
                         rows.Add(row);
-            }
-        }
+
         return rows;
     }
 
@@ -318,12 +241,14 @@ internal static class TableHelpers
         Element el, int row, int column,
         Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
         Func<Element, bool> isHidden, Func<Element, bool> isBlockDisplay,
-        ITextMeasurer measurer, PageCalculatorOptions options, RenderContext context,
+        ITextMeasurer measurer,
         CssLengthParser parser)
     {
         var style = getStyle(el);
         var fontSize = getFontSize(el);
-        var styleEnum = CssValueParser.IsItalicStyle(style.GetPropertyValue("font-style")) ? FontStyle.Italic : FontStyle.Regular;
+        var styleEnum = CssValueParser.IsItalicStyle(style.GetPropertyValue("font-style"))
+            ? FontStyle.Italic
+            : FontStyle.Regular;
 
         var cell = new Cell
         {
@@ -351,7 +276,10 @@ internal static class TableHelpers
         if (!string.IsNullOrWhiteSpace(lh) && !lh.Trim().Equals("normal", StringComparison.OrdinalIgnoreCase))
         {
             var len = ParseLength(style, "line-height", 0f, fontSize, parser);
-            if (len is > 0) cell.LineHeightLengthPx = len;
+            if (len is > 0)
+            {
+                cell.LineHeightLengthPx = len;
+            }
             else
             {
                 var mult = parser.ParseUnitless(lh);
@@ -376,8 +304,8 @@ internal static class TableHelpers
     }
 
     /// <summary>
-    /// Collects the cell's descendant image elements (skipping hidden subtrees)
-    /// into <paramref name="result"/>.
+    ///     Collects the cell's descendant image elements (skipping hidden subtrees)
+    ///     into <paramref name="result" />.
     /// </summary>
     private static void CollectImages(Element el, Func<Element, bool> isHidden, List<Element> result)
     {
@@ -387,15 +315,16 @@ internal static class TableHelpers
             result.Add(el);
             return;
         }
+
         foreach (var child in el.Children)
             CollectImages(child, isHidden, result);
     }
 
     /// <summary>
-    /// Splits a cell's content into its block-flow boxes. Each block-display child becomes
-    /// its own block (with its own typography and margins); runs of inline content that are
-    /// not inside a block child are gathered into an anonymous block inheriting the cell's
-    /// typography. A cell with no content yields a single empty anonymous block.
+    ///     Splits a cell's content into its block-flow boxes. Each block-display child becomes
+    ///     its own block (with its own typography and margins); runs of inline content that are
+    ///     not inside a block child are gathered into an anonymous block inheriting the cell's
+    ///     typography. A cell with no content yields a single empty anonymous block.
     /// </summary>
     private static List<CellBlock> CollectBlocks(
         Element cellEl, Cell cell,
@@ -403,7 +332,7 @@ internal static class TableHelpers
         Func<Element, bool> isHidden, Func<Element, bool> isBlockDisplay, CssLengthParser parser)
     {
         var blocks = new List<CellBlock>();
-        var anonText = new System.Text.StringBuilder();
+        var anonText = new StringBuilder();
         var anonImages = new List<Element>();
         var hasAnon = false;
 
@@ -422,7 +351,6 @@ internal static class TableHelpers
         // Iterate ChildNodes (not Children): a cell's text lives in text nodes, which
         // Children (elements only) would skip.
         foreach (var node in cellEl.ChildNodes)
-        {
             if (node is Element el)
             {
                 if (isHidden(el)) continue;
@@ -439,6 +367,7 @@ internal static class TableHelpers
                         if (anonText.Length > 0) anonText.Append(' ');
                         anonText.Append(text);
                     }
+
                     CollectImages(el, isHidden, anonImages);
                     if (!string.IsNullOrWhiteSpace(text) || anonImages.Count > 0) hasAnon = true;
                 }
@@ -453,7 +382,6 @@ internal static class TableHelpers
                 anonText.Append(text.Value);
                 hasAnon = true;
             }
-        }
 
         FlushAnon();
 
@@ -474,7 +402,9 @@ internal static class TableHelpers
         {
             Text = Element.GetVisibleTextContent(el, isHidden),
             FontSize = fontSize,
-            Style = CssValueParser.IsItalicStyle(style.GetPropertyValue("font-style")) ? FontStyle.Italic : FontStyle.Regular,
+            Style = CssValueParser.IsItalicStyle(style.GetPropertyValue("font-style"))
+                ? FontStyle.Italic
+                : FontStyle.Regular,
             MarginTop = ParseLength(style, "margin-top", 0f, fontSize, parser) ?? 0f,
             MarginBottom = ParseLength(style, "margin-bottom", 0f, fontSize, parser) ?? 0f,
             PaddingLeft = ParseLength(style, "padding-left", 0f, fontSize, parser) ?? 0f,
@@ -495,7 +425,10 @@ internal static class TableHelpers
         if (!string.IsNullOrWhiteSpace(lh) && !lh.Trim().Equals("normal", StringComparison.OrdinalIgnoreCase))
         {
             var len = ParseLength(style, "line-height", 0f, fontSize, parser);
-            if (len is > 0) block.LineHeightLengthPx = len;
+            if (len is > 0)
+            {
+                block.LineHeightLengthPx = len;
+            }
             else
             {
                 var mult = parser.ParseUnitless(lh);
@@ -508,16 +441,19 @@ internal static class TableHelpers
     }
 
     /// <summary>Builds an anonymous block from inline content, inheriting the cell's typography.</summary>
-    private static CellBlock MakeAnonBlock(string text, List<Element> images, Cell cell) => new()
+    private static CellBlock MakeAnonBlock(string text, List<Element> images, Cell cell)
     {
-        Text = text,
-        FontSize = cell.FontSize,
-        Style = cell.Style,
-        LineHeightLengthPx = cell.LineHeightLengthPx,
-        LineHeightMultiplier = cell.LineHeightMultiplier,
-        // Copy: the caller reuses/clears its working list after this returns.
-        Images = [.. images]
-    };
+        return new CellBlock
+        {
+            Text = text,
+            FontSize = cell.FontSize,
+            Style = cell.Style,
+            LineHeightLengthPx = cell.LineHeightLengthPx,
+            LineHeightMultiplier = cell.LineHeightMultiplier,
+            // Copy: the caller reuses/clears its working list after this returns.
+            Images = [.. images]
+        };
+    }
 
     // A <br> is serialized as U+FFFC (see DomModels.AppendDescendantText) and is a forced
     // break, exactly like the main text path (TextRunWrapper / HarfBuzzTextMeasurer).
@@ -527,7 +463,8 @@ internal static class TableHelpers
     {
         if (string.IsNullOrEmpty(text)) return 0f;
         var max = 0f;
-        foreach (var word in text.Split([' ', '\uFFFC'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var word in text.Split([' ', '\uFFFC'],
+                     StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             max = Math.Max(max, measurer.MeasureTextWidth(word, fontSize, style));
         return max;
     }
@@ -562,30 +499,34 @@ internal static class TableHelpers
             var nonPctMax = 0f;
             var nonPctCount = 0;
             for (var i = start; i < start + span; i++)
-            {
-                if (columns[i].Percent is { } p) spannedPct += p;
-                else { nonPctMax += columns[i].Max; nonPctCount++; }
-            }
+                if (columns[i].Percent is { } p)
+                {
+                    spannedPct += p;
+                }
+                else
+                {
+                    nonPctMax += columns[i].Max;
+                    nonPctCount++;
+                }
+
             var surplus = cp - spannedPct;
             if (surplus > 0f && nonPctCount > 0)
-            {
                 for (var i = start; i < start + span; i++)
                 {
                     if (columns[i].Percent is not null) continue;
                     var share = nonPctMax > 0f ? surplus * columns[i].Max / nonPctMax : surplus / nonPctCount;
                     columns[i].Percent = share;
                 }
-            }
         }
 
         // Min distribution: only ever INCREASES a column's min.
         var spanCols = columns[start..(start + span)];
-        var minSizes = DistributeAuto(colspanMin, spanCols, treatTargetAsConstrained: true);
+        var minSizes = DistributeAuto(colspanMin, spanCols, true);
         for (var i = 0; i < span; i++)
             columns[start + i].Min = Math.Max(columns[start + i].Min, minSizes[i]);
 
         // Max distribution: only ever INCREASES a column's max (and keeps max >= min).
-        var maxSizes = DistributeAuto(colspanMax, spanCols, treatTargetAsConstrained: cell.FixedWidthPx is not null);
+        var maxSizes = DistributeAuto(colspanMax, spanCols, cell.FixedWidthPx is not null);
         for (var i = 0; i < span; i++)
             columns[start + i].Max = Math.Max(Math.Max(columns[start + i].Min, columns[start + i].Max), maxSizes[i]);
     }
@@ -669,8 +610,13 @@ internal static class TableHelpers
                 {
                     if (cols[i].Percent is not { } p) continue;
                     var inc = p * target - cols[i].Min;
-                    if (inc > 0f) { positiveIncrease += inc; positiveCount++; }
+                    if (inc > 0f)
+                    {
+                        positiveIncrease += inc;
+                        positiveCount++;
+                    }
                 }
+
                 for (var i = 0; i < cols.Length; i++)
                 {
                     var col = cols[i];
@@ -713,7 +659,9 @@ internal static class TableHelpers
                     {
                         last = i;
                         var inc = col.Max - col.Min;
-                        var delta = specIncrease > 0f ? distributable * (inc / specIncrease) : distributable / Math.Max(1, fixedCount);
+                        var delta = specIncrease > 0f
+                            ? distributable * (inc / specIncrease)
+                            : distributable / Math.Max(1, fixedCount);
                         remaining -= delta;
                         computed[i] = col.Min + delta;
                     }
@@ -722,6 +670,7 @@ internal static class TableHelpers
                         computed[i] = col.Min;
                     }
                 }
+
                 if (last >= 0) computed[last] += remaining;
             }
                 break;
@@ -747,11 +696,14 @@ internal static class TableHelpers
                     {
                         last = i;
                         var inc = col.Max - col.Min;
-                        var delta = maxIncrease > 0f ? distributable * (inc / maxIncrease) : distributable / Math.Max(1, autoCount);
+                        var delta = maxIncrease > 0f
+                            ? distributable * (inc / maxIncrease)
+                            : distributable / Math.Max(1, autoCount);
                         remaining -= delta;
                         computed[i] = col.Min + delta;
                     }
                 }
+
                 if (last >= 0) computed[last] += remaining;
             }
                 break;
@@ -777,11 +729,14 @@ internal static class TableHelpers
                         else
                         {
                             last = i;
-                            var delta = totalAutoMax > 0f ? distributable * (col.Max / totalAutoMax) : distributable / autoCount;
+                            var delta = totalAutoMax > 0f
+                                ? distributable * (col.Max / totalAutoMax)
+                                : distributable / autoCount;
                             remaining -= delta;
                             computed[i] = col.Max + delta;
                         }
                     }
+
                     if (last >= 0) computed[last] += remaining;
                 }
                 else if (fixedCount > 0 && treatTargetAsConstrained)
@@ -798,11 +753,14 @@ internal static class TableHelpers
                         else if (col.IsFixed)
                         {
                             last = i;
-                            var delta = totalFixedMax > 0f ? distributable * (col.Max / totalFixedMax) : distributable / fixedCount;
+                            var delta = totalFixedMax > 0f
+                                ? distributable * (col.Max / totalFixedMax)
+                                : distributable / fixedCount;
                             remaining -= delta;
                             computed[i] = col.Max + delta;
                         }
                     }
+
                     if (last >= 0) computed[last] += remaining;
                 }
                 else
@@ -814,10 +772,13 @@ internal static class TableHelpers
                         var col = cols[i];
                         if (col.Percent is not { } p) continue;
                         last = i;
-                        var delta = totalPercent > 0f ? distributable * (p / totalPercent) : distributable / Math.Max(1, percentCount);
+                        var delta = totalPercent > 0f
+                            ? distributable * (p / totalPercent)
+                            : distributable / Math.Max(1, percentCount);
                         remaining -= delta;
                         computed[i] = p * target + delta;
                     }
+
                     if (last >= 0) computed[last] += remaining;
                 }
             }
@@ -831,7 +792,8 @@ internal static class TableHelpers
     // Table used width
     // ------------------------------------------------------------------
 
-    private static float ResolveTableUsedWidth(CssStyle style, Column[] columns, float available, RenderContext context, CssLengthParser parser)
+    private static float ResolveTableUsedWidth(CssStyle style, Column[] columns, float available,
+        CssLengthParser parser)
     {
         var width = style.GetPropertyValue("width");
         if (!string.IsNullOrWhiteSpace(width) && !width.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
@@ -845,22 +807,18 @@ internal static class TableHelpers
         var totalMax = columns.Sum(c => c.Max);
 
         if (!hasPercent)
-        {
             // Standard shrink-to-fit.
             return Math.Min(Math.Max(totalMin, available), totalMax);
-        }
 
         // Percent-aware shrink-to-fit: the width must be large enough that every
         // percent column reaches its min-content, and at least the max-content.
         var minForPercents = 0f;
         var nonPercentMin = 0f;
         foreach (var col in columns)
-        {
             if (col.Percent is { } p and > 0)
                 minForPercents = Math.Max(minForPercents, col.Min / p);
             else
                 nonPercentMin += col.Min;
-        }
         var wMin = nonPercentMin + minForPercents;
         var wMax = totalMax;
 
@@ -873,12 +831,15 @@ internal static class TableHelpers
     // ------------------------------------------------------------------
 
     private static bool IsFixedLayout(CssStyle style)
-        => string.Equals(style.GetPropertyValue("table-layout").Trim(), "fixed", StringComparison.OrdinalIgnoreCase);
+    {
+        return string.Equals(style.GetPropertyValue("table-layout").Trim(), "fixed",
+            StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
-    /// Fixed-layout table width: an explicit <c>width</c> (clamped to the available
-    /// width), or the FULL available width when <c>width</c> is auto — content never
-    /// shrinks a fixed table, so it can never exceed the containing block.
+    ///     Fixed-layout table width: an explicit <c>width</c> (clamped to the available
+    ///     width), or the FULL available width when <c>width</c> is auto — content never
+    ///     shrinks a fixed table, so it can never exceed the containing block.
     /// </summary>
     private static float ResolveFixedTableUsedWidth(CssStyle style, float available, CssLengthParser parser)
     {
@@ -888,17 +849,18 @@ internal static class TableHelpers
             var px = ParseLength(style, "width", available, 0f, parser);
             if (px is > 0) return Math.Min(px.Value, available);
         }
+
         return available;
     }
 
     /// <summary>
-    /// CSS <c>table-layout: fixed</c> column-width algorithm: column widths are
-    /// determined by the <c>&lt;col&gt;</c> elements and the FIRST row's cells only —
-    /// content never influences them. Percent widths resolve against the assignable
-    /// width; percentages summing above 100% are scaled down proportionally,
-    /// specified widths exceeding the assignable width are scaled down
-    /// proportionally, and the remaining space is shared EQUALLY by the auto
-    /// columns.
+    ///     CSS <c>table-layout: fixed</c> column-width algorithm: column widths are
+    ///     determined by the <c>&lt;col&gt;</c> elements and the FIRST row's cells only —
+    ///     content never influences them. Percent widths resolve against the assignable
+    ///     width; percentages summing above 100% are scaled down proportionally,
+    ///     specified widths exceeding the assignable width are scaled down
+    ///     proportionally, and the remaining space is shared EQUALLY by the auto
+    ///     columns.
     /// </summary>
     private static float[] DistributeFixed(
         Element table, float assignable, List<Cell> cells, int columnCount,
@@ -919,8 +881,10 @@ internal static class TableHelpers
             if (percent is not null || fixedPx is not null)
             {
                 var start = Math.Min(colIndex, columnCount - 1);
-                ApplyFixedSpan(start, Math.Min(span, columnCount - start), percent, fixedPx, percents, fixedWidths, isAuto);
+                ApplyFixedSpan(start, Math.Min(span, columnCount - start), percent, fixedPx, percents, fixedWidths,
+                    isAuto);
             }
+
             colIndex += span;
         }
 
@@ -945,7 +909,8 @@ internal static class TableHelpers
         var totalPercent = 0f;
         for (var c = 0; c < columnCount; c++) totalPercent += percents[c];
         if (totalPercent > 1f)
-            for (var c = 0; c < columnCount; c++) percents[c] /= totalPercent;
+            for (var c = 0; c < columnCount; c++)
+                percents[c] /= totalPercent;
 
         var computed = new float[columnCount];
         var specifiedTotal = 0f;
@@ -961,26 +926,30 @@ internal static class TableHelpers
         {
             var scale = assignable / specifiedTotal;
             for (var c = 0; c < columnCount; c++)
-                if (!isAuto[c]) computed[c] *= scale;
+                if (!isAuto[c])
+                    computed[c] *= scale;
             specifiedTotal = assignable;
         }
 
         // The remaining space is shared equally by the auto columns.
         var autoCount = 0;
-        for (var c = 0; c < columnCount; c++) if (isAuto[c]) autoCount++;
+        for (var c = 0; c < columnCount; c++)
+            if (isAuto[c])
+                autoCount++;
         var autoShare = autoCount > 0 ? (assignable - specifiedTotal) / autoCount : 0f;
         for (var c = 0; c < columnCount; c++)
-            if (isAuto[c]) computed[c] = autoShare;
+            if (isAuto[c])
+                computed[c] = autoShare;
 
         return computed;
     }
 
     /// <summary>
-    /// Applies a specified width to the columns a <c>&lt;col&gt;</c> element or
-    /// first-row cell spans. A single column is set directly (the later source
-    /// wins); a span shares the percent proportionally to the spanned columns'
-    /// existing percents (equally when none), and the fixed width proportionally
-    /// to their existing fixed widths (equally when none).
+    ///     Applies a specified width to the columns a <c>&lt;col&gt;</c> element or
+    ///     first-row cell spans. A single column is set directly (the later source
+    ///     wins); a span shares the percent proportionally to the spanned columns'
+    ///     existing percents (equally when none), and the fixed width proportionally
+    ///     to their existing fixed widths (equally when none).
     /// </summary>
     private static void ApplyFixedSpan(
         int start, int span, float? percent, float? fixedPx,
@@ -988,8 +957,17 @@ internal static class TableHelpers
     {
         if (span == 1)
         {
-            if (percent is { } singlePercent) { percents[start] = singlePercent; fixedWidths[start] = 0f; }
-            else if (fixedPx is { } singleFixed) { fixedWidths[start] = singleFixed; percents[start] = 0f; }
+            if (percent is { } singlePercent)
+            {
+                percents[start] = singlePercent;
+                fixedWidths[start] = 0f;
+            }
+            else if (fixedPx is { } singleFixed)
+            {
+                fixedWidths[start] = singleFixed;
+                percents[start] = 0f;
+            }
+
             isAuto[start] = false;
             return;
         }
@@ -1018,26 +996,21 @@ internal static class TableHelpers
     }
 
     /// <summary>
-    /// Collects the table's <c>&lt;col&gt;</c> elements in document order: direct
-    /// children of the table, plus children of a <c>&lt;colgroup&gt;</c> that is a
-    /// direct child of the table.
+    ///     Collects the table's <c>&lt;col&gt;</c> elements in document order: direct
+    ///     children of the table, plus children of a <c>&lt;colgroup&gt;</c> that is a
+    ///     direct child of the table.
     /// </summary>
     private static List<Element> CollectColElements(Element table)
     {
         var cols = new List<Element>();
         foreach (var child in table.Children)
-        {
             if (child.TagName.Equals("col", StringComparison.OrdinalIgnoreCase))
-            {
                 cols.Add(child);
-            }
             else if (child.TagName.Equals("colgroup", StringComparison.OrdinalIgnoreCase))
-            {
                 foreach (var grandchild in child.Children)
                     if (grandchild.TagName.Equals("col", StringComparison.OrdinalIgnoreCase))
                         cols.Add(grandchild);
-            }
-        }
+
         return cols;
     }
 
@@ -1054,19 +1027,20 @@ internal static class TableHelpers
             if (i > 0 && !isCollapsed) width += borderSpacing;
             width += columnWidths[cell.Column + i];
         }
+
         width -= cell.PaddingLeft + cell.PaddingRight + cell.BorderLeft + cell.BorderRight;
         return Math.Max(0f, width);
     }
 
     /// <summary>
-    /// Measures the cell's content-box height: the wrapped text plus any images.
-    /// Block-display images stack in the cell's block flow; an inline image
-    /// stretches the line it sits on (or forms a line of its own when the cell
-    /// has no text), matching the browser's replaced-element model.
+    ///     Measures the cell's content-box height: the wrapped text plus any images.
+    ///     Block-display images stack in the cell's block flow; an inline image
+    ///     stretches the line it sits on (or forms a line of its own when the cell
+    ///     has no text), matching the browser's replaced-element model.
     /// </summary>
     private static float MeasureCellContentHeight(
         Cell cell, float contentWidth, ITextMeasurer measurer,
-        PageCalculatorOptions options, CoreOptions coreOptions, RenderContext context,
+        PageCalculatorOptions options, CoreOptions coreOptions,
         CssLengthParser parser,
         Func<Element, CssStyle> getStyle, Func<Element, float> getFontSize,
         Func<Element, bool> isBlockDisplay)
@@ -1082,10 +1056,14 @@ internal static class TableHelpers
         {
             var block = blocks[i];
             var lineHeightPx = block.LineHeightLengthPx
-                ?? (block.LineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * block.FontSize;
-            var textWidth = Math.Max(0f, contentWidth - block.PaddingLeft - block.PaddingRight - block.BorderLeft - block.BorderRight);
-            var textHeight = string.IsNullOrEmpty(block.Text) ? 0f
-                : measurer.Measure(block.Text, block.FontSize, textWidth, lineHeightPx: lineHeightPx, style: block.Style, includeLineText: false).TotalHeightPx;
+                               ?? (block.LineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) *
+                               block.FontSize;
+            var textWidth = Math.Max(0f,
+                contentWidth - block.PaddingLeft - block.PaddingRight - block.BorderLeft - block.BorderRight);
+            var textHeight = string.IsNullOrEmpty(block.Text)
+                ? 0f
+                : measurer.Measure(block.Text, block.FontSize, textWidth, lineHeightPx, style: block.Style,
+                    includeLineText: false).TotalHeightPx;
 
             var blockImagesHeight = 0f;
             var inlineImageHeight = 0f;
@@ -1100,11 +1078,11 @@ internal static class TableHelpers
 
             var hasText = !string.IsNullOrEmpty(block.Text);
             var inlineContribution = inlineImageHeight <= 0 ? 0f
-                : hasText ? Math.Max(0f, inlineImageHeight - lineHeightPx)   // stretches its text line
-                : Math.Max(inlineImageHeight, lineHeightPx);                // forms its own line
+                : hasText ? Math.Max(0f, inlineImageHeight - lineHeightPx) // stretches its text line
+                : Math.Max(inlineImageHeight, lineHeightPx); // forms its own line
 
             total += block.BorderTop + block.PaddingTop + textHeight + inlineContribution + blockImagesHeight
-                + block.PaddingBottom + block.BorderBottom;
+                     + block.PaddingBottom + block.BorderBottom;
         }
 
         if (blocks.Count > 0)
@@ -1114,22 +1092,28 @@ internal static class TableHelpers
             for (var i = 0; i + 1 < blocks.Count; i++)
                 total += Math.Max(blocks[i].MarginBottom, blocks[i + 1].MarginTop);
         }
+
         return total;
 
         float? ParseLen(string? value, float reference, float? emReference)
-            => parser.ParseLengthToPx(value, new RenderContext(reference, reference, emReference ?? 0f), reference, emReference);
+        {
+            return parser.ParseLengthToPx(value, reference, emReference);
+        }
     }
 
     // ------------------------------------------------------------------
     // Small parsing helpers (self-contained; use the public length parser).
     // ------------------------------------------------------------------
 
-    private static float? ParseLength(CssStyle style, string name, float reference, float emReference, CssLengthParser parser)
-        => parser.ParseLengthToPx(style.GetPropertyValue(name), new RenderContext(reference, reference, emReference), reference, emReference);
+    private static float? ParseLength(CssStyle style, string name, float reference, float emReference,
+        CssLengthParser parser)
+    {
+        return parser.ParseLengthToPx(style.GetPropertyValue(name), reference, emReference);
+    }
 
     /// <summary>
-    /// Parses a <c>width</c> declaration into a percent (0..1) and/or a fixed pixel
-    /// width; <c>auto</c> (or an unparseable value) yields both null.
+    ///     Parses a <c>width</c> declaration into a percent (0..1) and/or a fixed pixel
+    ///     width; <c>auto</c> (or an unparseable value) yields both null.
     /// </summary>
     private static (float? Percent, float? FixedPx) ParseWidth(CssStyle style, float fontSize, CssLengthParser parser)
     {
@@ -1146,10 +1130,11 @@ internal static class TableHelpers
             var px = ParseLength(style, "width", 0f, fontSize, parser);
             if (px is > 0) return (null, px.Value);
         }
+
         return (null, null);
     }
 
-    private static (float Spacing, bool Collapsed) ParseBorderSpacing(CssStyle style, RenderContext context, CssLengthParser parser)
+    private static (float Spacing, bool Collapsed) ParseBorderSpacing(CssStyle style, CssLengthParser parser)
     {
         var collapse = style.GetPropertyValue("border-collapse");
         var isCollapsed = collapse.Trim().Equals("collapse", StringComparison.OrdinalIgnoreCase);
@@ -1157,10 +1142,96 @@ internal static class TableHelpers
         var spacing = 2f; // UA default
         if (!string.IsNullOrWhiteSpace(raw))
         {
-            var first = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
-            var px = parser.ParseLengthToPx(first, context, 0f);
+            var first = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault();
+            var px = parser.ParseLengthToPx(first, 0f);
             if (px is > 0) spacing = px.Value;
         }
+
         return (spacing, isCollapsed);
+    }
+
+    /// <summary>The computed geometry of a table.</summary>
+    public sealed class Result
+    {
+        /// <summary>Content-box height (rows + inter-row border-spacing).</summary>
+        public required float ContentHeight { get; init; }
+
+        /// <summary>
+        ///     Per-row outer heights (cell content + cell padding + cell border), with the
+        ///     trailing inter-row border-spacing folded into every row but the last — so
+        ///     the rows sum exactly to <see cref="ContentHeight" /> and the page splitter
+        ///     can place them individually without losing the spacing.
+        /// </summary>
+        public required float[] RowHeights { get; init; }
+
+        /// <summary>Space above the content box: padding-top + border-top.</summary>
+        public required float TopEdge { get; init; }
+
+        /// <summary>Space below the content box: padding-bottom + border-bottom.</summary>
+        public required float BottomEdge { get; init; }
+
+        /// <summary>Computed column widths (border-box of each column).</summary>
+        public required float[] ColumnWidths { get; init; }
+    }
+
+    /// <summary>A parsed table cell with its intrinsic content constraints.</summary>
+    private sealed class Cell
+    {
+        public List<CellBlock> Blocks = [];
+        public float BorderLeft, BorderRight, BorderTop, BorderBottom;
+        public int ColSpan = 1;
+        public int Column;
+        public float ContentMax; // single-line width
+
+        public float ContentMin; // longest unbreakable word
+        public float? FixedWidthPx; // from width: Npx (a constrained column)
+
+        public float FontSize;
+        public float? LineHeightLengthPx;
+        public float? LineHeightMultiplier;
+
+        public float PaddingLeft, PaddingRight, PaddingTop, PaddingBottom;
+
+        public float? Percent; // 0..1, from width: X%
+        public int Row;
+        public int RowSpan = 1;
+        public FontStyle Style;
+        public string Text = string.Empty;
+
+        public float OuterMin => ContentMin + PaddingLeft + PaddingRight + BorderLeft + BorderRight;
+        public float OuterMax => ContentMax + PaddingLeft + PaddingRight + BorderLeft + BorderRight;
+        public float OuterHeight => 0f; // filled during row-height pass
+    }
+
+    /// <summary>
+    ///     A block-level box in a cell's block flow: a <c>&lt;p&gt;</c>/<c>&lt;div&gt;</c> (or any
+    ///     block-display element) or an anonymous block of inline content. Each carries its OWN
+    ///     typography (font-size, line-height, style) and its vertical margins/padding/borders,
+    ///     because the browser lays out a cell's content as a block flow — the cell's own
+    ///     line-height does NOT apply to text nested inside a child block.
+    /// </summary>
+    private sealed class CellBlock
+    {
+        public float BorderLeft, BorderRight, BorderTop, BorderBottom;
+        public float FontSize;
+
+        public List<Element> Images = [];
+        public float? LineHeightLengthPx;
+        public float? LineHeightMultiplier;
+
+        public float MarginTop, MarginBottom;
+        public float PaddingLeft, PaddingRight, PaddingTop, PaddingBottom;
+        public FontStyle Style;
+        public string Text = string.Empty;
+    }
+
+    /// <summary>A column's accumulated inline-size constraints.</summary>
+    private sealed class Column
+    {
+        public bool IsFixed;
+        public float Max;
+        public float Min;
+        public float? Percent;
     }
 }

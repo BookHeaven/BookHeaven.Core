@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.CSS.Models;
@@ -15,87 +14,61 @@ using Microsoft.Extensions.Options;
 namespace BookHeaven.Core.DOM.Engine;
 
 /// <summary>
-/// The block layout engine on top of the lightweight Mini pipeline
-/// (<see cref="HtmlParser"/> + <see cref="CssParser"/> +
-/// <see cref="StyleResolver"/> + <see cref="CssLengthParser"/>): the
-/// browser-style block model (one <see cref="LayoutBlock"/> per top-level
-/// element, explicit margins/paddings, children measured independently for
-/// <see cref="PageSplitter"/>), but
-/// without AngleSharp — the HTML is parsed in a single pass and the CSS cascade
-/// (specificity, source order, !important, inheritance, var()) is resolved
-/// in-house.
-///
-/// The CSS pipeline mirrors the AngleSharp one so results stay comparable: the
-/// same global stylesheet is injected, logical margins are expanded to physical
-/// longhands before parsing, and chapter stylesheets are appended after it.
-///
-/// Pure CSS value parsing lives in <see cref="CssValueParser"/>; image geometry
-/// in <see cref="ImageHelpers"/>; inline text-run building in
-/// <see cref="TextRunBuilder"/>. This class owns the block model and the
-/// per-document memoization.
+///     The block layout engine on top of the lightweight Mini pipeline
+///     (<see cref="HtmlParser" /> + <see cref="CssParser" /> +
+///     <see cref="StyleResolver" /> + <see cref="CssLengthParser" />): the
+///     browser-style block model (one <see cref="LayoutBlock" /> per top-level
+///     element, explicit margins/paddings, children measured independently for
+///     <see cref="PageSplitter" />), but
+///     without AngleSharp — the HTML is parsed in a single pass and the CSS cascade
+///     (specificity, source order, !important, inheritance, var()) is resolved
+///     in-house.
+///     The CSS pipeline mirrors the AngleSharp one so results stay comparable: the
+///     same global stylesheet is injected, logical margins are expanded to physical
+///     longhands before parsing, and chapter stylesheets are appended after it.
+///     Pure CSS value parsing lives in <see cref="CssValueParser" />; image geometry
+///     in <see cref="ImageHelpers" />; inline text-run building in
+///     <see cref="TextRunBuilder" />. This class owns the block model and the
+///     per-document memoization.
 /// </summary>
 public sealed class LayoutEngine : IDisposable
 {
-    private const string BlockSelector = "p,div,h1,h2,h3,h4,h5,h6,li,ul,ol,table,blockquote,pre,section,article,header,footer,main,aside,nav,dl,dt,dd,figure,img,svg,image,picture,object,canvas,hr";
+    private const string BlockSelector =
+        "p,div,h1,h2,h3,h4,h5,h6,li,ul,ol,table,blockquote,pre,section,article,header,footer,main,aside,nav,dl,dt,dd,figure,img,svg,image,picture,object,canvas,hr";
 
     // Derived from BlockSelector so the list can never drift apart. Tag names are
     // stored lowercase; the comparer makes the lookup case-insensitive.
     private static readonly HashSet<string> BlockTagSet =
         BlockSelector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private readonly PageCalculatorOptions _options;
-    private readonly CoreOptions _coreOptions;
-    private readonly ITextMeasurer _measurer;
-    private readonly bool _ownsMeasurer;
-    private readonly RenderContext _context;
-    private readonly HtmlParser _parser;
-    private readonly ParseScope _scope;
-    private readonly CssLengthParser _lengthParser = new();
-
     // Per-document state, cleared per call. The key includes the element's structural
     // context (preceding siblings + ancestor chain) so sibling/descendant combinators
     // can't poison the cache across structurally-different elements.
-    private readonly Dictionary<(string Tag, string Attrs, string? Inline, CssStyle? Parent, long SiblingCtx, long AncestorCtx), StyleEntry> _styleMemo = [];
-    private Dictionary<Element, float>? _contentWidthMemo;
-    private List<CssRule> _rules = [];
-    private int[] _specificities = [];
+    // Two-level memo: parent style (reference) → 64-bit fingerprint → entry. The fingerprint
+    // packs tag/attrs/inline/sibling/ancestor into a long (no tuple boxing); the entry stores
+    // the raw components so a hit is verified for exact equality (a hash collision degrades to
+    // a re-resolve, never a wrong style). Cleared per GenerateLayoutBlocks call and on Dispose.
+    // Sentinel outer key for elements with no parent (the root); Dictionary keys must be non-null.
+    private static readonly CssStyle NoParent = new();
+
+    private readonly CoreOptions _coreOptions;
+    private readonly CssLengthParser _lengthParser;
+    private readonly ITextMeasurer _measurer;
+
+    private readonly PageCalculatorOptions _options;
+    private readonly bool _ownsMeasurer;
+    private readonly HtmlParser _parser;
+    private readonly ParseScope _scope;
+    private readonly Dictionary<CssStyle, Dictionary<long, StyleEntry>> _styleMemo = [];
+    private List<int> _afterRules = [];
 
     // Per-document indexes of the rules that target each pseudo-element (their last
     // compound is that pseudo). Precomputed once per document so the per-element
     // pseudo resolution scans only the (few) relevant rules, not the whole sheet.
     private List<int> _beforeRules = [];
-    private List<int> _afterRules = [];
-
-    /// <summary>
-    /// A memoized resolution: the resolved style plus the hidden verdict, both pure
-    /// functions of the element's signature (tag, attributes, inline style) and its
-    /// parent's resolved style. Every element sharing a signature reuses one entry,
-    /// so a chapter resolves only its distinct signatures (a few dozen), not its
-    /// hundreds of elements.
-    /// </summary>
-    private sealed class StyleEntry
-    {
-        public required CssStyle Style;
-        public required bool Hidden;
-        /// <summary>Resolved <c>::before</c> style, or null when no rule targets it.</summary>
-        public CssStyle? Before;
-        /// <summary>Resolved <c>::after</c> style, or null when no rule targets it.</summary>
-        public CssStyle? After;
-    }
-
-    /// <summary>
-    /// A run of consecutive inline content (text nodes and inline elements) between
-    /// block children, kept in document order: the source of one anonymous box.
-    /// </summary>
-    private sealed class InlineSegment
-    {
-        /// <summary>The top-level inline nodes, in document order (for text-run building).</summary>
-        public List<Node> Fragments = [];
-        /// <summary>The inline-display images inside the segment (for the image line model).</summary>
-        public List<Element> Images = [];
-        /// <summary>The segment's raw text (untrimmed; <c>&lt;br&gt;</c> as U+FFFC markers).</summary>
-        public StringBuilder Text = new();
-    }
+    private Dictionary<Element, float>? _contentWidthMemo;
+    private List<CssRule> _rules = [];
+    private int[] _specificities = [];
 
     public LayoutEngine(
         PageCalculatorOptions options,
@@ -104,15 +77,14 @@ public sealed class LayoutEngine : IDisposable
         CssParser? sharedCssParser = null,
         ParseScope? scope = null)
     {
-        _options = (options ?? throw new ArgumentNullException(nameof(options)));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
         ArgumentNullException.ThrowIfNull(coreOptions);
         _coreOptions = coreOptions.Value;
 
-        // Positive dimensions and font size, otherwise em/rem/% resolution breaks.
-        _context = new RenderContext(
+        _lengthParser = new CssLengthParser(new RenderContext(
             _options.ViewportWidthPx,
             _options.ViewportHeightPx,
-            PageCalculatorOptions.RootFontSizePx);
+            PageCalculatorOptions.RootFontSizePx));
 
         // The parser owns the HTML construction (global + chapter stylesheets injected
         // around the fragment); the engine only passes the fragment and styles down.
@@ -126,12 +98,24 @@ public sealed class LayoutEngine : IDisposable
         _measurer = sharedMeasurer ?? TextMeasurerFactory.CreateMeasurer(_coreOptions.DefaultFontDirectory);
     }
 
-    private static float ClampPositive(float? value, float fallback) => value is > 0 ? value.Value : fallback;
+    public void Dispose()
+    {
+        _contentWidthMemo = null;
+        _styleMemo.Clear();
+        _specificities = [];
+        _beforeRules = [];
+        _afterRules = [];
+
+        // HarfBuzz/Skia measurers hold native resources; only the engine that created
+        // the measurer releases them (a shared measurer outlives every engine that
+        // uses it — see <see cref="PageCalculator"/>).
+        if (_ownsMeasurer) (_measurer as IDisposable)?.Dispose();
+    }
 
     /// <summary>
-    /// Trims CSS-collapsible whitespace from both ends: a non-collapsible character
-    /// (e.g. U+00A0) survives the trim and makes the text non-empty, so the engine
-    /// emits the anonymous block the browser renders for it.
+    ///     Trims CSS-collapsible whitespace from both ends: a non-collapsible character
+    ///     (e.g. U+00A0) survives the trim and makes the text non-empty, so the engine
+    ///     emits the anonymous block the browser renders for it.
     /// </summary>
     private static string TrimCollapsibleWhitespace(StringBuilder sb)
     {
@@ -143,9 +127,10 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// Generates a flat list of layout blocks (in flow order) for the given HTML.
+    ///     Generates a flat list of layout blocks (in flow order) for the given HTML.
     /// </summary>
-    public IReadOnlyList<LayoutBlock> GenerateLayoutBlocks(string html, IReadOnlyList<string>? css = null, CancellationToken cancellationToken = default)
+    public IReadOnlyList<LayoutBlock> GenerateLayoutBlocks(string html, IReadOnlyList<string>? css = null,
+        CancellationToken cancellationToken = default)
     {
         _styleMemo.Clear();
         _contentWidthMemo = null;
@@ -186,14 +171,17 @@ public sealed class LayoutEngine : IDisposable
                 pendingImages.Add(element);
                 continue;
             }
+
             if (pendingImages.Count > 0)
             {
                 var anon = BuildLeafBlock(string.Empty, body, null, pendingImages);
                 if (anon != null) blocks.Add(anon);
                 pendingImages.Clear();
             }
+
             ProcessElement(element, blocks, cancellationToken);
         }
+
         if (pendingImages.Count > 0)
         {
             var anon = BuildLeafBlock(string.Empty, body, null, pendingImages);
@@ -206,7 +194,9 @@ public sealed class LayoutEngine : IDisposable
     /// <summary>Collects every element in the subtree (pre-order) whose tag is in the comma-separated selector.</summary>
     private static List<Element> QueryAll(Element root, string selector)
     {
-        var tags = selector == BlockSelector ? BlockTagSet : selector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tags = selector == BlockSelector
+            ? BlockTagSet
+            : selector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var result = new List<Element>();
         Collect(root, result);
         return result;
@@ -218,7 +208,10 @@ public sealed class LayoutEngine : IDisposable
         }
     }
 
-    /// <summary>Precomputes each rule's selector specificity once per document (the cascade used to recompute it per rule × element pair).</summary>
+    /// <summary>
+    ///     Precomputes each rule's selector specificity once per document (the cascade used to recompute it per rule ×
+    ///     element pair).
+    /// </summary>
     private static int[] PrecomputeSpecificities(List<CssRule> rules)
     {
         var specs = new int[rules.Count];
@@ -228,59 +221,75 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// Indexes of the rules whose last compound is a <c>::before</c> / <c>::after</c>
-    /// pseudo-element, per document. The pseudo resolution scans only these (a few),
-    /// not the whole sheet.
+    ///     Indexes of the rules whose last compound is a <c>::before</c> / <c>::after</c>
+    ///     pseudo-element, per document. The pseudo resolution scans only these (a few),
+    ///     not the whole sheet.
     /// </summary>
     private static (List<int> Before, List<int> After) PrecomputePseudoRules(List<CssRule> rules)
     {
         var before = new List<int>();
         var after = new List<int>();
         for (var i = 0; i < rules.Count; i++)
-        {
             switch (rules[i].Selector.Pseudo)
             {
                 case PseudoKind.Before: before.Add(i); break;
                 case PseudoKind.After: after.Add(i); break;
             }
-        }
+
         return (before, after);
     }
 
     /// <summary>
-    /// Memoized style entry. The resolved style is a pure function of the element's own
-    /// signature (tag, full attribute set, inline style), its parent's resolved style,
-    /// and its structural context: the preceding element-siblings (sibling combinators
-    /// <c>+</c>/<c>~</c>) and the ancestor chain (descendant/child combinators). Two
-    /// elements sharing all of these reuse one resolution; the parent is resolved first
-    /// (top-down). The context hashes are what keep structurally-different elements —
-    /// e.g. a <c>p</c> after an <c>h1</c> vs. a <c>p</c> after a <c>p</c> — from
-    /// colliding on the same key.
+    ///     Memoized style entry. The resolved style is a pure function of the element's own
+    ///     signature (tag, full attribute set, inline style), its parent's resolved style,
+    ///     and its structural context: the preceding element-siblings (sibling combinators
+    ///     <c>+</c>/<c>~</c>) and the ancestor chain (descendant/child combinators). Two
+    ///     elements sharing all of these reuse one resolution; the parent is resolved first
+    ///     (top-down). The context hashes are what keep structurally-different elements —
+    ///     e.g. a <c>p</c> after an <c>h1</c> vs. a <c>p</c> after a <c>p</c> — from
+    ///     colliding on the same key.
     /// </summary>
     private StyleEntry GetStyleEntry(Element el)
     {
         var parent = el.ParentElement is { } p ? GetStyleEntry(p).Style : null;
-        var key = (el.TagName, el.AttributeSignature, el.Style, parent, SiblingContext(el), AncestorContext(el));
-        if (_styleMemo.TryGetValue(key, out var entry))
-            return entry;
+        var parentKey = parent ?? NoParent;
+        var inline = el.Style;
+        var siblingCtx = el.SiblingContextHash;
+        var ancestorCtx = el.AncestorContextHash;
+        var fingerprint = StyleFingerprint(el, inline, siblingCtx, ancestorCtx);
+        if (_styleMemo.TryGetValue(parentKey, out var inner)
+            && inner.TryGetValue(fingerprint, out var cached)
+            && cached.Tag == el.TagName
+            && cached.Attrs == el.AttributeSignature
+            && cached.Inline == inline
+            && cached.SiblingCtx == siblingCtx
+            && cached.AncestorCtx == ancestorCtx)
+            return cached;
         var style = StyleResolver.Resolve(el, _rules, _specificities, parent, _scope);
-        entry = new StyleEntry
+        var entry = new StyleEntry
         {
             Style = style,
             Hidden = CssValueParser.IsHidden(el.HasAttribute("hidden"), el.Style, style.GetPropertyValue("display")),
             // The pseudo-elements inherit from the element's own resolved style and
             // match only the rules whose last compound is that pseudo.
             Before = ResolvePseudo(el, PseudoKind.Before, style),
-            After = ResolvePseudo(el, PseudoKind.After, style)
+            After = ResolvePseudo(el, PseudoKind.After, style),
+            Inline = inline,
+            Tag = el.TagName,
+            Attrs = el.AttributeSignature,
+            SiblingCtx = siblingCtx,
+            AncestorCtx = ancestorCtx
         };
-        _styleMemo[key] = entry;
+        if (inner is null)
+            _styleMemo[parentKey] = inner = [];
+        inner[fingerprint] = entry;
         return entry;
     }
 
     /// <summary>
-    /// Resolves a pseudo-element's style against the (few) rules that target it,
-    /// inheriting from the element's resolved style. Returns null when no rule
-    /// targets the pseudo (nothing to resolve).
+    ///     Resolves a pseudo-element's style against the (few) rules that target it,
+    ///     inheriting from the element's resolved style. Returns null when no rule
+    ///     targets the pseudo (nothing to resolve).
     /// </summary>
     private CssStyle? ResolvePseudo(Element el, PseudoKind pseudo, CssStyle parent)
     {
@@ -294,59 +303,44 @@ public sealed class LayoutEngine : IDisposable
             rules.Add(_rules[indexes[i]]);
             specs[i] = _specificities[indexes[i]];
         }
+
         return StyleResolver.ResolvePseudo(el, pseudo, rules, specs, parent, _scope);
     }
 
     /// <summary>
-    /// Fingerprint of the element's preceding element-siblings. Sibling combinators
-    /// (<c>+</c>, <c>~</c>) match against these, so elements with different left
-    /// contexts must not share a memo entry even when their own signature and parent
-    /// style are identical.
+    ///     64-bit fingerprint of the style-memo key: tag, attribute signature, inline style,
+    ///     and the (cached) sibling/ancestor context hashes. The entry stores the raw
+    ///     components so a hit is verified for exact equality — a hash collision degrades to
+    ///     a re-resolve, never a wrong style.
     /// </summary>
-    private static long SiblingContext(Element el)
-    {
-        var parent = el.ParentElement;
-        if (parent is null)
-            return 0;
-        var hash = 0L;
-        foreach (var node in parent.ChildNodes)
-        {
-            if (node == el)
-                break;
-            if (node is Element sibling)
-                hash = CombineHash(hash, sibling.TagName, sibling.AttributeSignature);
-        }
-        return hash;
-    }
-
-    /// <summary>
-    /// Fingerprint of the element's ancestor chain. Descendant/child combinators match
-    /// against ancestor tags and attributes, so the chain is part of the memo key.
-    /// </summary>
-    private static long AncestorContext(Element el)
-    {
-        var hash = 0L;
-        for (var a = el.ParentElement; a is not null; a = a.ParentElement)
-            hash = CombineHash(hash, a.TagName, a.AttributeSignature);
-        return hash;
-    }
-
-    private static long CombineHash(long hash, string a, string b)
+    private static long StyleFingerprint(Element el, string? inline, long siblingCtx, long ancestorCtx)
     {
         unchecked
         {
-            hash = (hash * 1000003) ^ (uint)a.GetHashCode();
-            hash = (hash * 1000003) ^ (uint)b.GetHashCode();
+            var hash = siblingCtx;
+            hash = (hash * 3944259997L) ^ ancestorCtx;
+            hash = (hash * 3944259997L) ^ el.TagName.GetHashCode(StringComparison.Ordinal);
+            hash = (hash * 3944259997L) ^ el.AttributeSignature.GetHashCode(StringComparison.Ordinal);
+            hash = (hash * 3944259997L) ^ (inline?.GetHashCode(StringComparison.Ordinal) ?? 0);
             return hash;
         }
     }
 
-    /// <summary>Computed style, memoized per (signature, parent style) — see <see cref="GetStyleEntry"/>.</summary>
-    private CssStyle GetComputedStyle(Element el) => GetStyleEntry(el).Style;
+    /// <summary>Computed style, memoized per (signature, parent style) — see <see cref="GetStyleEntry" />.</summary>
+    private CssStyle GetComputedStyle(Element el)
+    {
+        return GetStyleEntry(el).Style;
+    }
 
-    private bool IsHidden(Element el) => GetStyleEntry(el).Hidden;
+    private bool IsHidden(Element el)
+    {
+        return GetStyleEntry(el).Hidden;
+    }
 
-    private static bool IsBlockLevelTag(string tagName) => BlockTagSet.Contains(tagName);
+    private static bool IsBlockLevelTag(string tagName)
+    {
+        return BlockTagSet.Contains(tagName);
+    }
 
     private static bool HasAncestorInSet(Element el, HashSet<Element> set)
     {
@@ -356,13 +350,14 @@ public sealed class LayoutEngine : IDisposable
             if (set.Contains(p)) return true;
             p = p.ParentElement;
         }
+
         return false;
     }
 
     /// <summary>
-    /// Resolved content width of an element, per document: it depends only on the
-    /// element and its ancestor chain, so siblings (and repeated lookups of the same
-    /// parent) reuse one computation.
+    ///     Resolved content width of an element, per document: it depends only on the
+    ///     element and its ancestor chain, so siblings (and repeated lookups of the same
+    ///     parent) reuse one computation.
     /// </summary>
     private float GetContainingBlockContentWidth(Element el)
     {
@@ -399,23 +394,26 @@ public sealed class LayoutEngine : IDisposable
             var ml = ParseLengthToPx(pc.GetPropertyValue("margin-left"), cbWidth, emRef) ?? 0f;
             var mr = ParseLengthToPx(pc.GetPropertyValue("margin-right"), cbWidth, emRef) ?? 0f;
             var pw = ParseLengthToPx(pc.GetPropertyValue("width"), cbWidth, emRef);
-            var boxWidth = pw ?? (cbWidth - ml - mr);
+            var boxWidth = pw ?? cbWidth - ml - mr;
             var contentW = boxWidth - pl - pr;
 
             cbWidth = contentW;
             if (contentW > 0) result = contentW;
         }
+
         return result;
     }
 
     private float? ParseLengthToPx(string? s, float reference, float? emReference = null)
-        => _lengthParser.ParseLengthToPx(s, _context, reference, emReference);
+    {
+        return _lengthParser.ParseLengthToPx(s, reference, emReference);
+    }
 
     /// <summary>
-    /// Recursively measures a block element, appending its block to <paramref name="sink"/>.
-    /// The engine only measures INTRINSIC geometry (content height, lines, own
-    /// margins/paddings, flags, children in document order); it does NOT place
-    /// blocks or collapse margins — that is the page splitter's job.
+    ///     Recursively measures a block element, appending its block to <paramref name="sink" />.
+    ///     The engine only measures INTRINSIC geometry (content height, lines, own
+    ///     margins/paddings, flags, children in document order); it does NOT place
+    ///     blocks or collapse margins — that is the page splitter's job.
     /// </summary>
     private void ProcessElement(Element el, List<LayoutBlock> sink, CancellationToken ct)
     {
@@ -431,6 +429,7 @@ public sealed class LayoutEngine : IDisposable
                 var imgBlock = BuildLeafBlock(string.Empty, el);
                 if (imgBlock != null) sink.Add(imgBlock);
             }
+
             return;
         }
 
@@ -468,7 +467,7 @@ public sealed class LayoutEngine : IDisposable
         // The ::before generated box is the element's first block child (document
         // order); it participates in the child flow like any other block child.
         var entry = GetStyleEntry(el);
-        var beforeBox = BuildGeneratedBoxBlock(el, entry.Before, isBefore: true);
+        var beforeBox = BuildGeneratedBoxBlock(el, entry.Before, true);
         if (beforeBox != null)
             childSink.Add(beforeBox);
 
@@ -491,6 +490,7 @@ public sealed class LayoutEngine : IDisposable
                     ProcessElement(childEl, childSink, ct);
                     continue;
                 }
+
                 segment.Fragments.Add(childEl);
                 Element.AppendDescendantText(childEl, segment.Text, IsHidden);
                 CollectInlineImagesRecursive(childEl, segment.Images);
@@ -501,18 +501,19 @@ public sealed class LayoutEngine : IDisposable
                 segment.Text.Append(node.TextContent);
             }
         }
+
         EmitAnonymousBox(segment);
 
         // The ::after generated box is the element's last block child (document
         // order); it participates in the child flow like any other block child.
-        var afterBox = BuildGeneratedBoxBlock(el, entry.After, isBefore: false);
+        var afterBox = BuildGeneratedBoxBlock(el, entry.After, false);
         if (afterBox != null)
             childSink.Add(afterBox);
 
         // A container's content height is the sum of its children's content boxes
         // (content + their vertical padding). An empty container occupies space
         // only through an explicit CSS height / <br> lines.
-        float contentHeight = 0f;
+        float contentHeight;
         if (childSink.Count == 0)
         {
             contentHeight = ResolveSpacerGeometry(el).ContentHeight;
@@ -530,7 +531,7 @@ public sealed class LayoutEngine : IDisposable
             // children, so ContentHeight equals the flow's height in the box.
             contentHeight = LayoutBlock.MeasureChildFlow(childSink, layout.PaddingTop, layout.PaddingBottom);
         }
-        
+
         var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
         var heightPx = ParseLengthToPx(computed.GetPropertyValue("height"), _options.PageHeightPx, fontSize);
@@ -539,19 +540,21 @@ public sealed class LayoutEngine : IDisposable
 
         // An explicit height, or a max-height that caps the children, FIXES the
         // content box: the children's overflow is clipped at the box (browser
-        // behaviour), so the splitter must treat ContentHeight as authoritative.
+        // behavior), so the splitter must treat ContentHeight as authoritative.
         var fixedHeight = false;
         if (heightPx.HasValue)
         {
             contentHeight = heightPx.Value;
             fixedHeight = true;
         }
+
         if (contentHeight > maxHeight)
         {
             contentHeight = maxHeight.Value;
             fixedHeight = true;
         }
-        if(contentHeight < minHeight)
+
+        if (contentHeight < minHeight)
         {
             contentHeight = minHeight.Value;
             fixedHeight = true;
@@ -574,11 +577,14 @@ public sealed class LayoutEngine : IDisposable
 
         if (childSink.Count > 0)
         {
-            if ((childSink[0].Flags & LayoutBlockFlags.PageBreakBefore) != 0) containerBlock.Flags |= LayoutBlockFlags.PageBreakBefore;
-            if ((childSink[^1].Flags & LayoutBlockFlags.PageBreakAfter) != 0) containerBlock.Flags |= LayoutBlockFlags.PageBreakAfter;
+            if ((childSink[0].Flags & LayoutBlockFlags.PageBreakBefore) != 0)
+                containerBlock.Flags |= LayoutBlockFlags.PageBreakBefore;
+            if ((childSink[^1].Flags & LayoutBlockFlags.PageBreakAfter) != 0)
+                containerBlock.Flags |= LayoutBlockFlags.PageBreakAfter;
         }
 
         sink.Add(containerBlock);
+        return;
 
         // The segment's anonymous box: no margins of its own (the element's margins
         // belong to the container, not to this box), and the "#text" tag marks it as
@@ -597,15 +603,15 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// Computes a table's layout with a faithful Chromium algorithm —
-    /// <c>table-layout: auto</c> by default, or the CSS <c>fixed</c> algorithm when
-    /// declared — and emits it as a container whose children are the table's ROWS:
-    /// one single-line text block per row (<c>LineCount = 1</c>,
-    /// <c>LineHeightPx = row height</c>). The page splitter then places the rows
-    /// individually — a page break lands on a row boundary, and a row that does not
-    /// fit the page remainder moves whole to the next page (single-line text is
-    /// monolithic), exactly as a browser breaks tall tables. The table's own
-    /// padding/border bound the row flow as the container's PaddingTop/Bottom.
+    ///     Computes a table's layout with a faithful Chromium algorithm —
+    ///     <c>table-layout: auto</c> by default, or the CSS <c>fixed</c> algorithm when
+    ///     declared — and emits it as a container whose children are the table's ROWS:
+    ///     one single-line text block per row (<c>LineCount = 1</c>,
+    ///     <c>LineHeightPx = row height</c>). The page splitter then places the rows
+    ///     individually — a page break lands on a row boundary, and a row that does not
+    ///     fit the page remainder moves whole to the next page (single-line text is
+    ///     monolithic), exactly as a browser breaks tall tables. The table's own
+    ///     padding/border bound the row flow as the container's PaddingTop/Bottom.
     /// </summary>
     private LayoutBlock? BuildTableBlock(Element el)
     {
@@ -623,7 +629,6 @@ public sealed class LayoutEngine : IDisposable
             _options,
             _coreOptions,
             IsBlockDisplay,
-            _context,
             _lengthParser);
         if (result is null) return null;
 
@@ -664,13 +669,13 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// Builds the block for a pseudo-element's generated box, or null when the box
-    /// does not occupy space. A generated box exists only when <c>content</c> is set
-    /// to a value other than <c>none</c>; it is a BLOCK child only when its
-    /// <c>display</c> is explicitly block-like (the pseudo default is inline). The
-    /// box's geometry (height, margins, paddings, float) comes from its resolved
-    /// style. A float box is marked <see cref="LayoutBlock.Floats"/> so the splitter
-    /// keeps its margins out of the parent's collapse.
+    ///     Builds the block for a pseudo-element's generated box, or null when the box
+    ///     does not occupy space. A generated box exists only when <c>content</c> is set
+    ///     to a value other than <c>none</c>; it is a BLOCK child only when its
+    ///     <c>display</c> is explicitly block-like (the pseudo default is inline). The
+    ///     box's geometry (height, margins, paddings, float) comes from its resolved
+    ///     style. A float box is marked <see cref="LayoutBlock.Floats" /> so the splitter
+    ///     keeps its margins out of the parent's collapse.
     /// </summary>
     private LayoutBlock? BuildGeneratedBoxBlock(Element el, CssStyle? style, bool isBefore)
     {
@@ -717,18 +722,24 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// The vertical space a LEAF element's generated boxes add to its block, folded
-    /// in with CSS parent-child margin collapse. Returns the box height to add to the
-    /// content, plus the margin to fold into the element's own margin:
-    /// <list type="bullet">
-    /// <item>With padding, the box's margin does NOT collapse with the element's — the
-    /// full margin is added to the content (returned in <c>Height</c>), nothing folds.</item>
-    /// <item>Without padding, the box's margin collapses with the element's own margin —
-    /// the caller takes <c>max(ownMargin, MarginToFold)</c>, then adds <c>Height</c>.</item>
-    /// <item>A float box's margin never collapses (out of flow) — it is added in full
-    /// to <c>Height</c> and never folded.</item>
-    /// </list>
-    /// Returns (0, 0) when the element has no block-level generated box.
+    ///     The vertical space a LEAF element's generated boxes add to its block, folded
+    ///     in with CSS parent-child margin collapse. Returns the box height to add to the
+    ///     content, plus the margin to fold into the element's own margin:
+    ///     <list type="bullet">
+    ///         <item>
+    ///             With padding, the box's margin does NOT collapse with the element's — the
+    ///             full margin is added to the content (returned in <c>Height</c>), nothing folds.
+    ///         </item>
+    ///         <item>
+    ///             Without padding, the box's margin collapses with the element's own margin —
+    ///             the caller takes <c>max(ownMargin, MarginToFold)</c>, then adds <c>Height</c>.
+    ///         </item>
+    ///         <item>
+    ///             A float box's margin never collapses (out of flow) — it is added in full
+    ///             to <c>Height</c> and never folded.
+    ///         </item>
+    ///     </list>
+    ///     Returns (0, 0) when the element has no block-level generated box.
     /// </summary>
     private (float MarginToFold, float Height) GetGeneratedBoxContribution(Element el, bool hasPadding)
     {
@@ -746,15 +757,17 @@ public sealed class LayoutEngine : IDisposable
             else
                 margin = Math.Max(margin, boxMargin); // collapses with the element's margin
         }
+
         return (margin, height);
     }
 
     /// <summary>
-    /// Measures a leaf element (text or image) and builds its block with its
-    /// INTRINSIC geometry. Returns null when the element is hidden, or when it has
-    /// no content AND occupies no space.
+    ///     Measures a leaf element (text or image) and builds its block with its
+    ///     INTRINSIC geometry. Returns null when the element is hidden, or when it has
+    ///     no content AND occupies no space.
     /// </summary>
-    private LayoutBlock? BuildLeafBlock(string text, Element el, IReadOnlyList<Node>? fragments = null, IReadOnlyList<Element>? inlineImages = null)
+    private LayoutBlock? BuildLeafBlock(string text, Element el, IReadOnlyList<Node>? fragments = null,
+        IReadOnlyList<Element>? inlineImages = null)
     {
         var computed = GetComputedStyle(el);
         if (IsHidden(el)) return null;
@@ -764,7 +777,8 @@ public sealed class LayoutEngine : IDisposable
         var images = inlineImages ?? CollectInlineImages(el);
         // The top-level inline nodes the text was extracted from: the whole element
         // for a leaf, the caller's segment for an anonymous box.
-        var inlineFragments = fragments ?? TextRunBuilder.CollectInlineFragments(el, IsBlockChild, IsInlineImage, IsHidden);
+        var inlineFragments =
+            fragments ?? TextRunBuilder.CollectInlineFragments(el, IsBlockChild, IsInlineImage, IsHidden);
 
         var fontSize = ResolveFontSize(el);
         var bold = CssValueParser.IsBoldWeight(computed.GetPropertyValue("font-weight"));
@@ -786,7 +800,7 @@ public sealed class LayoutEngine : IDisposable
         // The element's generated boxes (::before / ::after), folded into this block
         // with CSS parent-child margin collapse (see GetGeneratedBoxContribution).
         // Applied at every return point below.
-        var (genMargin, genHeight) = GetGeneratedBoxContribution(el, hasPadding: paddingTop > 0f || paddingBottom > 0f);
+        var (genMargin, genHeight) = GetGeneratedBoxContribution(el, paddingTop > 0f || paddingBottom > 0f);
 
         // Empty leaf (no text, no inline images, not an image element): it
         // occupies space only through an explicit CSS height, padding or margins.
@@ -811,23 +825,24 @@ public sealed class LayoutEngine : IDisposable
         if (wpx is > 0) availableWidth = Math.Min(_options.PageWidthPx, wpx.Value);
         else if (mwpx is > 0) availableWidth = Math.Min(_options.PageWidthPx, mwpx.Value);
         else
-        {
             // Auto-width block: shrink-to-fit, the content box loses the margins.
-            availableWidth -= (marginLeft + marginRight);
-        }
+            availableWidth -= marginLeft + marginRight;
 
-        availableWidth -= (paddingLeft + paddingRight);
+        availableWidth -= paddingLeft + paddingRight;
         if (availableWidth < 0) availableWidth = 0f;
 
         // Line-height: keep the LENGTH and UNITLESS forms separate (browser model).
         var (lineHeightLengthPx, lineHeightMultiplier) =
-            CssValueParser.ResolveLineHeightForm(computed.GetPropertyValue("line-height"), fontSize, ParseLengthToPx, _lengthParser.ParseUnitless);
+            CssValueParser.ResolveLineHeightForm(computed.GetPropertyValue("line-height"), fontSize, ParseLengthToPx,
+                _lengthParser.ParseUnitless);
         var lineHeightPx = lineHeightLengthPx ?? lineHeightMultiplier * fontSize;
         if (lineHeightPx.HasValue) lineHeightPx = ITextMeasurer.QuantizeLineHeight(lineHeightPx.Value);
 
         // Letter-spacing and word-spacing.
-        var letterSpacingPx = CssValueParser.TryParseSpacing(computed.GetPropertyValue("letter-spacing"), containerRefWidth, fontSize, ParseLengthToPx);
-        var wordSpacingPx = CssValueParser.TryParseSpacing(computed.GetPropertyValue("word-spacing"), containerRefWidth, fontSize, ParseLengthToPx);
+        var letterSpacingPx = CssValueParser.TryParseSpacing(computed.GetPropertyValue("letter-spacing"),
+            containerRefWidth, fontSize, ParseLengthToPx);
+        var wordSpacingPx = CssValueParser.TryParseSpacing(computed.GetPropertyValue("word-spacing"), containerRefWidth,
+            fontSize, ParseLengthToPx);
 
         // text-indent narrows the first line.
         float? firstLineWidthPx = null;
@@ -836,14 +851,10 @@ public sealed class LayoutEngine : IDisposable
         {
             var indentPx = ParseLengthToPx(ti, containerRefWidth, fontSize);
             if (indentPx is > 0)
-            {
                 firstLineWidthPx = Math.Max(0f, availableWidth - indentPx.Value);
-            }
             else if (indentPx.HasValue)
-            {
                 // Negative indents extend the first line beyond the content edge.
                 firstLineWidthPx = availableWidth - indentPx.Value;
-            }
         }
 
         var contentHeight = 0f;
@@ -856,7 +867,8 @@ public sealed class LayoutEngine : IDisposable
             // image itself.
             var srcEl = ImageHelpers.FindImageWithSrc(el);
             var srcComputed = srcEl != null ? GetComputedStyle(srcEl) : null;
-            var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, 0f, fontSize, srcComputed);
+            var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions,
+                availableWidth, containerRefWidth, 0f, fontSize, srcComputed);
             contentHeight = imgHeight + genHeight;
             if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
 
@@ -884,7 +896,9 @@ public sealed class LayoutEngine : IDisposable
         if (images.Count > 0)
         {
             var resolvedLineHeight = ITextMeasurer.QuantizeLineHeight(lineHeightLengthPx
-                ?? (lineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize);
+                                                                      ?? (lineHeightMultiplier ??
+                                                                          ITextMeasurer.NormalLineHeightMultiplier) *
+                                                                      fontSize);
             var metrics = _measurer.GetFontMetrics(fontSize, TextRunBuilder.ToFontStyle(bold, italic));
             var strutDescent = ImageHelpers.ChromiumStrutDescent(resolvedLineHeight, metrics);
 
@@ -900,16 +914,19 @@ public sealed class LayoutEngine : IDisposable
             if (leadingImage)
             {
                 var imgStyle = GetComputedStyle(images[0]);
-                var (w, h) = ImageHelpers.MeasureImageSize(images[0], imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, 0f, fontSize);
+                var (w, h) = ImageHelpers.MeasureImageSize(images[0], imgStyle, ParseLengthToPx, _options, _coreOptions,
+                    availableWidth, containerRefWidth, 0f, fontSize);
                 leadingImgWidth = w;
                 leadingImgContribution = ImageHelpers.LineContribution(
-                    imgStyle.GetPropertyValue("vertical-align"), h, resolvedLineHeight, strutDescent, fontSize, metrics.XHeight, ParseLengthToPx);
+                    imgStyle.GetPropertyValue("vertical-align"), h, resolvedLineHeight, strutDescent, fontSize,
+                    metrics.XHeight, ParseLengthToPx);
             }
 
             var imgLineHeights = new List<float>();
             if (!string.IsNullOrEmpty(text))
             {
-                var textRuns = TextRunBuilder.BuildFragments(inlineFragments, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
+                var textRuns = TextRunBuilder.BuildFragments(inlineFragments, text, fontSize, bold, italic,
+                    GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
 
                 // A leading image narrows the first line by its border-box width
                 // (box-sizing:border-box includes its padding, so the text starts
@@ -920,9 +937,12 @@ public sealed class LayoutEngine : IDisposable
 
                 var textMeas = textRuns.Count == 1
                     ? _measurer.Measure(textRuns[0].Text, textRuns[0].FontSizePx, availableWidth,
-                        lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * textRuns[0].FontSizePx),
-                        letterSpacingPx, wordSpacingPx, textFirstLine, textRuns[0].Style, includeLineText: false)
-                    : _measurer.MeasureRuns(textRuns, availableWidth, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, textFirstLine, includeLineText: false);
+                        lineHeightLengthPx ?? (lineHeightMultiplier is null
+                            ? null
+                            : lineHeightMultiplier.Value * textRuns[0].FontSizePx),
+                        letterSpacingPx, wordSpacingPx, textFirstLine, textRuns[0].Style, false)
+                    : _measurer.MeasureRuns(textRuns, availableWidth, lineHeightLengthPx, lineHeightMultiplier,
+                        letterSpacingPx, wordSpacingPx, textFirstLine, false);
 
                 for (var li = 0; li < textMeas.LineCount; li++)
                 {
@@ -944,10 +964,13 @@ public sealed class LayoutEngine : IDisposable
                 foreach (var img in images)
                 {
                     var imgStyle = GetComputedStyle(img);
-                    var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options, _coreOptions, availableWidth, containerRefWidth, 0f, fontSize);
+                    var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options,
+                        _coreOptions, availableWidth, containerRefWidth, 0f, fontSize);
                     imageBoxes.Add((imgWidth, imgHeight, imgStyle.GetPropertyValue("vertical-align")));
                 }
-                imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight, strutDescent, fontSize, metrics.XHeight, ParseLengthToPx));
+
+                imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight,
+                    strutDescent, fontSize, metrics.XHeight, ParseLengthToPx));
             }
 
             contentHeight = (imgLineHeights.Count > 0 ? imgLineHeights.Sum() : 0f) + genHeight;
@@ -992,18 +1015,19 @@ public sealed class LayoutEngine : IDisposable
         }
 
         // Split the inline content into runs at their own font sizes (browser model).
-        var runs = TextRunBuilder.BuildFragments(inlineFragments, text, fontSize, bold, italic, GetComputedStyle, ParseLengthToPx, IsBlockChild, IsHidden);
+        var runs = TextRunBuilder.BuildFragments(inlineFragments, text, fontSize, bold, italic, GetComputedStyle,
+            ParseLengthToPx, IsBlockChild, IsHidden);
         var meas = runs.Count == 1
             ? _measurer.Measure(runs[0].Text, runs[0].FontSizePx, availableWidth,
-                lineHeightLengthPx ?? (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
-                letterSpacingPx, wordSpacingPx, firstLineWidthPx, runs[0].Style, includeLineText: true)
-            : _measurer.MeasureRuns(runs, availableWidth, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx, wordSpacingPx, firstLineWidthPx, includeLineText: true);
-        
+                lineHeightLengthPx ??
+                (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
+                letterSpacingPx, wordSpacingPx, firstLineWidthPx, runs[0].Style, false)
+            : _measurer.MeasureRuns(runs, availableWidth, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx,
+                wordSpacingPx, firstLineWidthPx, false);
+
         var lineHeights = meas.LineHeights.Length > 0 ? meas.LineHeights : null;
         for (var li = 0; li < meas.LineCount; li++)
-        {
             contentHeight += lineHeights is not null ? lineHeights[li] : meas.LineHeightPx;
-        }
 
         // Drop-cap (initial-letter): the first letter spans N lines, so the paragraph
         // is at least N natural lines tall.
@@ -1012,10 +1036,11 @@ public sealed class LayoutEngine : IDisposable
         {
             var metrics = _measurer.GetFontMetrics(fontSize, TextRunBuilder.ToFontStyle(bold, italic));
             var capheightRatio = metrics.CapHeight / fontSize;
-            var naturalLineHeight = (int)_measurer.GetNaturalLineHeight(fontSize, TextRunBuilder.ToFontStyle(bold, italic));
+            var naturalLineHeight =
+                (int)_measurer.GetNaturalLineHeight(fontSize, TextRunBuilder.ToFontStyle(bold, italic));
             var letterCapHeight = (initialLetter.Value - 1) * lineHeightPx!.Value + metrics.CapHeight;
             var letterFontSize = letterCapHeight / capheightRatio;
-            var dropCapHeight = lineHeightPx!.Value + naturalLineHeight - (initialLetter.Value - 1);
+            var dropCapHeight = lineHeightPx.Value + naturalLineHeight - (initialLetter.Value - 1);
             if (dropCapHeight > contentHeight)
             {
                 // The drop-cap box is taller than the text: the paragraph is N lines
@@ -1046,10 +1071,10 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// The space a text-less element occupies as CONTENT: an explicit CSS
-    /// <c>height</c> when declared; otherwise one line when the element contains
-    /// non-collapsible content. (<c>&lt;br&gt;</c> children flow through the text
-    /// path as U+FFFC markers, so they never reach here.)
+    ///     The space a text-less element occupies as CONTENT: an explicit CSS
+    ///     <c>height</c> when declared; otherwise one line when the element contains
+    ///     non-collapsible content. (<c>&lt;br&gt;</c> children flow through the text
+    ///     path as U+FFFC markers, so they never reach here.)
     /// </summary>
     private (float ContentHeight, int LineCount, float LineHeightPx) ResolveSpacerGeometry(Element el)
     {
@@ -1068,15 +1093,17 @@ public sealed class LayoutEngine : IDisposable
             return (0f, 0, 0f);
 
         var (lhLengthPx, lhMultiplier) =
-            CssValueParser.ResolveLineHeightForm(computed.GetPropertyValue("line-height"), fontSize, ParseLengthToPx, _lengthParser.ParseUnitless);
-        var lineHeight = ITextMeasurer.QuantizeLineHeight(lhLengthPx ?? (lhMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize);
+            CssValueParser.ResolveLineHeightForm(computed.GetPropertyValue("line-height"), fontSize, ParseLengthToPx,
+                _lengthParser.ParseUnitless);
+        var lineHeight =
+            ITextMeasurer.QuantizeLineHeight(lhLengthPx ??
+                                             (lhMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) * fontSize);
         return (lineHeight, 1, lineHeight);
     }
 
     private static bool HasNonCollapsibleContent(Element el, Func<Element, bool> isHidden)
     {
         foreach (var node in el.ChildNodes)
-        {
             if (node.NodeType == NodeType.Text)
             {
                 if (node.TextContent.Any(c => !TextRunWrapper.IsCollapsibleWhitespace(c)))
@@ -1089,12 +1116,11 @@ public sealed class LayoutEngine : IDisposable
                 if (!isHidden(childEl) && HasNonCollapsibleContent(childEl, isHidden))
                     return true;
             }
-        }
 
         return false;
     }
 
-    /// <summary>Maps the parsed CSS break properties to <see cref="LayoutBlockFlags"/>.</summary>
+    /// <summary>Maps the parsed CSS break properties to <see cref="LayoutBlockFlags" />.</summary>
     private static LayoutBlockFlags ToBreakFlags(CssStyle style)
     {
         var (pageBreakBefore, pageBreakAfter, avoidBreakInside, avoidBreakAfter) = CssValueParser.ParseBreaks(style);
@@ -1107,10 +1133,11 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// Computes the element's own vertical layout properties exactly as the style
-    /// sheet declares them. The flow applies the CSS margin collapse on top.
+    ///     Computes the element's own vertical layout properties exactly as the style
+    ///     sheet declares them. The flow applies the CSS margin collapse on top.
     /// </summary>
-    private (float MarginTop, float MarginBottom, float PaddingTop, float PaddingBottom) ComputeVerticalLayout(Element el)
+    private (float MarginTop, float MarginBottom, float PaddingTop, float PaddingBottom)
+        ComputeVerticalLayout(Element el)
     {
         var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
@@ -1137,7 +1164,7 @@ public sealed class LayoutEngine : IDisposable
         if (el.ParentElement is { } parent)
             parentFontSize = ResolveFontSize(parent);
 
-        // An INHERITED font-size is already the parent's resolved size; re-parsing
+        // An INHERITED font-size is already the parent's resolved size; reparsing
         // its raw string (e.g. "max(2.42em, …)") would apply the em unit twice.
         if (!computed.IsExplicit("font-size"))
             return parentFontSize;
@@ -1154,19 +1181,23 @@ public sealed class LayoutEngine : IDisposable
     // margin-inline, ...) into physical longhands at cascade time, so the engine reads
     // the physical longhand directly — no per-property fallback chain is needed.
     private float? TryGetComputedBoxPx(CssStyle computed, string name, float reference, float? emReference)
-        => ParseLengthToPx(computed.GetPropertyValue(name), reference, emReference);
+    {
+        return ParseLengthToPx(computed.GetPropertyValue(name), reference, emReference);
+    }
 
     /// <summary>
-    /// True when the element's computed <c>display</c> is block-like. Images are
-    /// inline by UA default; <c>figure</c> is block.
+    ///     True when the element's computed <c>display</c> is block-like. Images are
+    ///     inline by UA default; <c>figure</c> is block.
     /// </summary>
     private bool IsBlockDisplay(Element el)
-        => CssValueParser.IsBlockDisplay(GetComputedStyle(el).GetPropertyValue("display"), el.TagName);
+    {
+        return CssValueParser.IsBlockDisplay(GetComputedStyle(el).GetPropertyValue("display"), el.TagName);
+    }
 
     /// <summary>
-    /// True when the element is a block-level child of its parent. An explicit
-    /// <c>display</c> wins; when none is set (the engine has no UA stylesheet) the
-    /// tag-name heuristic approximates the UA default.
+    ///     True when the element is a block-level child of its parent. An explicit
+    ///     <c>display</c> wins; when none is set (the engine has no UA stylesheet) the
+    ///     tag-name heuristic approximates the UA default.
     /// </summary>
     private bool IsBlockChild(Element el)
     {
@@ -1177,21 +1208,27 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// The element's text content with surrounding CSS-collapsible whitespace trimmed,
-    /// EXCLUDING display:none descendants (and their subtrees). Unlike
-    /// <see cref="Element.TrimmedTextContent"/>, which is a cached, style-agnostic walk,
-    /// this applies the cascade's hidden verdict so hidden inline content (e.g. a
-    /// <c>display:none</c> link inside a list item) contributes no text.
+    ///     The element's text content with surrounding CSS-collapsible whitespace trimmed,
+    ///     EXCLUDING display:none descendants (and their subtrees). Unlike
+    ///     <see cref="Element.TrimmedTextContent" />, which is a cached, style-agnostic walk,
+    ///     this applies the cascade's hidden verdict so hidden inline content (e.g. a
+    ///     <c>display:none</c> link inside a list item) contributes no text.
     /// </summary>
-    private string GetVisibleText(Element el) => Element.GetVisibleTextContent(el, IsHidden);
+    private string GetVisibleText(Element el)
+    {
+        return Element.GetVisibleTextContent(el, IsHidden);
+    }
 
     /// <summary>An image element whose computed display is inline (the UA default).</summary>
-    private bool IsInlineImage(Element el) => ImageHelpers.IsImageElement(el) && !IsBlockDisplay(el);
+    private bool IsInlineImage(Element el)
+    {
+        return ImageHelpers.IsImageElement(el) && !IsBlockDisplay(el);
+    }
 
     /// <summary>
-    /// Collects the inline-display image descendants of <paramref name="el"/>
-    /// (block children are never descended into — their images belong to their
-    /// own block flow, not to this element's inline content).
+    ///     Collects the inline-display image descendants of <paramref name="el" />
+    ///     (block children are never descended into — their images belong to their
+    ///     own block flow, not to this element's inline content).
     /// </summary>
     private List<Element> CollectInlineImages(Element el)
     {
@@ -1210,15 +1247,16 @@ public sealed class LayoutEngine : IDisposable
                 result.Add(child);
                 continue;
             }
+
             if (!IsBlockChild(child))
                 CollectInlineImagesRecursive(child, result);
         }
     }
 
     /// <summary>
-    /// True when the first inline content (document order, skipping hidden nodes)
-    /// of the given nodes is an image — a leading inline image that shares the
-    /// first line with the text that follows it.
+    ///     True when the first inline content (document order, skipping hidden nodes)
+    ///     of the given nodes is an image — a leading inline image that shares the
+    ///     first line with the text that follows it.
     /// </summary>
     private bool HasLeadingImage(IReadOnlyList<Node> nodes)
     {
@@ -1227,7 +1265,6 @@ public sealed class LayoutEngine : IDisposable
         bool Walk(IReadOnlyList<Node> nodeList)
         {
             foreach (var child in nodeList)
-            {
                 if (child is Element childEl)
                 {
                     if (IsHidden(childEl)) continue;
@@ -1245,26 +1282,51 @@ public sealed class LayoutEngine : IDisposable
                     if (!string.IsNullOrWhiteSpace(child.TextContent))
                         return false;
                 }
-            }
+
             return false;
         }
     }
 
-    public void Dispose()
+    /// <summary>
+    ///     A memoized resolution: the resolved style plus the hidden verdict, both pure
+    ///     functions of the element's signature (tag, attributes, inline style) and its
+    ///     parent's resolved style. Every element sharing a signature reuses one entry,
+    ///     so a chapter resolves only its distinct signatures (a few dozen), not its
+    ///     hundreds of elements.
+    /// </summary>
+    private sealed class StyleEntry
     {
-        _contentWidthMemo = null;
-        _styleMemo.Clear();
-        _specificities = [];
-        _beforeRules = [];
-        _afterRules = [];
+        /// <summary>Resolved <c>::after</c> style, or null when no rule targets it.</summary>
+        public CssStyle? After;
 
-        // HarfBuzz/Skia measurers hold native resources; only the engine that created
-        // the measurer releases them (a shared measurer outlives every engine that
-        // uses it — see <see cref="PageCalculator"/>).
-        if (_ownsMeasurer)
-        {
-            (_measurer as IDisposable)?.Dispose();
-        }
-        GC.SuppressFinalize(this);
+        public long AncestorCtx;
+        public string Attrs = null!;
+
+        /// <summary>Resolved <c>::before</c> style, or null when no rule targets it.</summary>
+        public CssStyle? Before;
+
+        public required bool Hidden;
+
+        // Raw key components, stored so a fingerprint hit is verified for exact equality.
+        public string? Inline;
+        public long SiblingCtx;
+        public required CssStyle Style;
+        public string Tag = null!;
+    }
+
+    /// <summary>
+    ///     A run of consecutive inline content (text nodes and inline elements) between
+    ///     block children, kept in document order: the source of one anonymous box.
+    /// </summary>
+    private sealed class InlineSegment
+    {
+        /// <summary>The top-level inline nodes, in document order (for text-run building).</summary>
+        public readonly List<Node> Fragments = [];
+
+        /// <summary>The inline-display images inside the segment (for the image line model).</summary>
+        public readonly List<Element> Images = [];
+
+        /// <summary>The segment's raw text (untrimmed; <c>&lt;br&gt;</c> as U+FFFC markers).</summary>
+        public readonly StringBuilder Text = new();
     }
 }

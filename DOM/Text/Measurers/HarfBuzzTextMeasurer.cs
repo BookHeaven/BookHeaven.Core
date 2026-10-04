@@ -51,8 +51,14 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
     // Serializes the legacy SKShaper/SKFont fallback only (stateful, not
     // thread-safe); the HarfBuzz path above takes no lock at all.
     private readonly Lock _shapeLock = new();
-    private readonly ConcurrentDictionary<(string Word, float FontSize, FontStyle Style), float> _wordWidthCache = [];
-    private readonly ConcurrentDictionary<(string Text, FontStyle Style), float> _wordAdvanceSumCache = [];
+    // Word width per (word, fontSize, style). The outer key is a plain string; the
+    // entry fast-paths the single (fontSize, style) most words are seen at and only
+    // grows a Dictionary when a second variant appears — no boxing, no per-lookup
+    // allocation (the old tuple-keyed caches boxed a ValueTuple on every call).
+    private readonly ConcurrentDictionary<string, WordWidthEntry> _wordWidthCache = [];
+    // Advance sum per (text, style), shaped once at the font's native scale. One
+    // float[] per unique text indexed by style (NaN = not shaped yet) — no boxing.
+    private readonly ConcurrentDictionary<string, float[]> _wordAdvanceSumCache = [];
     // One reusable line builder per shaping thread: Measure is called thousands of
     // times per book, and a fresh StringBuilder per call was a steady allocation
     // source. Lines are copied out via ToString before the buffer is reused.
@@ -363,10 +369,36 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
 
     private float GetWordWidth(string word, float fontSizePx, FontStyle style)
     {
-        if (_wordWidthCache.TryGetValue((word, fontSizePx, style), out var width)) return width;
+        if (!_wordWidthCache.TryGetValue(word, out var entry))
+        {
+            entry = _wordWidthCache.GetOrAdd(word, static _ => new WordWidthEntry());
+        }
+        var code = PackWidthCode(fontSizePx, style);
+        if (entry.Code == code) return entry.Width;
+        var extra = entry.Extra;
+        if (extra is not null && extra.TryGetValue(code, out var width)) return width;
 
         var result = MeasureShapedTextWidth(word, fontSizePx, style);
-        _wordWidthCache.TryAdd((word, fontSizePx, style), result);
+        lock (entry)
+        {
+            if (entry.Code == code) return entry.Width;
+            if (entry.Extra is not null)
+            {
+                if (entry.Extra.TryGetValue(code, out width)) return width;
+                entry.Extra[code] = result;
+            }
+            else if (entry.Code == 0)
+            {
+                // Width before Code: Code doubles as the "set" flag, so a concurrent
+                // reader that observes the new Code also sees the new Width.
+                entry.Width = result;
+                entry.Code = code;
+            }
+            else
+            {
+                entry.Extra = new Dictionary<long, float> { [entry.Code] = entry.Width, [code] = result };
+            }
+        }
         return result;
     }
 
@@ -376,11 +408,23 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         {
             return 0f;
         }
-        if (_wordWidthCache.TryGetValue((text, fontSizePx, style), out var width)) return width;
+        return GetWordWidth(text, fontSizePx, style);
+    }
 
-        var result = MeasureShapedTextWidth(text, fontSizePx, style);
-        _wordWidthCache.TryAdd((text, fontSizePx, style), result);
-        return result;
+    // Packs (fontSize, style) into one long: the float's IEEE-754 bits in the high
+    // 32 bits, the style index (0-3) in the low 2. Equal floats have equal bits, so
+    // the code is a stable identity for the pair and a Dictionary key that boxes
+    // nothing.
+    private static long PackWidthCode(float fontSizePx, FontStyle style) =>
+        ((long)BitConverter.SingleToInt32Bits(fontSizePx) << 2) | (long)(int)style;
+
+    // One slot per style, NaN until shaped. Only invoked on a cache miss (see the
+    // TryGetValue-first pattern at the call site), so hits allocate nothing.
+    private static float[] CreateAdvanceSums()
+    {
+        var sums = new float[FallbackChains.Length];
+        Array.Fill(sums, float.NaN);
+        return sums;
     }
 
     private float MeasureShapedTextWidth(string text, float fontSizePx, FontStyle style)
@@ -395,11 +439,19 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             try
             {
                 // Shape once per unique word at the fixed scale, then rescale per size.
-                if (!_wordAdvanceSumCache.TryGetValue((text, style), out var advanceSum))
+                // The per-text float[] is indexed by style (NaN = not shaped yet), so
+                // the lookup boxes nothing.
+                if (!_wordAdvanceSumCache.TryGetValue(text, out var advanceSums))
+                {
+                    advanceSums = _wordAdvanceSumCache.GetOrAdd(text, static _ => CreateAdvanceSums());
+                }
+                var styleIndex = (int)style;
+                var advanceSum = advanceSums[styleIndex];
+                if (float.IsNaN(advanceSum))
                 {
                     // No lock: per-thread buffer + immutable shared HBFont. A rare
                     // double-shape of the same word from two threads is harmless
-                    // (identical result; TryAdd keeps the first).
+                    // (identical result; the float write is atomic).
                     var buffer = _bufferPerThread.Value!; // the factory never returns null
                     buffer.Reset();
                     // AddUtf16 takes the string's chars directly (no UTF8 byte[] copy
@@ -413,7 +465,7 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
                     {
                         advanceSum += position.XAdvance;
                     }
-                    _wordAdvanceSumCache.TryAdd((text, style), advanceSum);
+                    advanceSums[styleIndex] = advanceSum;
                 }
                 return advanceSum * (fontSizePx / shaper.Scale);
             }
@@ -449,6 +501,20 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         // ThreadLocal.Dispose() disposes every per-thread buffer (they implement IDisposable)
         _bufferPerThread.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Per-word width cache entry. The common case — a word seen at ONE (fontSize,
+    /// style) — is two fields read lock-free; a word seen at a second variant grows
+    /// a <see cref="Dictionary{TKey,TValue}"/> keyed by the packed code, guarded by
+    /// a lock on this entry.
+    /// </summary>
+    private sealed class WordWidthEntry
+    {
+        // Packed (fontSize, style) of the first variant; 0 = not set.
+        public long Code;
+        public float Width;
+        public Dictionary<long, float>? Extra;
     }
 
     /// <summary>
@@ -506,11 +572,13 @@ public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
             }
         }
 
-        public SKFont GetFont(float fontSizePx) =>
-            FontCache.GetOrAdd(
-                fontSizePx,
-                static (size, typeface) => new SKFont(typeface, size),
-                Typeface);
+        public SKFont GetFont(float fontSizePx)
+        {
+            // TryGetValue first: GetOrAdd would invoke the factory (allocating a
+            // SKFont) on every call, even a hit, and discard it.
+            if (FontCache.TryGetValue(fontSizePx, out var font)) return font;
+            return FontCache.GetOrAdd(fontSizePx, static (size, typeface) => new SKFont(typeface, size), Typeface);
+        }
 
         public void Dispose()
         {

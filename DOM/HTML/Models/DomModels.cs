@@ -32,12 +32,10 @@ public abstract class Node
 }
 
 /// <summary>A run of character data.</summary>
-public sealed class Text : Node
+public sealed class Text(string value) : Node
 {
-    public Text(string value) => Value = value;
-
     /// <summary>The raw character data (entities already decoded by the parser).</summary>
-    public string Value { get; }
+    public string Value { get; } = value;
 
     public override NodeType NodeType => NodeType.Text;
     public override string TextContent => Value;
@@ -48,19 +46,13 @@ public sealed class Text : Node
 /// Mirrors the exact members the layout engine reads from AngleSharp's <c>IElement</c>
 /// so the engine can be pointed at this tree with minimal changes.
 /// </summary>
-public sealed class Element : Node
+public sealed class Element(string tagName) : Node
 {
-    public Element(string tagName)
-    {
-        TagName = tagName;
-        ChildNodes = [];
-    }
-
     /// <summary>Lowercase tag name (e.g. "p", "div", "img").</summary>
-    public string TagName { get; }
+    public string TagName { get; } = tagName;
 
     /// <summary>All child nodes (text and element) in document order.</summary>
-    public List<Node> ChildNodes { get; }
+    public List<Node> ChildNodes { get; } = [];
 
     // Attributes as a small pair array: most elements carry 0-2 attributes, so a
     // Dictionary would cost ~100 bytes of overhead per element for nothing.
@@ -131,18 +123,15 @@ public sealed class Element : Node
     // Lazily cached: the engine's style memo keys on the FULL attribute set (attribute
     // selectors like [hidden] must not share a signature with attribute-less twins).
     // Elements without attributes share one empty string (no allocation).
-    private string? _attributeSignature;
-
-    /// <summary>Stable signature of the element's attributes (name=value pairs, ';'-joined).</summary>
     public string AttributeSignature
     {
         get
         {
-            if (_attributeSignature is { } cached) return cached;
+            if (field is { } cached) return cached;
             if (_attributes.Length == 0)
             {
-                _attributeSignature = string.Empty;
-                return _attributeSignature;
+                field = string.Empty;
+                return field;
             }
             var sb = new StringBuilder();
             for (var i = 0; i < _attributes.Length; i++)
@@ -150,9 +139,66 @@ public sealed class Element : Node
                 if (i > 0) sb.Append(';');
                 sb.Append(_attributes[i].Name).Append('=').Append(_attributes[i].Value);
             }
-            _attributeSignature = sb.ToString();
-            return _attributeSignature;
+            field = sb.ToString();
+            return field;
         }
+    }
+
+    // Lazily cached layout-context fingerprints. The tree is immutable after parsing and each
+    // chapter's DOM is owned by a single layout worker, so each hash is computed once (on first
+    // layout access) instead of on every style-memo lookup. SiblingContextHash folds the
+    // preceding siblings; AncestorContextHash folds the full ancestor chain. Both feed the
+    // style-memo key (see LayoutEngine.GetStyleEntry).
+    private long? _siblingContextHash;
+    private long? _ancestorContextHash;
+
+    /// <summary>Hash of the element's preceding siblings (computed once, then cached).</summary>
+    public long SiblingContextHash
+    {
+        get
+        {
+            if (_siblingContextHash is { } cached) return cached;
+            var parent = ParentElement;
+            if (parent is null)
+            {
+                _siblingContextHash = 0;
+                return 0;
+            }
+            long hash = 0;
+            foreach (var s in parent.Children)
+            {
+                if (s == this) break;
+                hash = CombineContextHash(hash, s.TagName, s.AttributeSignature);
+            }
+            _siblingContextHash = hash;
+            return hash;
+        }
+    }
+
+    /// <summary>Hash of the element's full ancestor chain (computed once, then cached).</summary>
+    public long AncestorContextHash
+    {
+        get
+        {
+            if (_ancestorContextHash is { } cached) return cached;
+            long hash = 0;
+            for (var a = ParentElement; a is not null; a = a.ParentElement)
+            {
+                hash = CombineContextHash(hash, a.TagName, a.AttributeSignature);
+            }
+            _ancestorContextHash = hash;
+            return hash;
+        }
+    }
+
+    private static long CombineContextHash(long hash, string a, string b)
+    {
+        unchecked
+        {
+            hash = (hash * 3944259997L) ^ a.GetHashCode(StringComparison.Ordinal);
+            hash = (hash * 3944259997L) ^ b.GetHashCode(StringComparison.Ordinal);
+        }
+        return hash;
     }
 
     // Lazily cached: the tree is immutable after parsing, and HasClass is invoked for
@@ -183,7 +229,6 @@ public sealed class Element : Node
     // needs both (leaf block + uniform run) pays the O(subtree) StringBuilder
     // cost only once.
     private string? _textContent;
-    private string? _trimmedTextContent;
 
     /// <summary>Concatenated text of this element and all its descendants (computed once, then cached).</summary>
     public override string TextContent
@@ -196,42 +241,19 @@ public sealed class Element : Node
         }
     }
 
-    /// <summary><see cref="TextContent"/> with surrounding CSS-collapsible whitespace removed (non-collapsible characters such as U+00A0 are kept; computed once, then cached).</summary>
-    public string TrimmedTextContent
-    {
-        get
-        {
-            if (_trimmedTextContent is { } cached) return cached;
-            ComputeText();
-            return _trimmedTextContent!;
-        }
-    }
-
     private void ComputeText()
     {
         // Fast path: a single text child (plain paragraphs, injected <style> tags)
         // needs no walk and no copy — the child's value IS the content.
-        if (ChildNodes.Count == 1 && ChildNodes[0] is Text only)
+        if (ChildNodes is [Text only])
         {
             _textContent = only.Value;
-            var tStart = 0;
-            var tEnd = only.Value.Length;
-            while (tStart < tEnd && TextRunWrapper.IsCollapsibleWhitespace(only.Value[tStart])) tStart++;
-            while (tEnd > tStart && TextRunWrapper.IsCollapsibleWhitespace(only.Value[tEnd - 1])) tEnd--;
-            _trimmedTextContent = tStart == 0 && tEnd == only.Value.Length
-                ? only.Value
-                : only.Value.AsSpan(tStart, tEnd - tStart).ToString();
             return;
         }
 
         var sb = new StringBuilder();
         AppendDescendantText(this, sb);
-        var start = 0;
-        var end = sb.Length;
-        while (start < end && TextRunWrapper.IsCollapsibleWhitespace(sb[start])) start++;
-        while (end > start && TextRunWrapper.IsCollapsibleWhitespace(sb[end - 1])) end--;
         _textContent = sb.ToString();
-        _trimmedTextContent = sb.ToString(start, end - start);
     }
 
     internal static void AppendDescendantText(Node node, StringBuilder sb, Func<Element, bool>? isHidden = null)
