@@ -34,19 +34,19 @@ public static partial class CssValueParser
         var v = value.Trim().ToLowerInvariant();
         return v switch
         {
-            "xx-small" => SetRatio(ref ratio, 3f / 5f),
-            "x-small" => SetRatio(ref ratio, 3f / 4f),
-            "small" => SetRatio(ref ratio, 8f / 10f),
-            "medium" => SetRatio(ref ratio, 1f),
-            "large" => SetRatio(ref ratio, 10f / 8f),
-            "x-large" => SetRatio(ref ratio, 4f / 3f),
-            "xx-large" => SetRatio(ref ratio, 5f / 3f),
-            "smaller" => SetRatio(ref ratio, 3f / 4f),
-            "larger" => SetRatio(ref ratio, 4f / 3f),
+            "xx-small" => SetRatio(3f / 5f, out ratio),
+            "x-small" => SetRatio(3f / 4f, out ratio),
+            "small" => SetRatio(8f / 10f, out ratio),
+            "medium" => SetRatio(1f, out ratio),
+            "large" => SetRatio(10f / 8f, out ratio),
+            "x-large" => SetRatio(4f / 3f, out ratio),
+            "xx-large" => SetRatio(5f / 3f, out ratio),
+            "smaller" => SetRatio(3f / 4f, out ratio),
+            "larger" => SetRatio(4f / 3f, out ratio),
             _ => false
         };
 
-        static bool SetRatio(ref float r, float value)
+        static bool SetRatio(float value, out float r)
         {
             r = value;
             return true;
