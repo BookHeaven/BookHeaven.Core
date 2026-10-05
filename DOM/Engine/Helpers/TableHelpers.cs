@@ -551,9 +551,8 @@ internal static class TableHelpers
         var specIncrease = 0f;
         var maxIncrease = 0f;
 
-        for (var i = 0; i < cols.Length; i++)
+        foreach (var col in cols)
         {
-            var col = cols[i];
             if (col.Percent is { } p)
             {
                 percentCount++;
@@ -606,10 +605,10 @@ internal static class TableHelpers
                 var distributable = target - minGuess;
                 var positiveIncrease = 0f;
                 var positiveCount = 0;
-                for (var i = 0; i < cols.Length; i++)
+                foreach (var col in cols)
                 {
-                    if (cols[i].Percent is not { } p) continue;
-                    var inc = p * target - cols[i].Min;
+                    if (col.Percent is not { } p) continue;
+                    var inc = p * target - col.Min;
                     if (inc > 0f)
                     {
                         positiveIncrease += inc;
@@ -1052,9 +1051,8 @@ internal static class TableHelpers
         // a block formatting context, so they never collapse with the cell's padding).
         var blocks = cell.Blocks;
         var total = 0f;
-        for (var i = 0; i < blocks.Count; i++)
+        foreach (var block in blocks)
         {
-            var block = blocks[i];
             var lineHeightPx = block.LineHeightLengthPx
                                ?? (block.LineHeightMultiplier ?? ITextMeasurer.NormalLineHeightMultiplier) *
                                block.FontSize;
