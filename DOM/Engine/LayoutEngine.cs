@@ -151,14 +151,14 @@ public sealed class LayoutEngine : IDisposable
         var blocks = new List<LayoutBlock>();
         if (body == null) return blocks;
 
-        var all = QueryAll(body, BlockSelector);
+        var all = QueryAll(body);
         if (all.Count == 0)
         {
             var text = GetVisibleText(body);
             var images = CollectInlineImages(body);
             if (string.IsNullOrEmpty(text) && images.Count == 0) return blocks;
 
-            var block = BuildLeafBlock(text, body, null, images, clampHeight: false);
+            var block = BuildLeafBlock(text, body, new InlineSegment { Images = images }, clampHeight: false);
             if (block != null) blocks.Add(block);
             return blocks;
         }
@@ -183,7 +183,7 @@ public sealed class LayoutEngine : IDisposable
 
             if (pendingImages.Count > 0)
             {
-                var anon = BuildLeafBlock(string.Empty, body, null, pendingImages, clampHeight: false);
+                var anon = BuildLeafBlock(string.Empty, body, new InlineSegment { Images = pendingImages }, clampHeight: false);
                 if (anon != null) blocks.Add(anon);
                 pendingImages.Clear();
             }
@@ -193,26 +193,23 @@ public sealed class LayoutEngine : IDisposable
 
         if (pendingImages.Count > 0)
         {
-            var anon = BuildLeafBlock(string.Empty, body, null, pendingImages, clampHeight: false);
+            var anon = BuildLeafBlock(string.Empty, body, new InlineSegment { Images = pendingImages }, clampHeight: false);
             if (anon != null) blocks.Add(anon);
         }
 
         return blocks;
     }
 
-    /// <summary>Collects every element in the subtree (pre-order) whose tag is in the comma-separated selector.</summary>
-    private static List<Element> QueryAll(Element root, string selector)
+    /// <summary>Collects every element in the subtree (pre-order) whose tag is a block-level tag.</summary>
+    private static List<Element> QueryAll(Element root)
     {
-        var tags = selector == BlockSelector
-            ? BlockTagSet
-            : selector.Split(',').Select(t => t.Trim().ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var result = new List<Element>();
         Collect(root, result);
         return result;
 
         void Collect(Element el, List<Element> sink)
         {
-            if (tags.Contains(el.TagName)) sink.Add(el);
+            if (BlockTagSet.Contains(el.TagName)) sink.Add(el);
             foreach (var child in el.Children) Collect(child, sink);
         }
     }
@@ -398,8 +395,7 @@ public sealed class LayoutEngine : IDisposable
 
     private float ResolveAncestorContentWidth(Element parent)
     {
-        var chain = new List<Element>();
-        for (var p = parent; p != null; p = p.ParentElement) chain.Add(p);
+        var chain = BuildAncestorChain(parent);
 
         // The containing block of a static element is its parent's content box. Walk
         // the parent chain top-down so each ancestor's % width/margin/padding resolves
@@ -449,8 +445,7 @@ public sealed class LayoutEngine : IDisposable
 
     private float ResolveAncestorContentHeight(Element parent)
     {
-        var chain = new List<Element>();
-        for (var p = parent; p != null; p = p.ParentElement) chain.Add(p);
+        var chain = BuildAncestorChain(parent);
 
         // The containing block of a static element is its parent's content box. Walk
         // the parent chain top-down so each ancestor's % height resolves against ITS
@@ -476,6 +471,14 @@ public sealed class LayoutEngine : IDisposable
         }
 
         return result;
+    }
+
+    /// <summary>Builds the ancestor chain from <paramref name="parent"/> up to the document root (bottom-up order).</summary>
+    private static List<Element> BuildAncestorChain(Element parent)
+    {
+        var chain = new List<Element>();
+        for (var p = parent; p != null; p = p.ParentElement) chain.Add(p);
+        return chain;
     }
 
     private float? ParseLengthToPx(string? s, float reference, float? emReference = null)
@@ -538,7 +541,7 @@ public sealed class LayoutEngine : IDisposable
 
         // Container: the element's own vertical properties, as the style sheet
         // declares them. The splitter applies the CSS margin collapse.
-        var layout = ComputeVerticalLayout(el);
+        var box = GetBoxMetrics(el);
 
         var childSink = new List<LayoutBlock>();
 
@@ -595,8 +598,8 @@ public sealed class LayoutEngine : IDisposable
         if (childSink.Count == 0)
         {
             contentHeight = ResolveSpacerGeometry(el).ContentHeight;
-            if (contentHeight <= 0f && layout.MarginTop <= 0f && layout.MarginBottom <= 0f
-                && layout.PaddingTop <= 0f && layout.PaddingBottom <= 0f)
+            if (contentHeight <= 0f && box.MarginTop <= 0f && box.MarginBottom <= 0f
+                && box.PaddingTop <= 0f && box.PaddingBottom <= 0f)
                 return;
         }
         else
@@ -607,7 +610,7 @@ public sealed class LayoutEngine : IDisposable
             // max, and with padding-bottom the last child's bottom margin stays
             // inside the box. The same rules the splitter applies when placing the
             // children, so ContentHeight equals the flow's height in the box.
-            contentHeight = LayoutBlock.MeasureChildFlow(childSink, layout.PaddingTop, layout.PaddingBottom);
+            contentHeight = LayoutBlock.MeasureChildFlow(childSink, box.PaddingTop, box.PaddingBottom);
         }
 
         var computed = GetComputedStyle(el);
@@ -643,10 +646,10 @@ public sealed class LayoutEngine : IDisposable
             TagName = el.TagName,
             Kind = BlockKind.Container,
             ContentHeight = contentHeight,
-            MarginTop = layout.MarginTop,
-            MarginBottom = layout.MarginBottom,
-            PaddingTop = layout.PaddingTop,
-            PaddingBottom = layout.PaddingBottom,
+            MarginTop = box.MarginTop,
+            MarginBottom = box.MarginBottom,
+            PaddingTop = box.PaddingTop,
+            PaddingBottom = box.PaddingBottom,
             LineCount = 0,
             LineHeightPx = 0f,
             Children = childSink,
@@ -671,7 +674,7 @@ public sealed class LayoutEngine : IDisposable
         {
             var text = TrimCollapsibleWhitespace(seg.Text);
             if (text.Length == 0 && seg.Images.Count == 0) return;
-            var ownBlock = BuildLeafBlock(text, el, seg.Fragments, seg.Images, clampHeight: false);
+            var ownBlock = BuildLeafBlock(text, el, seg, clampHeight: false);
             if (ownBlock == null) return;
             ownBlock.TagName = "#text";
             ownBlock.MarginTop = 0f;
@@ -710,8 +713,7 @@ public sealed class LayoutEngine : IDisposable
             _lengthParser);
         if (result is null) return null;
 
-        var marginTop = TryGetComputedBoxPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
-        var marginBottom = TryGetComputedBoxPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
+        var box = GetBoxMetrics(el);
 
         // One block per row: a single "line" as tall as the row. The splitter
         // treats single-line text as monolithic (moved whole, never split), so
@@ -735,8 +737,8 @@ public sealed class LayoutEngine : IDisposable
             TagName = el.TagName,
             Kind = BlockKind.Container,
             ContentHeight = result.ContentHeight,
-            MarginTop = marginTop,
-            MarginBottom = marginBottom,
+            MarginTop = box.MarginTop,
+            MarginBottom = box.MarginBottom,
             PaddingTop = result.TopEdge,
             PaddingBottom = result.BottomEdge,
             LineCount = 0,
@@ -774,10 +776,7 @@ public sealed class LayoutEngine : IDisposable
         var fontSize = ResolveFontSize(el);
         var containerRefWidth = GetContainingBlockContentWidth(el);
 
-        var marginTop = TryGetComputedBoxPx(style, "margin-top", containerRefWidth, fontSize) ?? 0f;
-        var marginBottom = TryGetComputedBoxPx(style, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
-        var paddingTop = TryGetComputedBoxPx(style, "padding-top", containerRefWidth, fontSize) ?? 0f;
-        var paddingBottom = TryGetComputedBoxPx(style, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
+        var box = GetBoxMetrics(el);
         var heightPx = ParseLengthToPx(style.GetPropertyValue("height"), _options.PageHeightPx, fontSize) ?? 0f;
 
         var floatValue = style.GetPropertyValue("float");
@@ -789,10 +788,10 @@ public sealed class LayoutEngine : IDisposable
             TagName = el.TagName + (isBefore ? "::before" : "::after"),
             Kind = BlockKind.Text,
             ContentHeight = heightPx,
-            MarginTop = marginTop,
-            MarginBottom = marginBottom,
-            PaddingTop = paddingTop,
-            PaddingBottom = paddingBottom,
+            MarginTop = box.MarginTop,
+            MarginBottom = box.MarginBottom,
+            PaddingTop = box.PaddingTop,
+            PaddingBottom = box.PaddingBottom,
             LineCount = 0,
             LineHeightPx = 0f,
             Floats = floats
@@ -844,19 +843,14 @@ public sealed class LayoutEngine : IDisposable
     ///     INTRINSIC geometry. Returns null when the element is hidden, or when it has
     ///     no content AND occupies no space.
     /// </summary>
-    private LayoutBlock? BuildLeafBlock(string text, Element el, IReadOnlyList<Node>? fragments = null,
-        IReadOnlyList<Element>? inlineImages = null, bool clampHeight = true)
+    private LayoutBlock? BuildLeafBlock(string text, Element el, InlineSegment? segment = null, bool clampHeight = true)
     {
         var computed = GetComputedStyle(el);
         if (IsHidden(el)) return null;
 
-        // Inline-display images in this element's content (collected by the caller,
-        // or gathered here for the leaf path).
-        var images = inlineImages ?? CollectInlineImages(el);
-        // The top-level inline nodes the text was extracted from: the whole element
-        // for a leaf, the caller's segment for an anonymous box.
+        var images = segment?.Images ?? CollectInlineImages(el);
         var inlineFragments =
-            fragments ?? TextRunBuilder.CollectInlineFragments(el, IsBlockChild, IsInlineImage, IsHidden);
+            segment?.Fragments ?? TextRunBuilder.CollectInlineFragments(el, IsBlockChild, IsInlineImage, IsHidden);
 
         var fontSize = ResolveFontSize(el);
         var bold = CssValueParser.IsBoldWeight(computed.GetPropertyValue("font-weight"));
@@ -865,20 +859,13 @@ public sealed class LayoutEngine : IDisposable
 
         var flags = ToBreakFlags(computed);
 
-        var marginTop = TryGetComputedBoxPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
-        var marginBottom = TryGetComputedBoxPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
-        var marginLeft = TryGetComputedBoxPx(computed, "margin-left", containerRefWidth, fontSize) ?? 0f;
-        var marginRight = TryGetComputedBoxPx(computed, "margin-right", containerRefWidth, fontSize) ?? 0f;
-
-        var paddingTop = TryGetComputedBoxPx(computed, "padding-top", containerRefWidth, fontSize) ?? 0f;
-        var paddingBottom = TryGetComputedBoxPx(computed, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
-        var paddingLeft = TryGetComputedBoxPx(computed, "padding-left", containerRefWidth, fontSize) ?? 0f;
-        var paddingRight = TryGetComputedBoxPx(computed, "padding-right", containerRefWidth, fontSize) ?? 0f;
+        var box = GetBoxMetrics(el);
+        var marginTop = box.MarginTop;
 
         // The element's generated boxes (::before / ::after), folded into this block
         // with CSS parent-child margin collapse (see GetGeneratedBoxContribution).
         // Applied at every return point below.
-        var (genMargin, genHeight) = GetGeneratedBoxContribution(el, paddingTop > 0f || paddingBottom > 0f);
+        var (genMargin, genHeight) = GetGeneratedBoxContribution(el, box.PaddingTop > 0f || box.PaddingBottom > 0f);
 
         // Empty leaf (no text, no inline images, not an image element): it
         // occupies space only through an explicit CSS height, padding or margins.
@@ -891,8 +878,8 @@ public sealed class LayoutEngine : IDisposable
             // Empty elements occupy space through explicit height, padding, or margins.
             // Books use empty paragraphs as spacers; a browser renders their box.
             (spacerHeight, spacerLines, spacerLineHeight) = ResolveSpacerGeometry(el);
-            if (spacerHeight <= 0f && paddingTop <= 0f && paddingBottom <= 0f
-                && marginTop <= 0f && marginBottom <= 0f)
+            if (spacerHeight <= 0f && box.PaddingTop <= 0f && box.PaddingBottom <= 0f
+                && marginTop <= 0f && box.MarginBottom <= 0f)
                 return null;
         }
 
@@ -904,9 +891,9 @@ public sealed class LayoutEngine : IDisposable
         else if (mwpx is > 0) availableWidth = Math.Min(_options.PageWidthPx, mwpx.Value);
         else
             // Auto-width block: shrink-to-fit, the content box loses the margins.
-            availableWidth -= marginLeft + marginRight;
+            availableWidth -= box.MarginLeft + box.MarginRight;
 
-        availableWidth -= paddingLeft + paddingRight;
+        availableWidth -= box.PaddingLeft + box.PaddingRight;
         if (availableWidth < 0) availableWidth = 0f;
 
         // Line-height: keep the LENGTH and UNITLESS forms separate (browser model).
@@ -964,9 +951,9 @@ public sealed class LayoutEngine : IDisposable
                 Kind = BlockKind.Image,
                 ContentHeight = contentHeight,
                 MarginTop = marginTop,
-                MarginBottom = marginBottom,
-                PaddingTop = paddingTop,
-                PaddingBottom = paddingBottom,
+                MarginBottom = box.MarginBottom,
+                PaddingTop = box.PaddingTop,
+                PaddingBottom = box.PaddingBottom,
                 LineCount = 0,
                 LineHeightPx = lineHeightPx ?? 0f,
                 Flags = flags | (fixedHeight ? LayoutBlockFlags.FixedHeight : 0)
@@ -1074,9 +1061,9 @@ public sealed class LayoutEngine : IDisposable
                 Kind = BlockKind.Text,
                 ContentHeight = contentHeight,
                 MarginTop = marginTop,
-                MarginBottom = marginBottom,
-                PaddingTop = paddingTop,
-                PaddingBottom = paddingBottom,
+                MarginBottom = box.MarginBottom,
+                PaddingTop = box.PaddingTop,
+                PaddingBottom = box.PaddingBottom,
                 LineCount = imgLineHeights.Count,
                 LineHeightPx = imgLineHeights.Count > 0 ? imgLineHeights.Max() : 0,
                 LineHeights = [.. imgLineHeights],
@@ -1098,9 +1085,9 @@ public sealed class LayoutEngine : IDisposable
                 Kind = BlockKind.Text,
                 ContentHeight = contentHeight,
                 MarginTop = marginTop,
-                MarginBottom = marginBottom,
-                PaddingTop = paddingTop,
-                PaddingBottom = paddingBottom,
+                MarginBottom = box.MarginBottom,
+                PaddingTop = box.PaddingTop,
+                PaddingBottom = box.PaddingBottom,
                 LineCount = spacerLines,
                 LineHeightPx = spacerLineHeight,
                 Flags = flags | (fixedHeight ? LayoutBlockFlags.FixedHeight : 0)
@@ -1153,9 +1140,9 @@ public sealed class LayoutEngine : IDisposable
             Kind = BlockKind.Text,
             ContentHeight = contentHeight,
             MarginTop = marginTop,
-            MarginBottom = marginBottom,
-            PaddingTop = paddingTop,
-            PaddingBottom = paddingBottom,
+            MarginBottom = box.MarginBottom,
+            PaddingTop = box.PaddingTop,
+            PaddingBottom = box.PaddingBottom,
             LineCount = lineHeights?.Length ?? meas.LineCount,
             LineHeightPx = meas.LineHeightPx,
             LineHeights = lineHeights,
@@ -1241,23 +1228,46 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    ///     Computes the element's own vertical layout properties exactly as the style
-    ///     sheet declares them. The flow applies the CSS margin collapse on top.
+    /// <summary>
+    ///     Resolves all eight box properties (margins + padding) of an element in px,
+    ///     using the containing-block content width as the % reference and the element's
+    ///     font-size as the em reference. Unset values resolve to 0.
     /// </summary>
-    private (float MarginTop, float MarginBottom, float PaddingTop, float PaddingBottom)
-        ComputeVerticalLayout(Element el)
+    private BoxMetrics GetBoxMetrics(Element el)
     {
         var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
-        var containerRefWidth = GetContainingBlockContentWidth(el);
+        var reference = GetContainingBlockContentWidth(el);
+        return new BoxMetrics(computed, reference, fontSize, ParseLengthToPx);
+    }
 
-        var marginTop = TryGetComputedBoxPx(computed, "margin-top", containerRefWidth, fontSize) ?? 0f;
-        var marginBottom = TryGetComputedBoxPx(computed, "margin-bottom", containerRefWidth, fontSize) ?? 0f;
+    /// <summary>Resolved margin/padding box properties in px for a single element.</summary>
+    private readonly struct BoxMetrics
+    {
+        public BoxMetrics(CssStyle computed, float reference, float? emReference,
+            Func<string?, float, float?, float?> parse)
+        {
+            MarginTop = Parse(computed, "margin-top");
+            MarginBottom = Parse(computed, "margin-bottom");
+            MarginLeft = Parse(computed, "margin-left");
+            MarginRight = Parse(computed, "margin-right");
+            PaddingTop = Parse(computed, "padding-top");
+            PaddingBottom = Parse(computed, "padding-bottom");
+            PaddingLeft = Parse(computed, "padding-left");
+            PaddingRight = Parse(computed, "padding-right");
 
-        var paddingTop = TryGetComputedBoxPx(computed, "padding-top", containerRefWidth, fontSize) ?? 0f;
-        var paddingBottom = TryGetComputedBoxPx(computed, "padding-bottom", containerRefWidth, fontSize) ?? 0f;
+            float Parse(CssStyle style, string name)
+                => parse(style.GetPropertyValue(name), reference, emReference) ?? 0f;
+        }
 
-        return (marginTop, marginBottom, paddingTop, paddingBottom);
+        public float MarginTop { get; }
+        public float MarginBottom { get; }
+        public float MarginLeft { get; }
+        public float MarginRight { get; }
+        public float PaddingTop { get; }
+        public float PaddingBottom { get; }
+        public float PaddingLeft { get; }
+        public float PaddingRight { get; }
     }
 
     private float ResolveFontSize(Element el)
@@ -1283,14 +1293,6 @@ public sealed class LayoutEngine : IDisposable
 
         var parsed = ParseLengthToPx(fs, parentFontSize, parentFontSize);
         return parsed ?? parentFontSize;
-    }
-
-    // The resolver expands every logical property (margin-block, margin-block-start,
-    // margin-inline, ...) into physical longhands at cascade time, so the engine reads
-    // the physical longhand directly — no per-property fallback chain is needed.
-    private float? TryGetComputedBoxPx(CssStyle computed, string name, float reference, float? emReference)
-    {
-        return ParseLengthToPx(computed.GetPropertyValue(name), reference, emReference);
     }
 
     /// <summary>
@@ -1436,12 +1438,12 @@ public sealed class LayoutEngine : IDisposable
     private sealed class InlineSegment
     {
         /// <summary>The top-level inline nodes, in document order (for text-run building).</summary>
-        public readonly List<Node> Fragments = [];
+        public List<Node> Fragments { get; init; } = [];
 
         /// <summary>The inline-display images inside the segment (for the image line model).</summary>
-        public readonly List<Element> Images = [];
+        public List<Element> Images { get; init; } = [];
 
         /// <summary>The segment's raw text (untrimmed; <c>&lt;br&gt;</c> as U+FFFC markers).</summary>
-        public readonly StringBuilder Text = new();
+        public StringBuilder Text { get; init; } = new();
     }
 }
