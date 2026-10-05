@@ -1,5 +1,12 @@
 ﻿namespace BookHeaven.Core.DOM.CSS.Models;
 
+
+/// <summary>
+///     The viewport/font context a length resolves against. Plain data (no AngleSharp
+///     <c>IRenderDevice</c>): positive dimensions and font size, clamped by the engine.
+/// </summary>
+public readonly record struct RenderContext(float ViewPortWidth, float ViewPortHeight, float FontSize);
+
 /// <summary>
 /// A pseudo-element the selector targets. <c>::before</c> and <c>::after</c> generate
 /// boxes (styled by <c>content</c> plus the usual box properties) that the layout

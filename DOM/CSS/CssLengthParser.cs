@@ -1,13 +1,8 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using BookHeaven.Core.DOM.CSS.Models;
 
 namespace BookHeaven.Core.DOM.CSS;
-
-/// <summary>
-///     The viewport/font context a length resolves against. Plain data (no AngleSharp
-///     <c>IRenderDevice</c>): positive dimensions and font size, clamped by the engine.
-/// </summary>
-public readonly record struct RenderContext(float ViewPortWidth, float ViewPortHeight, float FontSize);
 
 /// <summary>
 ///     Resolves a CSS length string to pixels: px/em/rem/%/pt/in/vh/vw/vmin/vmax,
