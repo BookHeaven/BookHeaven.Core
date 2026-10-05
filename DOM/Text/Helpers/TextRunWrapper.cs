@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using BookHeaven.Core.DOM.Text.Abstractions;
 using BookHeaven.Core.DOM.Text.Enums;
 using BookHeaven.Core.DOM.Text.Measurers;
+using BookHeaven.Core.DOM.Text.Models;
 
 namespace BookHeaven.Core.DOM.Text.Helpers;
 

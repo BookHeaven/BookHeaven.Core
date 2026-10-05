@@ -4,6 +4,7 @@ using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
 using BookHeaven.Core.DOM.Text.Abstractions;
 using BookHeaven.Core.DOM.Text.Enums;
+using BookHeaven.Core.DOM.Text.Models;
 
 namespace BookHeaven.Core.DOM.Engine.Helpers;
 

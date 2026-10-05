@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Text;
+using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Text.Abstractions;
 using BookHeaven.Core.DOM.Text.Enums;
 using BookHeaven.Core.DOM.Text.Helpers;
+using BookHeaven.Core.DOM.Text.Models;
 using HarfBuzzSharp;
 using SkiaSharp;
 using SkiaSharp.HarfBuzz;
