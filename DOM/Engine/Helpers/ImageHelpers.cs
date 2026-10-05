@@ -102,7 +102,7 @@ public static class ImageHelpers
         // border. The replaced-element sizing model (aspect-ratio derivation, max-*
         // clamps) operates on the content box, so convert the specified dimensions
         // here. The intrinsic size is already a content size and is left untouched.
-        var isBorderBox = srcStyle.GetPropertyValue("box-sizing")?.Trim().ToLowerInvariant() == "border-box";
+        var isBorderBox = srcStyle.GetPropertyValue("box-sizing").Trim().Equals("border-box", StringComparison.InvariantCultureIgnoreCase);
         float hInset = 0f, vInset = 0f;
         if (isBorderBox)
         {
