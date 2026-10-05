@@ -98,9 +98,8 @@ public static class StyleResolver
             foreach (var prop in Inheritable)
                 InheritIfAbsent(style, best, prop, parent);
             var parentProps = parent.Props;
-            for (var i = 0; i < parentProps.Count; i++)
+            foreach (var (prop, _, _) in parentProps)
             {
-                var (prop, _, _) = parentProps[i];
                 if (prop.StartsWith("--", StringComparison.Ordinal))
                     InheritIfAbsent(style, best, prop, parent);
             }
@@ -571,9 +570,8 @@ public static class StyleResolver
     private static int CustomFingerprint(List<(string Name, string Value, bool Explicit)> props)
     {
         var hash = new HashCode();
-        for (var i = 0; i < props.Count; i++)
+        foreach (var (name, v, _) in props)
         {
-            var (name, v, _) = props[i];
             if (!name.StartsWith("--", StringComparison.Ordinal))
                 continue;
             hash.Add(name);
@@ -640,12 +638,12 @@ public static class StyleResolver
 
     private static string? FindCustom(List<(string Name, string Value, bool Explicit)> props, string name)
     {
-        for (var i = 0; i < props.Count; i++)
+        foreach (var (n, v, _) in props)
         {
-            var (n, v, _) = props[i];
             if (string.Equals(n, name, StringComparison.Ordinal))
                 return v;
         }
+
         return null;
     }
 }
