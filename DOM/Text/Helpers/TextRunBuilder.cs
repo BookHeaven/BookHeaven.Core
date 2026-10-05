@@ -2,11 +2,10 @@ using System.Text;
 using BookHeaven.Core.DOM.CSS;
 using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
-using BookHeaven.Core.DOM.Text.Abstractions;
 using BookHeaven.Core.DOM.Text.Enums;
 using BookHeaven.Core.DOM.Text.Models;
 
-namespace BookHeaven.Core.DOM.Engine.Helpers;
+namespace BookHeaven.Core.DOM.Text.Helpers;
 
 /// <summary>
 /// Splits an element's inline content into <see cref="TextRun"/>s at their
