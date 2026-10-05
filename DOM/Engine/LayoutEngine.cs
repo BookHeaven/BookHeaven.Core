@@ -70,6 +70,7 @@ public sealed class LayoutEngine : IDisposable
     // pseudo resolution scans only the (few) relevant rules, not the whole sheet.
     private List<int> _beforeRules = [];
     private Dictionary<Element, float>? _contentWidthMemo;
+    private Dictionary<Element, float>? _contentHeightMemo;
     private List<CssRule> _rules = [];
     private int[] _specificities = [];
 
@@ -104,6 +105,7 @@ public sealed class LayoutEngine : IDisposable
     public void Dispose()
     {
         _contentWidthMemo = null;
+        _contentHeightMemo = null;
         _styleMemo.Clear();
         _specificities = [];
         _beforeRules = [];
@@ -137,6 +139,7 @@ public sealed class LayoutEngine : IDisposable
     {
         _styleMemo.Clear();
         _contentWidthMemo = null;
+        _contentHeightMemo = null;
 
         var (doc, rules) = _parser.Parse(html, css);
         _rules = rules;
@@ -155,7 +158,7 @@ public sealed class LayoutEngine : IDisposable
             var images = CollectInlineImages(body);
             if (string.IsNullOrEmpty(text) && images.Count == 0) return blocks;
 
-            var block = BuildLeafBlock(text, body, null, images);
+            var block = BuildLeafBlock(text, body, null, images, clampHeight: false);
             if (block != null) blocks.Add(block);
             return blocks;
         }
@@ -180,7 +183,7 @@ public sealed class LayoutEngine : IDisposable
 
             if (pendingImages.Count > 0)
             {
-                var anon = BuildLeafBlock(string.Empty, body, null, pendingImages);
+                var anon = BuildLeafBlock(string.Empty, body, null, pendingImages, clampHeight: false);
                 if (anon != null) blocks.Add(anon);
                 pendingImages.Clear();
             }
@@ -190,7 +193,7 @@ public sealed class LayoutEngine : IDisposable
 
         if (pendingImages.Count > 0)
         {
-            var anon = BuildLeafBlock(string.Empty, body, null, pendingImages);
+            var anon = BuildLeafBlock(string.Empty, body, null, pendingImages, clampHeight: false);
             if (anon != null) blocks.Add(anon);
         }
 
@@ -428,6 +431,53 @@ public sealed class LayoutEngine : IDisposable
         return result;
     }
 
+    /// <summary>
+    ///     Resolved content height of an element's containing block, per document. Returns
+    ///     0 when the height is indeterminate (an ancestor in the chain has an <c>auto</c>
+    ///     height): a percentage height against an auto height is indeterminate per CSS, so
+    ///     callers fall through to the intrinsic size.
+    /// </summary>
+    private float GetContainingBlockContentHeight(Element el)
+    {
+        if (el.ParentElement is not { } parent) return 0f;
+        if (_contentHeightMemo is not null && _contentHeightMemo.TryGetValue(parent, out var cached))
+            return cached;
+        var value = ResolveAncestorContentHeight(parent);
+        (_contentHeightMemo ??= []).Add(parent, value);
+        return value;
+    }
+
+    private float ResolveAncestorContentHeight(Element parent)
+    {
+        var chain = new List<Element>();
+        for (var p = parent; p != null; p = p.ParentElement) chain.Add(p);
+
+        // The containing block of a static element is its parent's content box. Walk
+        // the parent chain top-down so each ancestor's % height resolves against ITS
+        // containing block (not the page). An ancestor with an explicit height fixes the
+        // chain; an auto-height ancestor makes the height indeterminate (0) — a percentage
+        // height against an auto height is treated as auto, per CSS.
+        float cbHeight = _options.PageHeightPx;
+        var result = 0f;
+        for (var i = chain.Count - 1; i >= 0; i--)
+        {
+            var el = chain[i];
+            var pc = GetComputedStyle(el);
+            // em units in an ancestor's box resolve against THAT ancestor's font-size
+            // (rem stays root-relative).
+            var emRef = ResolveFontSize(el);
+            var pt = ParseLengthToPx(pc.GetPropertyValue("padding-top"), cbHeight, emRef) ?? 0f;
+            var pb = ParseLengthToPx(pc.GetPropertyValue("padding-bottom"), cbHeight, emRef) ?? 0f;
+            var ph = ParseLengthToPx(pc.GetPropertyValue("height"), cbHeight, emRef);
+            if (ph is null) return 0f; // auto height: indeterminate for descendants
+            var contentH = ph.Value - pt - pb;
+            cbHeight = contentH;
+            result = contentH;
+        }
+
+        return result;
+    }
+
     private float? ParseLengthToPx(string? s, float reference, float? emReference = null)
     {
         return _lengthParser.ParseLengthToPx(s, reference, emReference);
@@ -621,7 +671,7 @@ public sealed class LayoutEngine : IDisposable
         {
             var text = TrimCollapsibleWhitespace(seg.Text);
             if (text.Length == 0 && seg.Images.Count == 0) return;
-            var ownBlock = BuildLeafBlock(text, el, seg.Fragments, seg.Images);
+            var ownBlock = BuildLeafBlock(text, el, seg.Fragments, seg.Images, clampHeight: false);
             if (ownBlock == null) return;
             ownBlock.TagName = "#text";
             ownBlock.MarginTop = 0f;
@@ -795,7 +845,7 @@ public sealed class LayoutEngine : IDisposable
     ///     no content AND occupies no space.
     /// </summary>
     private LayoutBlock? BuildLeafBlock(string text, Element el, IReadOnlyList<Node>? fragments = null,
-        IReadOnlyList<Element>? inlineImages = null)
+        IReadOnlyList<Element>? inlineImages = null, bool clampHeight = true)
     {
         var computed = GetComputedStyle(el);
         if (IsHidden(el)) return null;
@@ -887,6 +937,14 @@ public sealed class LayoutEngine : IDisposable
 
         var contentHeight = 0f;
 
+        // An explicit height (or a min/max that caps the content) FIXES the leaf's
+        // content box, exactly like the container path: the content is clamped to it
+        // and the overflow (e.g. an inline image's strut descent) is clipped.
+        var heightPx = ParseLengthToPx(computed.GetPropertyValue("height"), _options.PageHeightPx, fontSize);
+        var minHeight = ParseLengthToPx(computed.GetPropertyValue("min-height"), _options.PageHeightPx, fontSize);
+        var maxHeight = ParseLengthToPx(computed.GetPropertyValue("max-height"), _options.PageHeightPx, fontSize);
+        var fixedHeight = false;
+
         // BLOCK-display image: a block-level replaced element, placed whole.
         if (ImageHelpers.IsImageElement(el))
         {
@@ -896,8 +954,8 @@ public sealed class LayoutEngine : IDisposable
             var srcEl = ImageHelpers.FindImageWithSrc(el);
             var srcComputed = srcEl != null ? GetComputedStyle(srcEl) : null;
             var (_, imgHeight) = ImageHelpers.MeasureImageSize(el, computed, ParseLengthToPx, _options, _coreOptions,
-                availableWidth, containerRefWidth, 0f, fontSize, srcComputed);
-            contentHeight = imgHeight + genHeight;
+                availableWidth, containerRefWidth, GetContainingBlockContentHeight(el), fontSize, srcComputed);
+            contentHeight = ClampContentHeight(imgHeight + genHeight);
             if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
 
             return new LayoutBlock
@@ -911,7 +969,7 @@ public sealed class LayoutEngine : IDisposable
                 PaddingBottom = paddingBottom,
                 LineCount = 0,
                 LineHeightPx = lineHeightPx ?? 0f,
-                Flags = flags
+                Flags = flags | (fixedHeight ? LayoutBlockFlags.FixedHeight : 0)
             };
         }
 
@@ -943,10 +1001,14 @@ public sealed class LayoutEngine : IDisposable
             {
                 var imgStyle = GetComputedStyle(images[0]);
                 var (w, h) = ImageHelpers.MeasureImageSize(images[0], imgStyle, ParseLengthToPx, _options, _coreOptions,
-                    availableWidth, containerRefWidth, 0f, fontSize);
-                leadingImgWidth = w;
+                    availableWidth, containerRefWidth, GetContainingBlockContentHeight(images[0]), fontSize);
+                // The line box contains the image's border-box, so its width narrows
+                // line 1 and its height (content + padding + border) sets line 1's
+                // height.
+                var (hInset, vInset) = ImageHelpers.GetImageBoxInsets(imgStyle, ParseLengthToPx, containerRefWidth, fontSize);
+                leadingImgWidth = w + hInset;
                 leadingImgContribution = ImageHelpers.LineContribution(
-                    imgStyle.GetPropertyValue("vertical-align"), h, resolvedLineHeight, strutDescent, fontSize,
+                    imgStyle.GetPropertyValue("vertical-align"), h + vInset, resolvedLineHeight, strutDescent, fontSize,
                     metrics.XHeight, ParseLengthToPx);
             }
 
@@ -993,15 +1055,18 @@ public sealed class LayoutEngine : IDisposable
                 {
                     var imgStyle = GetComputedStyle(img);
                     var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options,
-                        _coreOptions, availableWidth, containerRefWidth, 0f, fontSize);
-                    imageBoxes.Add((imgWidth, imgHeight, imgStyle.GetPropertyValue("vertical-align")));
+                        _coreOptions, availableWidth, containerRefWidth, GetContainingBlockContentHeight(img), fontSize);
+                    // The line box contains the image's border-box (content + padding
+                    // + border), so use the total dimensions for the line geometry.
+                    var (hInset, vInset) = ImageHelpers.GetImageBoxInsets(imgStyle, ParseLengthToPx, containerRefWidth, fontSize);
+                    imageBoxes.Add((imgWidth + hInset, imgHeight + vInset, imgStyle.GetPropertyValue("vertical-align")));
                 }
 
                 imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight,
                     strutDescent, fontSize, metrics.XHeight, ParseLengthToPx));
             }
 
-            contentHeight = (imgLineHeights.Count > 0 ? imgLineHeights.Sum() : 0f) + genHeight;
+            contentHeight = ClampContentHeight((imgLineHeights.Count > 0 ? imgLineHeights.Sum() : 0f) + genHeight);
             if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
             return new LayoutBlock
             {
@@ -1015,7 +1080,7 @@ public sealed class LayoutEngine : IDisposable
                 LineCount = imgLineHeights.Count,
                 LineHeightPx = imgLineHeights.Count > 0 ? imgLineHeights.Max() : 0,
                 LineHeights = [.. imgLineHeights],
-                Flags = flags
+                Flags = flags | (fixedHeight ? LayoutBlockFlags.FixedHeight : 0)
             };
         }
 
@@ -1024,7 +1089,7 @@ public sealed class LayoutEngine : IDisposable
             // Spacer box: its content is the explicit CSS height. (<br> elements
             // flow through the text path as U+FFFC markers, so they never reach
             // here.)
-            contentHeight = spacerHeight + genHeight;
+            contentHeight = ClampContentHeight(spacerHeight + genHeight);
             if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
 
             return new LayoutBlock
@@ -1038,7 +1103,7 @@ public sealed class LayoutEngine : IDisposable
                 PaddingBottom = paddingBottom,
                 LineCount = spacerLines,
                 LineHeightPx = spacerLineHeight,
-                Flags = flags
+                Flags = flags | (fixedHeight ? LayoutBlockFlags.FixedHeight : 0)
             };
         }
 
@@ -1079,7 +1144,7 @@ public sealed class LayoutEngine : IDisposable
             }
         }
 
-        contentHeight += genHeight;
+        contentHeight = ClampContentHeight(contentHeight + genHeight);
         if (genMargin > 0f) marginTop = Math.Max(marginTop, genMargin);
 
         return new LayoutBlock
@@ -1094,8 +1159,23 @@ public sealed class LayoutEngine : IDisposable
             LineCount = lineHeights?.Length ?? meas.LineCount,
             LineHeightPx = meas.LineHeightPx,
             LineHeights = lineHeights,
-            Flags = flags
+            Flags = flags | (fixedHeight ? LayoutBlockFlags.FixedHeight : 0)
         };
+
+        // Clamps the leaf's content height to its explicit height / min-height /
+        // max-height (the container path's rules), setting <paramref name="fixedHeight"/>
+        // when a bound fixes the box. A percentage height resolves against the page
+        // height, matching the container path. Skipped for anonymous boxes and the
+        // body's own content: those are not the element's fixed box, so the element's
+        // height bounds must not be applied to them.
+        float ClampContentHeight(float h)
+        {
+            if (!clampHeight) return h;
+            if (heightPx is { } hp) { fixedHeight = true; return hp; }
+            if (maxHeight is { } mh && h > mh) { fixedHeight = true; return mh; }
+            if (minHeight is { } minh && h < minh) { fixedHeight = true; return minh; }
+            return h;
+        }
     }
 
     /// <summary>

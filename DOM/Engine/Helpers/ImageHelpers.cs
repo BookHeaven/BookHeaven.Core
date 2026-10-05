@@ -97,6 +97,20 @@ public static class ImageHelpers
             if (ahal is > 0 && float.IsNaN(imgHeight)) imgHeight = ahal.Value;
         }
 
+        // box-sizing:border-box: the width/height properties (and attributes) set
+        // the border-box, so the content box is the border-box minus padding and
+        // border. The replaced-element sizing model (aspect-ratio derivation, max-*
+        // clamps) operates on the content box, so convert the specified dimensions
+        // here. The intrinsic size is already a content size and is left untouched.
+        var isBorderBox = srcStyle.GetPropertyValue("box-sizing")?.Trim().ToLowerInvariant() == "border-box";
+        float hInset = 0f, vInset = 0f;
+        if (isBorderBox)
+        {
+            (hInset, vInset) = GetImageBoxInsets(srcStyle, parseLength, containerRefWidth, fontSize);
+            if (!float.IsNaN(imgWidth) && imgWidth > 0) imgWidth = Math.Max(0f, imgWidth - hInset);
+            if (!float.IsNaN(imgHeight) && imgHeight > 0) imgHeight = Math.Max(0f, imgHeight - vInset);
+        }
+
         // Intrinsic image size from cache (a width-only or height-only
         // declaration must keep the image's aspect ratio).
         var intrinsicParsed = false;
@@ -136,6 +150,9 @@ public static class ImageHelpers
 
         var mw = parseLength(srcStyle.GetPropertyValue("max-width"), availableWidth, fontSize);
         var maxW = mw is > 0 ? Math.Min(availableWidth, mw.Value) : availableWidth;
+        // max-width is the border-box under border-box, so clamp the content box
+        // to (max-width − insets).
+        if (isBorderBox) maxW = Math.Max(0f, maxW - hInset);
         if (imgWidth > maxW) imgWidth = maxW;
 
         // Derive the missing (auto) dimension(s) from the intrinsic aspect
@@ -170,16 +187,41 @@ public static class ImageHelpers
         }
 
         var mh = parseLength(srcStyle.GetPropertyValue("max-height"), containerRefHeight, fontSize);
-        if (mh is > 0 && imgHeight > mh.Value)
+        if (mh is > 0)
         {
-            imgHeight = mh.Value;
-            // A capped auto height re-derives the width to keep the aspect
-            // ratio; an explicit width stays (distortion allowed, per CSS).
-            if (!computedWidthParsed && !attrWidthParsed && intrinsicParsed)
-                imgWidth = imgHeight * (intrinsicW / (float)intrinsicH);
+            // max-height is the border-box under border-box, so cap the content
+            // box at (max-height − insets).
+            var maxH = isBorderBox ? Math.Max(0f, mh.Value - vInset) : mh.Value;
+            if (imgHeight > maxH)
+            {
+                imgHeight = maxH;
+                // A capped auto height re-derives the width to keep the aspect
+                // ratio; an explicit width stays (distortion allowed, per CSS).
+                if (!computedWidthParsed && !attrWidthParsed && intrinsicParsed)
+                    imgWidth = imgHeight * (intrinsicW / (float)intrinsicH);
+            }
         }
 
         return (imgWidth, imgHeight);
+    }
+
+    /// <summary>
+    /// The image's horizontal and vertical padding + border totals, in px. Used to
+    /// convert between the border-box and content-box dimensions (box-sizing) and to
+    /// compute the border-box size an inline image imposes on its line box.
+    /// </summary>
+    public static (float Horizontal, float Vertical) GetImageBoxInsets(
+        CssStyle style, Func<string?, float, float?, float?> parseLength, float reference, float? fontSize)
+    {
+        var padL = parseLength(style.GetPropertyValue("padding-left"), reference, fontSize) ?? 0f;
+        var padR = parseLength(style.GetPropertyValue("padding-right"), reference, fontSize) ?? 0f;
+        var padT = parseLength(style.GetPropertyValue("padding-top"), reference, fontSize) ?? 0f;
+        var padB = parseLength(style.GetPropertyValue("padding-bottom"), reference, fontSize) ?? 0f;
+        var borderL = parseLength(style.GetPropertyValue("border-left-width"), reference, fontSize) ?? 0f;
+        var borderR = parseLength(style.GetPropertyValue("border-right-width"), reference, fontSize) ?? 0f;
+        var borderTop = parseLength(style.GetPropertyValue("border-top-width"), reference, fontSize) ?? 0f;
+        var borderB = parseLength(style.GetPropertyValue("border-bottom-width"), reference, fontSize) ?? 0f;
+        return (padL + padR + borderL + borderR, padT + padB + borderTop + borderB);
     }
 
     /// <summary>
