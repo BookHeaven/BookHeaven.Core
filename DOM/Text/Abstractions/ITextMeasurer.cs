@@ -26,14 +26,46 @@ public interface ITextMeasurer
     static float QuantizeLineHeight(float px) => (float)(Math.Truncate(px * 64.0) / 64.0);
 
     /// <summary>
-    /// Quantizes a horizontal position to Blink's <c>LayoutUnit</c> grid (1/64px),
-    /// ceiling exactly as <c>LayoutUnit::ToCeil</c> does. Blink decides a line break by
-    /// comparing each glyph's START position (ceiled to this grid) against the available
-    /// width, so a word stays on the line when its start is within the width even if its
-    /// advance overflows it. The multiply is done in double (as Blink does) so a value
-    /// sitting on the 1/64px boundary is not pushed over it by float rounding.
+    /// Quantizes a width to Blink's <c>LayoutUnit</c> grid (1/64px), rounding to
+    /// nearest exactly as <c>LayoutUnit::FromFloatRound</c> does. Blink accumulates a
+    /// line's advances and quantizes the total, so a word's width is the rounding of
+    /// its whole advance — rounding per glyph instead over-breaks lines that just fit
+    /// (the summed per-glyph roundings drift above the rounded total). The multiply is
+    /// done in double (as Blink does) so a value on the 1/64px boundary is not pushed
+    /// over it by float rounding.
+    /// </summary>
+    static float QuantizeRound(float px) => (float)(Math.Round(px * 64.0, MidpointRounding.AwayFromZero) / 64.0);
+
+    /// <summary>
+    /// Quantizes a width to Blink's <c>LayoutUnit</c> grid (1/64px), ceiling exactly
+    /// as <c>LayoutUnit::ToCeil</c> does. Used for line limits and as a safety net
+    /// over widths that are already on the grid (a no-op then). The multiply is done
+    /// in double (as Blink does) so a value sitting on the 1/64px boundary is not
+    /// pushed over it by float rounding.
     /// </summary>
     static float QuantizeCeil(float px) => (float)(Math.Ceiling(px * 64.0) / 64.0);
+
+    /// <summary>
+    /// Tests whether a line ending at <paramref name="positionPx"/> fits within
+    /// <paramref name="limitPx"/>, matching each engine's line-fit rule.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Chrome (Blink)</b>: the fit test is
+    /// <c>SnappedEndPositionForOffset(offset) &lt;= AvailableWidth().AddEpsilon()</c>
+    /// (<c>blink_line_breaker.cc</c>). The end position is ceiled to the 1/64px grid
+    /// (<c>LayoutUnit::FromFloatCeil</c>) and the available width gets a 1/64px epsilon
+    /// (<c>LayoutUnit::AddEpsilon</c> = raw value + 1). The comparison is done in integer
+    /// LayoutUnit space to avoid float-precision errors near the boundary.
+    /// </para>
+    /// <para>
+    /// <b>Firefox (Gecko)</b>: a strict <c>position &lt;= limit</c> with no epsilon.
+    /// </para>
+    /// </remarks>
+    static bool FitsOnLine(float positionPx, float limitPx, LineBreakingMode mode) =>
+        mode == LineBreakingMode.Chrome
+            ? Math.Ceiling(positionPx * 64.0) <= Math.Round(limitPx * 64.0) + 1
+            : positionPx <= limitPx;
 
     /// <summary>
     /// Measures text. When <paramref name="includeLineText"/> is false the measurer

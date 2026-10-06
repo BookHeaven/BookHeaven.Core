@@ -35,6 +35,17 @@ public static partial class TextRunWrapper
     // "normal" line-height approximation, same factor the single-size measurers use.
     private const float NormalLineHeightMultiplier = ITextMeasurer.NormalLineHeightMultiplier;
 
+    /// <summary>
+    /// Snaps a width to the grid the emulated browser lays out on. Blink (Chrome) lays
+    /// out on a 1/64px <c>LayoutUnit</c> grid; word widths arrive already on the grid
+    /// (the measurer rounds each whole word, as Blink quantizes the line total), so
+    /// the ceil is a no-op for them and only bites on derived values (limits,
+    /// letter-spacing sums). Gecko (Firefox) does not quantize, so its widths are
+    /// returned unchanged.
+    /// </summary>
+    public static float Quantize(float px, LineBreakingMode mode) =>
+        mode == LineBreakingMode.Chrome ? ITextMeasurer.QuantizeCeil(px) : px;
+
     // Per-thread scratch buffers: Wrap is called thousands of times per book, and
     // the token/line lists plus the line-text builders were a steady allocation
     // source. Everything is copied out (strings, the LineHeights array) before the
@@ -56,7 +67,8 @@ public static partial class TextRunWrapper
     /// </summary>
     public static TextMeasurementResult Wrap(IReadOnlyList<TextRun> runs, TextWidthProbes probes, float maxWidthPx,
         float? lineHeightLengthPx = null, float? lineHeightMultiplier = null,
-        float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true)
+        float? letterSpacingPx = null, float? wordSpacingPx = null, float? firstLineWidthPx = null, bool includeLineText = true,
+        LineBreakingMode mode = LineBreakingMode.Firefox)
     {
         var tokens = BuildTokens(runs);
         var lines = new List<string>();
@@ -106,14 +118,19 @@ public static partial class TextRunWrapper
                 continue;
             }
 
+            // Both browsers use the same fit rule (whole word must fit); Chrome
+            // additionally allows a 1/64px epsilon. Widths are kept exact here; the
+            // 1/64px grid is applied only at the fit test (ITextMeasurer.FitsOnLine).
             var wWidth = token.PrecomputedWidth ?? WordWidth(token.Word, token.FontSize, token.Style);
 
             if (current.Count > 0)
             {
                 // The first line may be narrower (text-indent) until it is flushed.
+                // The limit is the raw CSS width; FitsOnLine applies the engine's
+                // quantization + epsilon.
                 var limit = lineHeights.Count == 0 && firstLineWidthPx.HasValue ? firstLineWidthPx.Value : maxWidthPx;
                 var spaceW = token.SpaceOwnerSize.HasValue && token.SpaceOwnerStyle.HasValue ? SpaceWidth(token.SpaceOwnerSize.Value, token.SpaceOwnerStyle.Value) : 0f;
-                if (currentWidth + spaceW + wWidth <= limit)
+                if (ITextMeasurer.FitsOnLine(currentWidth + spaceW + wWidth, limit, mode))
                 {
                     if (token.SpaceOwnerSize.HasValue) currentText?.Append(' ');
                     currentText?.Append(token.Word);
@@ -126,7 +143,8 @@ public static partial class TextRunWrapper
                 // (UAX #14): keep the head on this line, push the dash + tail to the
                 // next. Without this, a word like "oeste—." wraps whole, adding a line
                 // the browser doesn't have.
-                var dashIndex = FindBreakableDash(token.Word, currentWidth, spaceW, limit, head => WordWidth(head, token.FontSize, token.Style));
+                var dashIndex = FindBreakableDash(token.Word, currentWidth, spaceW, limit, mode,
+                    head => WordWidth(head, token.FontSize, token.Style));
                 if (dashIndex > 0)
                 {
                     var head = token.Word.AsSpan(0, dashIndex).ToString();
@@ -137,7 +155,7 @@ public static partial class TextRunWrapper
                     FlushLine(false, 0f);
                     var tailToken = new Token(tail, token.FontSize, token.Style, null, null);
                     var tailWidth = WordWidth(tail, token.FontSize, token.Style);
-                    if (tailWidth <= maxWidthPx)
+                    if (ITextMeasurer.FitsOnLine(tailWidth, maxWidthPx, mode))
                     {
                         current.Add(tailToken);
                         currentText?.Append(tail);
@@ -155,7 +173,7 @@ public static partial class TextRunWrapper
 
             // Token starts a fresh line.
             var firstLimit = lineHeights.Count == 0 && firstLineWidthPx.HasValue ? firstLineWidthPx.Value : maxWidthPx;
-            if (wWidth <= firstLimit || wWidth <= maxWidthPx)
+            if (ITextMeasurer.FitsOnLine(wWidth, firstLimit, mode) || ITextMeasurer.FitsOnLine(wWidth, maxWidthPx, mode))
             {
                 current.Add(token);
                 currentText?.Append(token.Word);
@@ -427,11 +445,13 @@ public static partial class TextRunWrapper
     /// dashes (B2) break on both sides, so the dash goes to whichever side yields the
     /// longer line — except a break after the dash is skipped when the following
     /// character may not start a line (UAX #14 LB13/LB19/LB21), in which case the dash
-    /// goes to the tail. <paramref name="headWidth"/> measures a head substring at
-    /// the caller's own font size/style/letter-spacing, so the multi-run <see cref="Wrap"/>
-    /// and the single-string measurer fast path share this one rule.
+    /// goes to the tail. <paramref name="fitWidth"/> returns the exact width a head
+    /// substring has at the caller's own font size/style/letter-spacing; the fit test
+    /// applies the engine's quantization + epsilon via <see cref="ITextMeasurer.FitsOnLine"/>
+    /// (see <paramref name="mode"/>), so the multi-run <see cref="Wrap"/> and the
+    /// single-string measurer fast path share this one rule.
     /// </summary>
-    public static int FindBreakableDash(string word, float curWidth, float spaceW, float limit, Func<string, float> headWidth)
+    public static int FindBreakableDash(string word, float curWidth, float spaceW, float limit, LineBreakingMode mode, Func<string, float> fitWidth)
     {
         for (var i = word.Length - 1; i > 0; i--)
         {
@@ -461,7 +481,7 @@ public static partial class TextRunWrapper
             return 1; // tail starts right after the dash
         return -1;
 
-        bool Fits(string head) => curWidth + spaceW + headWidth(head) <= limit;
+        bool Fits(string head) => ITextMeasurer.FitsOnLine(curWidth + spaceW + fitWidth(head), limit, mode);
     }
 
     /// <summary>

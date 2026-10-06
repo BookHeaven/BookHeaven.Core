@@ -1,5 +1,6 @@
 ﻿using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.DOM.Services.Abstractions;
+using BookHeaven.Core.DOM.Text.Enums;
 using BookHeaven.Core.Entities;
 using BookHeaven.Core.Extensions;
 using BookHeaven.Core.Features.Books;
@@ -112,7 +113,7 @@ public class ReaderService(
         _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.PagesPerChapter);
     }
     
-    public async Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx)
+    public async Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx, LineBreakingMode lineBreakingMode = LineBreakingMode.Firefox)
     {
         if (State?.Ebook is null || Settings is null) return;
 
@@ -127,6 +128,7 @@ public class ReaderService(
         _calcCts = cts;
 
         var options = Settings.ToPageCalculatorOptions(viewportWidthPx, viewportHeightPx, pageWidthPx, pageHeightPx);
+        options.LineBreakingMode = lineBreakingMode;
         try
         {
             var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options, cts.Token);

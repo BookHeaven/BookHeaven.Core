@@ -1,3 +1,5 @@
+using BookHeaven.Core.DOM.Text.Enums;
+
 namespace BookHeaven.Core.DOM.Services;
 
 public sealed class PageCalculatorOptions
@@ -16,6 +18,13 @@ public sealed class PageCalculatorOptions
 
     /// <summary>Enable hyphenation during line breaking.</summary>
     public bool EnableHyphenation { get; set; } = false;
+
+    /// <summary>
+    /// The line-breaking algorithm to emulate. Defaults to <see cref="LineBreakingMode.Firefox"/>
+    /// (a word must fit entirely on the line) to preserve existing pagination; the native reader
+    /// sets this from the client's browser so the engine matches the browser that renders the page.
+    /// </summary>
+    public LineBreakingMode LineBreakingMode { get; set; } = LineBreakingMode.Firefox;
 
     /// <summary>Default image aspect ratio expressed as width/height used when intrinsic size is not available. If zero or negative, DefaultImageHeightPx is used instead.</summary>
     public float DefaultImageAspectRatio { get; set; } = 4f / 3f;

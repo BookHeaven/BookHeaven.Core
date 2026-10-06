@@ -23,9 +23,9 @@ public static class TextMeasurerFactory
     /// warm. Use <see cref="CreateMeasurerAsync"/> to resolve the per-style variants
     /// of <see cref="PageCalculatorOptions.SelectedFont"/> from the database.
     /// </summary>
-    public static ITextMeasurer CreateMeasurer(string? defaultFontDirectory = null)
+    public static ITextMeasurer CreateMeasurer(string? defaultFontDirectory = null, LineBreakingMode mode = LineBreakingMode.Firefox)
     {
-        return new HarfBuzzTextMeasurer(defaultFontDirectory);
+        return new HarfBuzzTextMeasurer(defaultFontDirectory, mode);
     }
 
     /// <summary>
@@ -45,7 +45,7 @@ public static class TextMeasurerFactory
 
         if (string.IsNullOrWhiteSpace(normalizedOptions.SelectedFont))
         {
-            return CreateMeasurer(urlBuilder.DefaultFontDirectory());
+            return CreateMeasurer(urlBuilder.DefaultFontDirectory(), normalizedOptions.LineBreakingMode);
         }
 
         var result = await sender.Send(new GetAllFonts.Query(normalizedOptions.SelectedFont), cancellationToken);
@@ -54,13 +54,13 @@ public static class TextMeasurerFactory
             var fontPaths = MapFontsToStyles(result.Value, urlBuilder);
             if (fontPaths.Count > 0)
             {
-                return new HarfBuzzTextMeasurer(fontPaths);
+                return new HarfBuzzTextMeasurer(fontPaths, normalizedOptions.LineBreakingMode);
             }
         }
 
         // Selected family not found (or query failed): fall back to the default font
         // directory (platform default typeface when it is empty or missing).
-        return CreateMeasurer(urlBuilder.DefaultFontDirectory());
+        return CreateMeasurer(urlBuilder.DefaultFontDirectory(), normalizedOptions.LineBreakingMode);
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
-﻿using BookHeaven.Core.Entities;
+using BookHeaven.Core.DOM.Text.Enums;
+using BookHeaven.Core.Entities;
 using BookHeaven.Core.Features.Reader.Models;
 using BookHeaven.EbookManager.Entities;
 
@@ -17,7 +18,7 @@ public interface IReaderService : IDisposable
     void PauseTimer();
     void ResumeTimer();
     void SetTotalPages(int[] pageArray);
-    Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx);
+    Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx, LineBreakingMode lineBreakingMode = LineBreakingMode.Firefox);
     void NavigateToInitialPage();
     void NavigateToChapter(TocEntry chapter);
     void NextPage();

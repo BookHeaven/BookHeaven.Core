@@ -69,8 +69,8 @@ public sealed class LayoutEngine : IDisposable
     // compound is that pseudo). Precomputed once per document so the per-element
     // pseudo resolution scans only the (few) relevant rules, not the whole sheet.
     private List<int> _beforeRules = [];
-    private Dictionary<Element, float>? _contentWidthMemo;
     private Dictionary<Element, float>? _contentHeightMemo;
+    private Dictionary<Element, float>? _contentWidthMemo;
     private List<CssRule> _rules = [];
     private int[] _specificities = [];
 
@@ -158,7 +158,7 @@ public sealed class LayoutEngine : IDisposable
             var images = CollectInlineImages(body);
             if (string.IsNullOrEmpty(text) && images.Count == 0) return blocks;
 
-            var block = BuildLeafBlock(text, body, new InlineSegment { Images = images }, clampHeight: false);
+            var block = BuildLeafBlock(text, body, new InlineSegment { Images = images }, false);
             if (block != null) blocks.Add(block);
             return blocks;
         }
@@ -183,7 +183,7 @@ public sealed class LayoutEngine : IDisposable
 
             if (pendingImages.Count > 0)
             {
-                var anon = BuildLeafBlock(string.Empty, body, new InlineSegment { Images = pendingImages }, clampHeight: false);
+                var anon = BuildLeafBlock(string.Empty, body, new InlineSegment { Images = pendingImages }, false);
                 if (anon != null) blocks.Add(anon);
                 pendingImages.Clear();
             }
@@ -193,7 +193,7 @@ public sealed class LayoutEngine : IDisposable
 
         if (pendingImages.Count > 0)
         {
-            var anon = BuildLeafBlock(string.Empty, body, new InlineSegment { Images = pendingImages }, clampHeight: false);
+            var anon = BuildLeafBlock(string.Empty, body, new InlineSegment { Images = pendingImages }, false);
             if (anon != null) blocks.Add(anon);
         }
 
@@ -473,7 +473,7 @@ public sealed class LayoutEngine : IDisposable
         return result;
     }
 
-    /// <summary>Builds the ancestor chain from <paramref name="parent"/> up to the document root (bottom-up order).</summary>
+    /// <summary>Builds the ancestor chain from <paramref name="parent" /> up to the document root (bottom-up order).</summary>
     private static List<Element> BuildAncestorChain(Element parent)
     {
         var chain = new List<Element>();
@@ -674,7 +674,7 @@ public sealed class LayoutEngine : IDisposable
         {
             var text = TrimCollapsibleWhitespace(seg.Text);
             if (text.Length == 0 && seg.Images.Count == 0) return;
-            var ownBlock = BuildLeafBlock(text, el, seg, clampHeight: false);
+            var ownBlock = BuildLeafBlock(text, el, seg, false);
             if (ownBlock == null) return;
             ownBlock.TagName = "#text";
             ownBlock.MarginTop = 0f;
@@ -992,7 +992,8 @@ public sealed class LayoutEngine : IDisposable
                 // The line box contains the image's border-box, so its width narrows
                 // line 1 and its height (content + padding + border) sets line 1's
                 // height.
-                var (hInset, vInset) = ImageHelpers.GetImageBoxInsets(imgStyle, ParseLengthToPx, containerRefWidth, fontSize);
+                var (hInset, vInset) =
+                    ImageHelpers.GetImageBoxInsets(imgStyle, ParseLengthToPx, containerRefWidth, fontSize);
                 leadingImgWidth = w + hInset;
                 leadingImgContribution = ImageHelpers.LineContribution(
                     imgStyle.GetPropertyValue("vertical-align"), h + vInset, resolvedLineHeight, strutDescent, fontSize,
@@ -1042,11 +1043,14 @@ public sealed class LayoutEngine : IDisposable
                 {
                     var imgStyle = GetComputedStyle(img);
                     var (imgWidth, imgHeight) = ImageHelpers.MeasureImageSize(img, imgStyle, ParseLengthToPx, _options,
-                        _coreOptions, availableWidth, containerRefWidth, GetContainingBlockContentHeight(img), fontSize);
+                        _coreOptions, availableWidth, containerRefWidth, GetContainingBlockContentHeight(img),
+                        fontSize);
                     // The line box contains the image's border-box (content + padding
                     // + border), so use the total dimensions for the line geometry.
-                    var (hInset, vInset) = ImageHelpers.GetImageBoxInsets(imgStyle, ParseLengthToPx, containerRefWidth, fontSize);
-                    imageBoxes.Add((imgWidth + hInset, imgHeight + vInset, imgStyle.GetPropertyValue("vertical-align")));
+                    var (hInset, vInset) =
+                        ImageHelpers.GetImageBoxInsets(imgStyle, ParseLengthToPx, containerRefWidth, fontSize);
+                    imageBoxes.Add((imgWidth + hInset, imgHeight + vInset,
+                        imgStyle.GetPropertyValue("vertical-align")));
                 }
 
                 imgLineHeights.AddRange(ImageHelpers.BuildImageLines(imageBoxes, availableWidth, resolvedLineHeight,
@@ -1101,9 +1105,9 @@ public sealed class LayoutEngine : IDisposable
             ? _measurer.Measure(runs[0].Text, runs[0].FontSizePx, availableWidth,
                 lineHeightLengthPx ??
                 (lineHeightMultiplier is null ? null : lineHeightMultiplier.Value * runs[0].FontSizePx),
-                letterSpacingPx, wordSpacingPx, firstLineWidthPx, runs[0].Style, false)
+                letterSpacingPx, wordSpacingPx, firstLineWidthPx, runs[0].Style)
             : _measurer.MeasureRuns(runs, availableWidth, lineHeightLengthPx, lineHeightMultiplier, letterSpacingPx,
-                wordSpacingPx, firstLineWidthPx, false);
+                wordSpacingPx, firstLineWidthPx);
 
         var lineHeights = meas.LineHeights.Length > 0 ? meas.LineHeights : null;
         for (var li = 0; li < meas.LineCount; li++)
@@ -1158,9 +1162,24 @@ public sealed class LayoutEngine : IDisposable
         float ClampContentHeight(float h)
         {
             if (!clampHeight) return h;
-            if (heightPx is { } hp) { fixedHeight = true; return hp; }
-            if (maxHeight is { } mh && h > mh) { fixedHeight = true; return mh; }
-            if (minHeight is { } minh && h < minh) { fixedHeight = true; return minh; }
+            if (heightPx is { } hp)
+            {
+                fixedHeight = true;
+                return hp;
+            }
+
+            if (maxHeight is { } mh && h > mh)
+            {
+                fixedHeight = true;
+                return mh;
+            }
+
+            if (minHeight is { } minh && h < minh)
+            {
+                fixedHeight = true;
+                return minh;
+            }
+
             return h;
         }
     }
@@ -1228,46 +1247,17 @@ public sealed class LayoutEngine : IDisposable
     }
 
     /// <summary>
-    /// <summary>
-    ///     Resolves all eight box properties (margins + padding) of an element in px,
-    ///     using the containing-block content width as the % reference and the element's
-    ///     font-size as the em reference. Unset values resolve to 0.
-    /// </summary>
+    ///     <summary>
+    ///         Resolves all eight box properties (margins + padding) of an element in px,
+    ///         using the containing-block content width as the % reference and the element's
+    ///         font-size as the em reference. Unset values resolve to 0.
+    ///     </summary>
     private BoxMetrics GetBoxMetrics(Element el)
     {
         var computed = GetComputedStyle(el);
         var fontSize = ResolveFontSize(el);
         var reference = GetContainingBlockContentWidth(el);
         return new BoxMetrics(computed, reference, fontSize, ParseLengthToPx);
-    }
-
-    /// <summary>Resolved margin/padding box properties in px for a single element.</summary>
-    private readonly struct BoxMetrics
-    {
-        public BoxMetrics(CssStyle computed, float reference, float? emReference,
-            Func<string?, float, float?, float?> parse)
-        {
-            MarginTop = Parse(computed, "margin-top");
-            MarginBottom = Parse(computed, "margin-bottom");
-            MarginLeft = Parse(computed, "margin-left");
-            MarginRight = Parse(computed, "margin-right");
-            PaddingTop = Parse(computed, "padding-top");
-            PaddingBottom = Parse(computed, "padding-bottom");
-            PaddingLeft = Parse(computed, "padding-left");
-            PaddingRight = Parse(computed, "padding-right");
-
-            float Parse(CssStyle style, string name)
-                => parse(style.GetPropertyValue(name), reference, emReference) ?? 0f;
-        }
-
-        public float MarginTop { get; }
-        public float MarginBottom { get; }
-        public float MarginLeft { get; }
-        public float MarginRight { get; }
-        public float PaddingTop { get; }
-        public float PaddingBottom { get; }
-        public float PaddingLeft { get; }
-        public float PaddingRight { get; }
     }
 
     private float ResolveFontSize(Element el)
@@ -1397,6 +1387,37 @@ public sealed class LayoutEngine : IDisposable
         }
     }
 
+    /// <summary>Resolved margin/padding box properties in px for a single element.</summary>
+    private readonly struct BoxMetrics
+    {
+        public BoxMetrics(CssStyle computed, float reference, float? emReference,
+            Func<string?, float, float?, float?> parse)
+        {
+            MarginTop = Parse(computed, "margin-top");
+            MarginBottom = Parse(computed, "margin-bottom");
+            MarginLeft = Parse(computed, "margin-left");
+            MarginRight = Parse(computed, "margin-right");
+            PaddingTop = Parse(computed, "padding-top");
+            PaddingBottom = Parse(computed, "padding-bottom");
+            PaddingLeft = Parse(computed, "padding-left");
+            PaddingRight = Parse(computed, "padding-right");
+
+            float Parse(CssStyle style, string name)
+            {
+                return parse(style.GetPropertyValue(name), reference, emReference) ?? 0f;
+            }
+        }
+
+        public float MarginTop { get; }
+        public float MarginBottom { get; }
+        public float MarginLeft { get; }
+        public float MarginRight { get; }
+        public float PaddingTop { get; }
+        public float PaddingBottom { get; }
+        public float PaddingLeft { get; }
+        public float PaddingRight { get; }
+    }
+
     /// <summary>
     ///     A memoized resolution: the resolved style plus the hidden verdict, both pure
     ///     functions of the element's signature (tag, attributes, inline style) and its
@@ -1438,12 +1459,12 @@ public sealed class LayoutEngine : IDisposable
     private sealed class InlineSegment
     {
         /// <summary>The top-level inline nodes, in document order (for text-run building).</summary>
-        public List<Node> Fragments { get; init; } = [];
+        public List<Node> Fragments { get; } = [];
 
         /// <summary>The inline-display images inside the segment (for the image line model).</summary>
         public List<Element> Images { get; init; } = [];
 
         /// <summary>The segment's raw text (untrimmed; <c>&lt;br&gt;</c> as U+FFFC markers).</summary>
-        public StringBuilder Text { get; init; } = new();
+        public StringBuilder Text { get; } = new();
     }
 }
