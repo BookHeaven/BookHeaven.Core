@@ -34,6 +34,7 @@ public class ReaderService(
     public event Action? OnTotalPagesChanged;
 
     private Guid _bookId;
+    private Guid _profileId;
     private BookProgress? _progress;
 
     // Tracks the in-flight page calculation so a new call can cancel the previous
@@ -44,6 +45,7 @@ public class ReaderService(
     public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
         _bookId = bookId;
+        _profileId = profileId;
         State = new();
         await readerSettingsService.LoadSettings(profileId);
         
@@ -110,7 +112,7 @@ public class ReaderService(
         State.SetPagesPerChapter(pageArray);
         OnTotalPagesChanged?.Invoke();
         IsReady = true;
-        _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings!.CalculateHash(), State.PagesPerChapter);
+        _ = readerCacheService.SaveCachedPagesAsync(_bookId, _profileId, Settings!.CalculateHash(), State.PagesPerChapter);
     }
     
     public async Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx, LineBreakingMode lineBreakingMode = LineBreakingMode.Firefox)
@@ -134,7 +136,7 @@ public class ReaderService(
             var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options, cts.Token);
             State.SetPagesPerChapter(pageCounts);
             OnTotalPagesChanged?.Invoke();
-            _ = readerCacheService.SaveCachedPagesAsync(_bookId, Settings.CalculateHash(), State.PagesPerChapter);
+            _ = readerCacheService.SaveCachedPagesAsync(_bookId, _profileId, Settings.CalculateHash(), State.PagesPerChapter);
         }
         catch (OperationCanceledException)
         {
@@ -266,6 +268,7 @@ public class ReaderService(
         IsReady = false;
         State = null;
         _bookId = Guid.Empty;
+        _profileId = Guid.Empty;
         _progress = null;
         // Stop any in-flight calculation. Only cancel here — the task's finally
         // block owns the disposal, so we never double-dispose the CTS.

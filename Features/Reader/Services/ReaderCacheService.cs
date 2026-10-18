@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+using System.Collections.Concurrent;
+using System.Text.Json;
 using System.IO.Compression;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Models;
@@ -13,24 +14,25 @@ public class ReaderCacheService(
     IEbookManagerProvider ebookManagerProvider,
     IOptions<CoreOptions> options) : IReaderCacheService
 {
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> BookLocks = [];
+
+    private const string RegistryFileName = "profile-registry.json";
+    private const string PagesFilePrefix = "pages.";
 
     private string GetBasePath(Guid bookId) => Path.Combine(options.Value.CachePath, bookId.ToString());
-    
-    
-    public async Task<int[]> LoadCachedPagesAsync(Guid bookId, string currentReaderSettingsHash)
+    private string GetPagesPath(Guid bookId, string settingsHash) =>
+        Path.Combine(GetBasePath(bookId), $"{PagesFilePrefix}{settingsHash}.cache");
+    private string GetRegistryPath(Guid bookId) => Path.Combine(GetBasePath(bookId), RegistryFileName);
+
+    public async Task<int[]> LoadCachedPagesAsync(Guid bookId, string readerSettingsHash)
     {
-        var cachePath = Path.Combine(GetBasePath(bookId), "pages.cache");
+        var cachePath = GetPagesPath(bookId, readerSettingsHash);
         if (!File.Exists(cachePath)) return [];
         var cacheContent = await ReadCompressedAsync(cachePath);
         if (cacheContent is null) return [];
         try
         {
-            var cache = JsonSerializer.Deserialize<ReaderPagesCache>(cacheContent);
-            if (cache is null) return [];
-            // If the reader settings hash has changed, we consider the cache useful as a starting point
-            // but all chapters remain pending recount
-            var isStale = cache.ReaderSettingsHash != currentReaderSettingsHash;
-            return isStale ? [] : [.. cache.CachedPages];
+            return JsonSerializer.Deserialize<int[]>(cacheContent) ?? [];
         }
         catch
         {
@@ -38,16 +40,54 @@ public class ReaderCacheService(
         }
     }
 
-    public async Task SaveCachedPagesAsync(Guid bookId, string readerSettingsHash, int[] pages)
+    public async Task SaveCachedPagesAsync(Guid bookId, Guid profileId, string readerSettingsHash, int[] pages)
     {
-        var cachePath = Path.Combine(GetBasePath(bookId), "pages.cache");
-        var cache = new ReaderPagesCache
+        var bookLock = GetBookLock(bookId);
+        await bookLock.WaitAsync();
+        try
         {
-            ReaderSettingsHash = readerSettingsHash,
-            CachedPages = pages
-        };
-        var serialized = JsonSerializer.Serialize(cache);
-        await WriteCompressedAsync(cachePath, serialized);
+            var cachePath = GetPagesPath(bookId, readerSettingsHash);
+            await WriteCompressedAsync(cachePath, JsonSerializer.Serialize(pages));
+
+            var registry = await LoadRegistryAsync(bookId);
+            registry.Profiles[profileId.ToString()] = readerSettingsHash;
+            await SaveRegistryAsync(bookId, registry);
+
+            PruneUnusedPagesFiles(GetBasePath(bookId), registry);
+        }
+        finally
+        {
+            bookLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Removes the profile from every book's registry and deletes any page-count
+    /// file left without a profile using it.
+    /// </summary>
+    public async Task RemoveProfileAsync(Guid profileId)
+    {
+        var cacheRoot = options.Value.CachePath;
+        if (!Directory.Exists(cacheRoot)) return;
+        var profileKey = profileId.ToString();
+
+        foreach (var bookDir in Directory.EnumerateDirectories(cacheRoot))
+        {
+            if (!Guid.TryParse(Path.GetFileName(bookDir), out var bookId)) continue;
+            var bookLock = GetBookLock(bookId);
+            await bookLock.WaitAsync();
+            try
+            {
+                var registry = await LoadRegistryAsync(bookId);
+                if (!registry.Profiles.Remove(profileKey)) continue;
+                await SaveRegistryAsync(bookId, registry);
+                PruneUnusedPagesFiles(bookDir, registry);
+            }
+            finally
+            {
+                bookLock.Release();
+            }
+        }
     }
 
     public async Task CacheContentAsync(Guid bookId, string ebookPath)
@@ -75,8 +115,7 @@ public class ReaderCacheService(
         if (cacheContent is null) return null;
         try
         {
-            var content = JsonSerializer.Deserialize<Content?>(cacheContent);
-            return content;
+            return JsonSerializer.Deserialize<Content?>(cacheContent);
         }
         catch
         {
@@ -116,6 +155,43 @@ public class ReaderCacheService(
         if (Directory.Exists(path))
         {
             Directory.Delete(path, true);
+        }
+    }
+
+    private static SemaphoreSlim GetBookLock(Guid bookId) =>
+        BookLocks.GetOrAdd(bookId, static _ => new(1, 1));
+
+    private async Task<ReaderCacheRegistry> LoadRegistryAsync(Guid bookId)
+    {
+        var path = GetRegistryPath(bookId);
+        if (!File.Exists(path)) return new();
+        try
+        {
+            var content = await File.ReadAllTextAsync(path);
+            return JsonSerializer.Deserialize<ReaderCacheRegistry>(content) ?? new();
+        }
+        catch
+        {
+            return new();
+        }
+    }
+
+    private async Task SaveRegistryAsync(Guid bookId, ReaderCacheRegistry registry)
+    {
+        var path = GetRegistryPath(bookId);
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(registry));
+    }
+
+    private static void PruneUnusedPagesFiles(string bookDir, ReaderCacheRegistry registry)
+    {
+        var usedHashes = registry.Profiles.Values.ToHashSet();
+        foreach (var file in Directory.EnumerateFiles(bookDir, $"{PagesFilePrefix}*.cache"))
+        {
+            var fileName = Path.GetFileNameWithoutExtension(file);
+            var hash = fileName[PagesFilePrefix.Length..];
+            if (!usedHashes.Contains(hash)) File.Delete(file);
         }
     }
 }
