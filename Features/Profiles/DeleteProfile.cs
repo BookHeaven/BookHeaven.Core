@@ -1,4 +1,5 @@
 ﻿using BookHeaven.Core.Abstractions.Messaging;
+using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Shared;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,7 +9,9 @@ public static class DeleteProfile
 {
     public sealed record Command(Guid Id) : ICommand;
     
-    internal class Handler(IDbContextFactory<DatabaseContext> dbContextFactory) : ICommandHandler<Command>
+    internal class Handler(
+        IDbContextFactory<DatabaseContext> dbContextFactory,
+        IReaderCacheService readerCacheService) : ICommandHandler<Command>
     {
         public async ValueTask<Result> Handle(Command request, CancellationToken cancellationToken)
         {
@@ -30,6 +33,9 @@ public static class DeleteProfile
             {
                 return new Error(e.Message);
             }
+
+            // Drop the profile's page-count caches so no orphaned files remain
+            await readerCacheService.RemoveProfileAsync(request.Id);
 
             return Result.Success();
         }
