@@ -42,7 +42,7 @@ public class ReaderService(
     // this field is only ever null or a live (non-disposed) source.
     private CancellationTokenSource? _calcCts;
     
-    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
+    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId, ReaderContext? readerContext = null)
     {
         _bookId = bookId;
         _profileId = profileId;
@@ -65,15 +65,19 @@ public class ReaderService(
         
         
         State.SetEbook(await LoadEbookAsync(book));
-        
-        
-        var cachedPages = await readerCacheService.LoadCachedPagesAsync(_bookId, Settings!.CalculateHash());
-        if (cachedPages.Length > 0)
+
+        if (readerContext is not null)
         {
-            State.SetPagesPerChapter(cachedPages);
-            NavigateToInitialPage();
-            IsReady = true;
+            var options = Settings?.ToPageCalculatorOptions(readerContext);
+            var cachedPages = await readerCacheService.LoadCachedPagesAsync(_bookId, options?.CalculateHash() ?? string.Empty);
+            if (cachedPages.Length > 0)
+            {
+                State.SetPagesPerChapter(cachedPages);
+                NavigateToInitialPage();
+                IsReady = true;
+            }
         }
+        
         return Result.Success();
     }
     
@@ -112,10 +116,9 @@ public class ReaderService(
         State.SetPagesPerChapter(pageArray);
         OnTotalPagesChanged?.Invoke();
         IsReady = true;
-        _ = readerCacheService.SaveCachedPagesAsync(_bookId, _profileId, Settings!.CalculateHash(), State.PagesPerChapter);
     }
     
-    public async Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx, LineBreakingMode lineBreakingMode = LineBreakingMode.Firefox)
+    public async Task CalculatePagesAsync(ReaderContext readerContext)
     {
         if (State?.Ebook is null || Settings is null) return;
 
@@ -129,14 +132,14 @@ public class ReaderService(
         var cts = new CancellationTokenSource();
         _calcCts = cts;
 
-        var options = Settings.ToPageCalculatorOptions(viewportWidthPx, viewportHeightPx, pageWidthPx, pageHeightPx);
-        options.LineBreakingMode = lineBreakingMode;
+        var options = Settings.ToPageCalculatorOptions(readerContext);
+        options.LineBreakingMode = readerContext.LineBreakingMode;
         try
         {
             var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options, cts.Token);
             State.SetPagesPerChapter(pageCounts);
             OnTotalPagesChanged?.Invoke();
-            _ = readerCacheService.SaveCachedPagesAsync(_bookId, _profileId, Settings.CalculateHash(), State.PagesPerChapter);
+            _ = readerCacheService.SaveCachedPagesAsync(_bookId, _profileId, options.CalculateHash(), State.PagesPerChapter);
         }
         catch (OperationCanceledException)
         {

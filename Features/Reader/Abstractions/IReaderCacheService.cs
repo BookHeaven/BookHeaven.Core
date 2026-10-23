@@ -6,8 +6,8 @@ namespace BookHeaven.Core.Features.Reader.Abstractions;
 
 public interface IReaderCacheService
 {
-    Task<int[]> LoadCachedPagesAsync(Guid bookId, string readerSettingsHash);
-    Task SaveCachedPagesAsync(Guid bookId, Guid profileId, string readerSettingsHash, int[] pages);
+    Task<int[]> LoadCachedPagesAsync(Guid bookId, string hash);
+    Task SaveCachedPagesAsync(Guid bookId, Guid profileId, string hash, int[] pages);
     Task RemoveProfileAsync(Guid profileId);
     Task CacheContentAsync(Guid bookId, string ebookPath);
     Task CacheContentAsync(Guid bookId, Content content);

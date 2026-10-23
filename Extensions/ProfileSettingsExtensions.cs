@@ -1,5 +1,6 @@
 ﻿using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.Entities;
+using BookHeaven.Core.Features.Reader.Models;
 
 namespace BookHeaven.Core.Extensions;
 
@@ -22,14 +23,14 @@ public static class ProfileSettingsExtensions
             settings.SelectedFont = updatedSettings.SelectedFont;
         }
         
-        public PageCalculatorOptions ToPageCalculatorOptions(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx)
+        public PageCalculatorOptions ToPageCalculatorOptions(ReaderContext readerContext)
         {
             return new PageCalculatorOptions
             {
-                ViewportWidthPx = viewportWidthPx,
-                ViewportHeightPx = viewportHeightPx,
-                PageWidthPx = pageWidthPx,
-                PageHeightPx = pageHeightPx,
+                ViewportWidthPx = readerContext.ViewportWidth,
+                ViewportHeightPx = readerContext.ViewportHeight,
+                PageWidthPx = readerContext.PageWidth,
+                PageHeightPx = readerContext.PageHeight,
                 FontSize = (float)settings.FontSize,
                 LineHeight = (float)settings.LineHeight,
                 LetterSpacing = (float)settings.LetterSpacing,

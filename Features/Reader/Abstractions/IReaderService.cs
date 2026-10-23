@@ -14,11 +14,11 @@ public interface IReaderService : IDisposable
     event Action? OnPageChanged;
     event Action? OnChapterChanged;
     event Action? OnTotalPagesChanged;
-    Task<Result> InitializeAsync(Guid bookId, Guid profileId);
+    Task<Result> InitializeAsync(Guid bookId, Guid profileId, ReaderContext? context = null);
     void PauseTimer();
     void ResumeTimer();
     void SetTotalPages(int[] pageArray);
-    Task CalculatePagesAsync(int viewportWidthPx, int viewportHeightPx, int pageWidthPx, int pageHeightPx, LineBreakingMode lineBreakingMode = LineBreakingMode.Firefox);
+    Task CalculatePagesAsync(ReaderContext context);
     void NavigateToInitialPage();
     void NavigateToChapter(TocEntry chapter);
     void NextPage();

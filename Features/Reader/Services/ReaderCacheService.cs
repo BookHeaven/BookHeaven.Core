@@ -24,9 +24,9 @@ public class ReaderCacheService(
         Path.Combine(GetBasePath(bookId), $"{PagesFilePrefix}{settingsHash}.cache");
     private string GetRegistryPath(Guid bookId) => Path.Combine(GetBasePath(bookId), RegistryFileName);
 
-    public async Task<int[]> LoadCachedPagesAsync(Guid bookId, string readerSettingsHash)
+    public async Task<int[]> LoadCachedPagesAsync(Guid bookId, string hash)
     {
-        var cachePath = GetPagesPath(bookId, readerSettingsHash);
+        var cachePath = GetPagesPath(bookId, hash);
         if (!File.Exists(cachePath)) return [];
         var cacheContent = await ReadCompressedAsync(cachePath);
         if (cacheContent is null) return [];
@@ -40,17 +40,17 @@ public class ReaderCacheService(
         }
     }
 
-    public async Task SaveCachedPagesAsync(Guid bookId, Guid profileId, string readerSettingsHash, int[] pages)
+    public async Task SaveCachedPagesAsync(Guid bookId, Guid profileId, string hash, int[] pages)
     {
         var bookLock = GetBookLock(bookId);
         await bookLock.WaitAsync();
         try
         {
-            var cachePath = GetPagesPath(bookId, readerSettingsHash);
+            var cachePath = GetPagesPath(bookId, hash);
             await WriteCompressedAsync(cachePath, JsonSerializer.Serialize(pages));
 
             var registry = await LoadRegistryAsync(bookId);
-            registry.Profiles[profileId.ToString()] = readerSettingsHash;
+            registry.Profiles[profileId.ToString()] = hash;
             await SaveRegistryAsync(bookId, registry);
 
             PruneUnusedPagesFiles(GetBasePath(bookId), registry);
