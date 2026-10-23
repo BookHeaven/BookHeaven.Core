@@ -39,7 +39,8 @@ public static class ProfileSettingsExtensions
                 TextIndent = (float)settings.TextIndent,
                 HorizontalMargin = (float)settings.HorizontalMargin,
                 VerticalMargin = (float)settings.VerticalMargin,
-                SelectedFont = settings.SelectedFont
+                SelectedFont = settings.SelectedFont,
+                LineBreakingMode = readerContext.LineBreakingMode
             };
         }
     }
