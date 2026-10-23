@@ -14,7 +14,8 @@ public interface IReaderService : IDisposable
     event Action? OnPageChanged;
     event Action? OnChapterChanged;
     event Action? OnTotalPagesChanged;
-    Task<Result> InitializeAsync(Guid bookId, Guid profileId, ReaderContext? context = null);
+    Task<Result> InitializeAsync(Guid bookId, Guid profileId);
+    Task LoadCachedPagesAsync(ReaderContext context);
     void PauseTimer();
     void ResumeTimer();
     void SetTotalPages(int[] pageArray);

@@ -42,43 +42,40 @@ public class ReaderService(
     // this field is only ever null or a live (non-disposed) source.
     private CancellationTokenSource? _calcCts;
     
-    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId, ReaderContext? readerContext = null)
+    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
         _bookId = bookId;
         _profileId = profileId;
         State = new();
         await readerSettingsService.LoadSettings(profileId);
-        
+
         var getBook = await sender.Send(new GetBook.Query { BookId = bookId });
         if(getBook.IsFailure)
         {
             return Result.Failure(getBook.Error);
         }
         var book = getBook.Value;
-        
+
         var getProgress = await sender.Send(new GetBookProgressByProfile.Query(bookId, profileId));
         if(getProgress.IsFailure)
         {
             return Result.Failure(getProgress.Error);
         }
         _progress = getProgress.Value;
-        
-        
-        State.SetEbook(await LoadEbookAsync(book));
 
-        if (readerContext is not null)
-        {
-            var options = Settings?.ToPageCalculatorOptions(readerContext);
-            var cachedPages = await readerCacheService.LoadCachedPagesAsync(_bookId, options?.CalculateHash() ?? string.Empty);
-            if (cachedPages.Length > 0)
-            {
-                State.SetPagesPerChapter(cachedPages);
-                NavigateToInitialPage();
-                IsReady = true;
-            }
-        }
-        
+        State.SetEbook(await LoadEbookAsync(book));
         return Result.Success();
+    }
+    
+    public async Task LoadCachedPagesAsync(ReaderContext readerContext)
+    {
+        if (State is null || Settings is null) return;
+        var options = Settings.ToPageCalculatorOptions(readerContext);
+        var cachedPages = await readerCacheService.LoadCachedPagesAsync(_bookId, options.CalculateHash());
+        if (cachedPages.Length > 0)
+        {
+            State.SetPagesPerChapter(cachedPages);
+        }
     }
     
     private async Task<Ebook> LoadEbookAsync(Book book)
@@ -133,7 +130,6 @@ public class ReaderService(
         _calcCts = cts;
 
         var options = Settings.ToPageCalculatorOptions(readerContext);
-        options.LineBreakingMode = readerContext.LineBreakingMode;
         try
         {
             var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options, cts.Token);
@@ -273,8 +269,6 @@ public class ReaderService(
         _bookId = Guid.Empty;
         _profileId = Guid.Empty;
         _progress = null;
-        // Stop any in-flight calculation. Only cancel here — the task's finally
-        // block owns the disposal, so we never double-dispose the CTS.
         _calcCts?.Cancel();
         readerSettingsService.Dispose();
         GC.SuppressFinalize(this);
