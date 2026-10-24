@@ -124,7 +124,8 @@ public class ReaderService(
         var options = Settings.ToPageCalculatorOptions(readerContext);
         try
         {
-            var pageCounts = await pageCalculator.CalculatePagesAsync(State.Ebook, options, cts.Token);
+            var pages = await pageCalculator.CalculatePagesAsync(State.Ebook, options, cts.Token);
+            var pageCounts = ToPagesPerChapter(pages, options.ColumnCount);
             State.SetPagesPerChapter(pageCounts);
             OnTotalPagesChanged?.Invoke();
             _ = readerCacheService.SaveCachedPagesAsync(_bookId, _profileId, options.CalculateHash(), State.PagesPerChapter);
@@ -144,6 +145,11 @@ public class ReaderService(
         }
     }
 
+    private static int[] ToPagesPerChapter(int[] columnCounts, int columnCount)
+    {
+        return columnCount <= 1 ? columnCounts : columnCounts.Select(columns => (columns + columnCount - 1) / columnCount).ToArray();
+    }
+    
     private void NavigateTo(int page, int chapter)
     {
         if(State is null) return;

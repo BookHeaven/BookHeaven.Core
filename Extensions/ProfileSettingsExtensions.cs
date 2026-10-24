@@ -40,7 +40,8 @@ public static class ProfileSettingsExtensions
                 HorizontalMargin = (float)settings.HorizontalMargin,
                 VerticalMargin = (float)settings.VerticalMargin,
                 SelectedFont = settings.SelectedFont,
-                LineBreakingMode = readerContext.LineBreakingMode
+                LineBreakingMode = readerContext.LineBreakingMode,
+                ColumnCount = readerContext.ColumnCount
             };
         }
     }

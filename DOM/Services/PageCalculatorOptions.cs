@@ -41,4 +41,5 @@ public sealed class PageCalculatorOptions
     public float ParagraphSpacing { get; set; }
     public float TextIndent { get; set; }
     public string SelectedFont { get; set; } = string.Empty;
+    public int ColumnCount { get; set; } = 1;
 }

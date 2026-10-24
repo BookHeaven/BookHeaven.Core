@@ -13,7 +13,6 @@ public static class PageCalculatorOptionsExtensions
         public string CalculateHash()
         {
             var sb = new StringBuilder();
-            // Append properties in a stable, explicit order. Exclude IDs and navigation property.
             sb.Append(options.ViewportWidthPx.ToString(CultureInfo.InvariantCulture)).Append('|');
             sb.Append(options.ViewportHeightPx.ToString(CultureInfo.InvariantCulture)).Append('|');
             sb.Append(options.PageWidthPx.ToString(CultureInfo.InvariantCulture)).Append('|');
@@ -27,7 +26,8 @@ public static class PageCalculatorOptionsExtensions
             sb.Append(options.TextIndent.ToString(CultureInfo.InvariantCulture)).Append('|');
             sb.Append(options.HorizontalMargin.ToString(CultureInfo.InvariantCulture)).Append('|');
             sb.Append(options.VerticalMargin.ToString(CultureInfo.InvariantCulture)).Append('|');
-            sb.Append(options.SelectedFont);
+            sb.Append(options.SelectedFont).Append('|');
+            sb.Append(options.ColumnCount);
             var bytes = Encoding.UTF8.GetBytes(sb.ToString());
             var hash = SHA256.HashData(bytes);
             return Convert.ToHexStringLower(hash);

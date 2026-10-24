@@ -9,4 +9,5 @@ public class ReaderContext
     public int PageWidth { get; init; }
     public int PageHeight { get; init; }
     public LineBreakingMode LineBreakingMode { get; init; } = LineBreakingMode.Chrome;
+    public int ColumnCount { get; init; } = 1;
 }
