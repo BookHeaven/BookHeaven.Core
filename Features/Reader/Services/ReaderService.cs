@@ -106,14 +106,6 @@ public class ReaderService(
     {
         State?.ResumeTimer();
     }
-
-    public void SetTotalPages(int[] pageArray)
-    {
-        if (State is null) return;
-        State.SetPagesPerChapter(pageArray);
-        OnTotalPagesChanged?.Invoke();
-        IsReady = true;
-    }
     
     public async Task CalculatePagesAsync(ReaderContext readerContext)
     {

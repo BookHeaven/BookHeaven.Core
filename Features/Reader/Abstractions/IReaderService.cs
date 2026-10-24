@@ -18,7 +18,6 @@ public interface IReaderService : IDisposable
     Task LoadCachedPagesAsync(ReaderContext context);
     void PauseTimer();
     void ResumeTimer();
-    void SetTotalPages(int[] pageArray);
     Task CalculatePagesAsync(ReaderContext context);
     void NavigateToInitialPage();
     void NavigateToChapter(TocEntry chapter);
