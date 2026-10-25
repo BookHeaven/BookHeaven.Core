@@ -6,13 +6,15 @@ using BookHeaven.Core.Features.Books;
 using BookHeaven.Core.Features.BooksProgress;
 using BookHeaven.Core.Localization;
 using BookHeaven.Core.Extensions;
+using BookHeaven.Core.Features.Reader.Abstractions;
 using Mediator;
 
 namespace BookHeaven.Core.Services;
 
 public class BookManager(
     IAlertService alertService,
-    ISender sender)
+    ISender sender,
+    IReaderCacheService readerCacheService)
 {
     private List<Book> _books = [];
     public IReadOnlyList<Book> Books => (Filter == BookStatus.All ? _books : _books.Where(b => b.ReadingStatus() == Filter)).ApplyDefaultSorting().ToList();
@@ -24,23 +26,10 @@ public class BookManager(
     
     public event Action? OnBooksChanged;
 
-    /*private async Task ClearCache(Book book, bool showToast = true)
+    public void ClearCache(Guid bookId)
     {
-        var progress = book.GetCachePath(CacheKey.Progress);
-        var styles = book.GetCachePath(CacheKey.Styles);
-
-        if (File.Exists(progress))
-        {
-            File.Delete(progress);
-        }
-
-        if (File.Exists(styles))
-        {
-            File.Delete(styles);
-        }
-
-        if (showToast) await alertService.ShowToast("Cache cleared");
-    }*/
+        readerCacheService.ClearCache(bookId);
+    }
     
     public async Task GetBooksAsync(Guid profileId)
     {
