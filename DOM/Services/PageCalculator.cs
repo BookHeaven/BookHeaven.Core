@@ -70,6 +70,7 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         // tag interning, shorthand splits, var() resolution) is fresh per
         // CalculatePagesAsync and shared across the parallel chapter workers.
         var scope = new ParseScope();
+        Task[]? workers = null;
         try
         {
             // A bounded channel of chapter indices feeds a fixed pool of workers:
@@ -81,7 +82,7 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
 
             // Workers must be running before the producer writes: the channel is
             // bounded, so a producer ahead of the workers would deadlock.
-            var workers = Enumerable.Range(0, workerCount).Select(_ => Task.Run(async () =>
+            workers = Enumerable.Range(0, workerCount).Select(_ => Task.Run(async () =>
             {
                 await foreach (var i in queue.Reader.ReadAllAsync(cancellationToken))
                 {
@@ -95,10 +96,21 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
                 }
             }, cancellationToken)).ToArray();
 
-            for (var i = 0; i < chapters.Count; i++)
-                await queue.Writer.WriteAsync(i, cancellationToken);
+            try
+            {
+                for (var i = 0; i < chapters.Count; i++)
+                    await queue.Writer.WriteAsync(i, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation: stop producing; the workers exit through their own
+                // token and are drained below before the measurer is disposed.
+            }
             queue.Writer.Complete();
 
+            // The workers MUST be drained before the finally block disposes the
+            // measurer: a cancellation that skipped this await would free the native
+            // HarfBuzz font/buffers while a worker is mid-shape (use-after-free).
             await Task.WhenAll(workers);
         }
         finally
