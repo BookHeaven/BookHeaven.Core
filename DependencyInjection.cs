@@ -50,6 +50,7 @@ public static class DependencyInjection
         services.AddSingleton<IUrlBuilder, UrlBuilder>();
         services.AddSingleton<GlobalEventsService>();
         services.AddSingleton<IReaderCacheService, ReaderCacheService>();
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<IReaderSettingsService, ReaderSettingsService>();
         services.AddScoped<IReaderService, ReaderService>();
         services.AddScoped<BookManager>();

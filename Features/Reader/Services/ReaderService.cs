@@ -22,7 +22,7 @@ public class ReaderService(
     IReaderCacheService readerCacheService,
     IPageCalculator pageCalculator,
     ISender sender,
-    int saveProgressIntervalMs = 5000) : IReaderService
+    TimeProvider timeProvider) : IReaderService
 {
     public bool IsReady { get; private set; }
     public bool IsCalculatingPages { get; private set; }
@@ -34,10 +34,12 @@ public class ReaderService(
     public event Action? OnChapterChanged;
     public event Action? OnTotalPagesChanged;
 
+    private static readonly TimeSpan SaveProgressInterval = TimeSpan.FromSeconds(5);
+    
     private Guid _bookId;
     private Guid _profileId;
     private BookProgress? _progress;
-    private Timer? _saveTimer;
+    private ITimer? _saveTimer;
     private bool _isDirty;
     private int _isSaving;
 
@@ -70,13 +72,13 @@ public class ReaderService(
         // persists it at most once per interval, so rapid page turns don't hit the
         // database on every turn.
         if(_saveTimer is not null) await _saveTimer.DisposeAsync();
-        _saveTimer = new Timer(timer =>
+        _saveTimer = timeProvider.CreateTimer(timer =>
         {
             if (_isDirty && _isSaving == 0)
             {
                 _ = SaveProgressAsync();
             }
-        }, null, saveProgressIntervalMs, saveProgressIntervalMs);
+        }, null, SaveProgressInterval, SaveProgressInterval);
 
         State.SetEbook(await LoadEbookAsync(book));
         return Result.Success();
