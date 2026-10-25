@@ -30,6 +30,7 @@ public sealed class ReaderState
     private DateTimeOffset _entryTime;
     private DateTimeOffset _suspendStartTime;
     private TimeSpan _totalSuspendedTime;
+    private TimeSpan _lastSavedElapsed;
     
     public void SetEbook(Ebook ebook)
     {
@@ -39,6 +40,7 @@ public sealed class ReaderState
     public void StartTimer()
     {
         _entryTime = DateTimeOffset.UtcNow;
+        _lastSavedElapsed = TimeSpan.Zero;
     }
     
     public void PauseTimer()
@@ -54,10 +56,17 @@ public sealed class ReaderState
         _isSuspended = false;
         _totalSuspendedTime += DateTimeOffset.UtcNow - _suspendStartTime;
     }
-
+    
+    /// <summary>
+    /// Returns the reading time elapsed since the last call and advances the marker,
+    /// so consecutive calls yield non-overlapping deltas that sum to the total elapsed time.
+    /// </summary>
     public TimeSpan GetElapsedReadingTime()
     {
-        return DateTimeOffset.UtcNow - _entryTime - _totalSuspendedTime;
+        var elapsed = DateTimeOffset.UtcNow - _entryTime - _totalSuspendedTime;
+        var delta = elapsed - _lastSavedElapsed;
+        _lastSavedElapsed = elapsed;
+        return delta;
     }
     
     public void SetChapterAndPage(int chapterNumber, int pageNumber)

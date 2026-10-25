@@ -21,7 +21,8 @@ public class ReaderService(
     IEbookManagerProvider ebookManagerProvider,
     IReaderCacheService readerCacheService,
     IPageCalculator pageCalculator,
-    ISender sender) : IReaderService
+    ISender sender,
+    int saveProgressIntervalMs = 5000) : IReaderService
 {
     public bool IsReady { get; private set; }
     public bool IsCalculatingPages { get; private set; }
@@ -36,6 +37,9 @@ public class ReaderService(
     private Guid _bookId;
     private Guid _profileId;
     private BookProgress? _progress;
+    private Timer? _saveTimer;
+    private bool _isDirty;
+    private int _isSaving;
 
     // Tracks the in-flight page calculation so a new call can cancel the previous
     // one. Each calculation owns its CTS and disposes it in its own finally block;
@@ -62,6 +66,17 @@ public class ReaderService(
             return Result.Failure(getProgress.Error);
         }
         _progress = getProgress.Value;
+        // Debounced auto-save: a navigation marks the progress dirty and the timer
+        // persists it at most once per interval, so rapid page turns don't hit the
+        // database on every turn.
+        if(_saveTimer is not null) await _saveTimer.DisposeAsync();
+        _saveTimer = new Timer(timer =>
+        {
+            if (_isDirty && _isSaving == 0)
+            {
+                _ = SaveProgressAsync();
+            }
+        }, null, saveProgressIntervalMs, saveProgressIntervalMs);
 
         State.SetEbook(await LoadEbookAsync(book));
         return Result.Success();
@@ -154,7 +169,13 @@ public class ReaderService(
     {
         if(State is null) return;
         State.SetChapterAndPage(chapter, page);
+        MarkDirty();
         OnChapterChanged?.Invoke();
+    }
+    
+    private void MarkDirty()
+    {
+        _isDirty = true;
     }
     
     public void NavigateToInitialPage()
@@ -193,6 +214,7 @@ public class ReaderService(
         if (State.PageNumber < State.TotalPages)
         {
             State.SetChapterAndPage(State.ChapterNumber, State.PageNumber + 1);
+            MarkDirty();
             OnPageChanged?.Invoke();
             return;
         }
@@ -200,6 +222,7 @@ public class ReaderService(
         if(State.ChapterNumber == State.TotalChapters - 1) return;
             
         State.SetChapterAndPage(State.ChapterNumber + 1, 1);
+        MarkDirty();
         OnChapterChanged?.Invoke();
         OnTotalPagesChanged?.Invoke();
     }
@@ -210,6 +233,7 @@ public class ReaderService(
         if (State.PageNumber > 1)
         {
             State.SetChapterAndPage(State.ChapterNumber, State.PageNumber - 1);
+            MarkDirty();
             OnPageChanged?.Invoke();
             return;
         }
@@ -217,6 +241,7 @@ public class ReaderService(
         if(State.ChapterNumber == 0) return;
             
         State.SetChapterAndPage(State.ChapterNumber - 1, State.PagesPerChapter.ElementAtOrDefault(State.ChapterNumber - 1));
+        MarkDirty();
         OnChapterChanged?.Invoke();
         OnTotalPagesChanged?.Invoke();
     }
@@ -226,6 +251,7 @@ public class ReaderService(
         if (State is null) return;
         if (State.ChapterNumber >= State.TotalChapters - 1) return;
         State.SetChapterAndPage(State.ChapterNumber + 1, 1);
+        MarkDirty();
         OnChapterChanged?.Invoke();
     }
     
@@ -234,30 +260,43 @@ public class ReaderService(
         if (State is null) return;
         if (State.ChapterNumber <= 0) return;
         State.SetChapterAndPage(State.ChapterNumber - 1, 1);
+        MarkDirty();
         OnChapterChanged?.Invoke();
     }
     
     public async Task SaveProgressAsync()
     {
-        if (State is null || _progress is null || State.TotalPages == 0) return;
-        
-        _progress.Chapter = State.ChapterNumber;
-        _progress.ChapterProgress = (double)State.ChapterProgress;
-
-        if (_progress.EndDate is null)
+        var state = State;
+        var progress = _progress;
+        if (state is null || progress is null || state.TotalPages == 0) return;
+        // Only one save may be in flight; a concurrent call is dropped because the
+        // in-flight save already reflects the latest navigation.
+        if (Interlocked.Exchange(ref _isSaving, 1) == 1) return;
+        try
         {
-            _progress.Progress = State.ProgressAsPercentage;
-            _progress.ElapsedTime += State.GetElapsedReadingTime();
-            _progress.LastRead = DateTimeOffset.Now;
+            progress.Chapter = state.ChapterNumber;
+            progress.ChapterProgress = (double)state.ChapterProgress;
 
-            if (State.ChapterNumber == State.Ebook!.Content.Chapters.Count - 1 &&
-                State.PageNumber == State.TotalPages)
+            if (progress.EndDate is null)
             {
-                _progress.EndDate = DateTimeOffset.Now;
+                progress.Progress = state.ProgressAsPercentage;
+                progress.ElapsedTime += state.GetElapsedReadingTime();
+                progress.LastRead = DateTimeOffset.Now;
+
+                if (state.ChapterNumber == state.Ebook!.Content.Chapters.Count - 1 &&
+                    state.PageNumber == state.TotalPages)
+                {
+                    progress.EndDate = DateTimeOffset.Now;
+                }
             }
+
+            await sender.Send(new UpdateBookProgress.Command(progress));
+            _isDirty = false;
         }
-        
-        await sender.Send(new UpdateBookProgress.Command(_progress));
+        finally
+        {
+            Interlocked.Exchange(ref _isSaving, 0);
+        }
     }
     
     public void Dispose()
@@ -267,6 +306,10 @@ public class ReaderService(
         _bookId = Guid.Empty;
         _profileId = Guid.Empty;
         _progress = null;
+        // Waiting here also guarantees an in-flight save (whose state was already
+        // captured locally) completes before the service is torn down.
+        _saveTimer?.Dispose();
+        _saveTimer = null;
         _calcCts?.Cancel();
         readerSettingsService.Dispose();
         GC.SuppressFinalize(this);
