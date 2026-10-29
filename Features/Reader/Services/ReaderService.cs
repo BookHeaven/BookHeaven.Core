@@ -52,7 +52,7 @@ public class ReaderService(
     {
         _bookId = bookId;
         _profileId = profileId;
-        State = new();
+        State = new(timeProvider);
         await readerSettingsService.LoadSettings(profileId);
 
         var getBook = await sender.Send(new GetBook.Query { BookId = bookId });

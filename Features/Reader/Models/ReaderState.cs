@@ -2,8 +2,10 @@ using BookHeaven.EbookManager.Entities;
 
 namespace BookHeaven.Core.Features.Reader.Models;
 
-public sealed class ReaderState
+public sealed class ReaderState(TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     public Ebook? Ebook { get; private set; }
     public int ChapterNumber { get; private set; }
     public int PageNumber { get; private set; }
@@ -39,7 +41,7 @@ public sealed class ReaderState
     
     public void StartTimer()
     {
-        _entryTime = DateTimeOffset.UtcNow;
+        _entryTime = _timeProvider.GetUtcNow();
         _lastSavedElapsed = TimeSpan.Zero;
     }
     
@@ -47,14 +49,14 @@ public sealed class ReaderState
     {
         if(_isSuspended) return;
         _isSuspended = true;
-        _suspendStartTime = DateTimeOffset.UtcNow;
+        _suspendStartTime = _timeProvider.GetUtcNow();
     }
     
     public void ResumeTimer()
     {
         if(!_isSuspended) return;
         _isSuspended = false;
-        _totalSuspendedTime += DateTimeOffset.UtcNow - _suspendStartTime;
+        _totalSuspendedTime += _timeProvider.GetUtcNow() - _suspendStartTime;
     }
     
     /// <summary>
@@ -63,7 +65,7 @@ public sealed class ReaderState
     /// </summary>
     public TimeSpan GetElapsedReadingTime()
     {
-        var elapsed = DateTimeOffset.UtcNow - _entryTime - _totalSuspendedTime;
+        var elapsed = _timeProvider.GetUtcNow() - _entryTime - _totalSuspendedTime;
         var delta = elapsed - _lastSavedElapsed;
         _lastSavedElapsed = elapsed;
         return delta;
