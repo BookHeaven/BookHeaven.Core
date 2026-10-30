@@ -8,7 +8,7 @@ public static class BookProgressExtensions
     {
         public string ElapsedTimeFormatted()
         {
-            return $"{(int)progress.ElapsedTime.TotalHours} h {progress.ElapsedTime.Minutes:00} m";
+            return progress.ElapsedTime.ToDisplayFormat();
         }
 
         public void UpdateFrom(BookProgress updatedProgress)
