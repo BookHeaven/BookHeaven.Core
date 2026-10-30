@@ -10,6 +10,7 @@ public partial class DatabaseContext(DbContextOptions<DatabaseContext> options) 
     public DbSet<Series> Series { get; set; }
     public DbSet<Author> Authors { get; set; }
     public DbSet<BookProgress> BooksProgress { get; set; }
+    public DbSet<ReadingHistoryEntry> ReadingHistory { get; set; }
     public DbSet<Profile> Profiles { get; set; }
     public DbSet<ProfileSettings> ProfilesSettings { get; set; }
     public DbSet<Font> Fonts { get; set; }

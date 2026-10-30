@@ -15,7 +15,7 @@ namespace BookHeaven.Core.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
             modelBuilder.Entity("BookHeaven.Core.Entities.Author", b =>
                 {
@@ -332,6 +332,37 @@ namespace BookHeaven.Core.Migrations
                     b.ToTable("ProfilesSettings");
                 });
 
+            modelBuilder.Entity("BookHeaven.Core.Entities.ReadingHistoryEntry", b =>
+                {
+                    b.Property<Guid>("ReadingHistoryEntryId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("BookId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("DateFinished")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("DateStarted")
+                        .HasColumnType("TEXT");
+
+                    b.Property<TimeSpan>("ElapsedTime")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ReadingHistoryEntryId");
+
+                    b.HasIndex("BookId");
+
+                    b.HasIndex("ProfileId", "BookId", "DateStarted", "DateFinished")
+                        .IsUnique();
+
+                    b.ToTable("ReadingHistory");
+                });
+
             modelBuilder.Entity("BookHeaven.Core.Entities.Series", b =>
                 {
                     b.Property<Guid>("SeriesId")
@@ -461,6 +492,21 @@ namespace BookHeaven.Core.Migrations
                         .IsRequired();
 
                     b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("BookHeaven.Core.Entities.ReadingHistoryEntry", b =>
+                {
+                    b.HasOne("BookHeaven.Core.Entities.Book", null)
+                        .WithMany()
+                        .HasForeignKey("BookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("BookHeaven.Core.Entities.Profile", null)
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("BookTag", b =>
