@@ -1,7 +1,6 @@
 using BookHeaven.Core.Entities;
-using Microsoft.EntityFrameworkCore;
 
-namespace BookHeaven.Core.Features.Reader.Annotations;
+namespace BookHeaven.Core.Features.BookAnnotations;
 
 public static class SyncBookAnnotations
 {
@@ -22,9 +21,6 @@ public static class SyncBookAnnotations
             var existingAnnotations = await context.BookAnnotations
                 .Where(annotation => annotation.BookId == request.BookId && annotation.ProfileId == request.ProfileId)
                 .ToListAsync(cancellationToken);
-            var newAnnotations = request.Annotations
-                .Where(annotation => annotation.BookAnnotationId == Guid.Empty)
-                .ToList();
             var requestedById = request.Annotations
                 .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
                 .ToDictionary(annotation => annotation.BookAnnotationId);
@@ -42,12 +38,17 @@ public static class SyncBookAnnotations
                 existing.StartOffset = updated.StartOffset;
                 existing.EndOffset = updated.EndOffset;
                 existing.Text = updated.Text;
-                existing.Note = updated.Note;
+                existing.Note = BookAnnotation.NormalizeNote(updated.Note);
             }
 
+            var newAnnotations = request.Annotations
+                .Where(annotation => annotation.BookAnnotationId == Guid.Empty
+                                     || requestedById.ContainsKey(annotation.BookAnnotationId))
+                .ToList();
             var annotationsToAdd = newAnnotations.Select(annotation =>
                 new BookAnnotation
                 {
+                    BookAnnotationId = annotation.BookAnnotationId,
                     BookId = annotation.BookId,
                     ProfileId = annotation.ProfileId,
                     ChapterIndex = annotation.ChapterIndex,
@@ -55,7 +56,7 @@ public static class SyncBookAnnotations
                     StartOffset = annotation.StartOffset,
                     EndOffset = annotation.EndOffset,
                     Text = annotation.Text,
-                    Note = annotation.Note
+                    Note = BookAnnotation.NormalizeNote(annotation.Note)
                 }).ToList();
             context.BookAnnotations.AddRange(annotationsToAdd);
 

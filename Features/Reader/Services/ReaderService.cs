@@ -2,9 +2,9 @@
 using BookHeaven.Core.DOM.Services.Abstractions;
 using BookHeaven.Core.Entities;
 using BookHeaven.Core.Extensions;
+using BookHeaven.Core.Features.BookAnnotations;
 using BookHeaven.Core.Features.Books;
 using BookHeaven.Core.Features.BooksProgress;
-using BookHeaven.Core.Features.Reader.Annotations;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Extensions;
 using BookHeaven.Core.Features.Reader.Models;
@@ -311,7 +311,7 @@ public class ReaderService(
         }
     }
     
-    public async Task<Result> AddHighlightAsync(int startOffset, int endOffset, string text)
+    public async Task<Result> AddAnnotationAsync(int startOffset, int endOffset, string text)
     {
         if (State is null || endOffset <= startOffset)
         {
@@ -357,10 +357,10 @@ public class ReaderService(
                 notes.Count == 0 ? null : string.Join(Environment.NewLine + Environment.NewLine, notes)));
         }
 
-        return await SaveAnnotationsAsync(annotations);
+        return await SaveAnnotationChangesAsync(annotations);
     }
 
-    public async Task<Result> RemoveHighlightsAsync(int startOffset, int endOffset)
+    public async Task<Result> RemoveAnnotationsAsync(int startOffset, int endOffset)
     {
         if (State is null  || endOffset <= startOffset)
         {
@@ -375,63 +375,41 @@ public class ReaderService(
         if (!changed) return Result.Success();
 
         SubtractRange(annotations, State.ChapterNumber, startOffset, endOffset);
-        return await SaveAnnotationsAsync(annotations);
+        return await SaveAnnotationChangesAsync(annotations);
     }
 
-    public async Task<Result> SaveAnnotationNoteAsync(int startOffset, int endOffset, string text, string? note)
+    public async Task<Result> SaveAnnotationAsync(BookAnnotation annotation)
     {
-        if (State is null || endOffset <= startOffset)
-        {
-            return Result.Failure(new Error("The selected text is not available for annotation"));
-        }
+        annotation.BookId = _bookId;
+        annotation.ProfileId = _profileId;
+        annotation.Note = BookAnnotation.NormalizeNote(annotation.Note);
 
-        var normalizedNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
-        var annotations = _annotations.ToList();
-        var matching = annotations.FirstOrDefault(annotation =>
-            annotation.ChapterIndex == State.ChapterNumber
-            && annotation.StartOffset < endOffset
-            && annotation.EndOffset > startOffset);
-
-        if (matching is null)
+        var result = await sender.Send(new SaveBookAnnotation.Command(annotation));
+        if (result.IsFailure) return Result.Failure(result.Error);
+        
+        var annotationIndex = _annotations.FindIndex(
+            item => item.BookAnnotationId == annotation.BookAnnotationId);
+        if (annotationIndex < 0)
         {
-            if (normalizedNote is null) return Result.Success();
-            annotations.Add(CreateAnnotation(State.ChapterNumber, State.ChapterTitle, startOffset, endOffset, text, normalizedNote));
+            _annotations.Add(annotation);
         }
         else
         {
-            var index = annotations.IndexOf(matching);
-            annotations[index] = CopyAnnotation(matching, note: normalizedNote, replaceNote: true);
+            _annotations[annotationIndex] = annotation;
         }
 
-        return await SaveAnnotationsAsync(annotations);
-    }
-
-    public async Task<Result> UpdateAnnotationNoteAsync(Guid annotationId, string? note)
-    {
-        var index = _annotations.FindIndex(annotation => annotation.BookAnnotationId == annotationId);
-        if (index < 0)
-        {
-            return Result.Failure(new Error("The annotation could not be found"));
-        }
-
-        var normalizedNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
-        if (_annotations[index].Note == normalizedNote) return Result.Success();
-
-        var annotations = _annotations.ToList();
-        annotations[index] = CopyAnnotation(annotations[index], note: normalizedNote, replaceNote: true);
-        return await SaveAnnotationsAsync(annotations);
+        OnHighlightsChanged?.Invoke();
+        return Result.Success();
     }
 
     public async Task<Result> DeleteAnnotationAsync(Guid annotationId)
     {
-        var annotations = _annotations.ToList();
-        var removedCount = annotations.RemoveAll(annotation => annotation.BookAnnotationId == annotationId);
-        if (removedCount == 0)
-        {
-            return Result.Failure(new Error("The annotation could not be found"));
-        }
+        var result = await sender.Send(new DeleteBookAnnotation.Command(_bookId, _profileId, annotationId));
+        if (result.IsFailure) return Result.Failure(result.Error);
 
-        return await SaveAnnotationsAsync(annotations);
+        _annotations.RemoveAll(annotation => annotation.BookAnnotationId == annotationId);
+        OnHighlightsChanged?.Invoke();
+        return Result.Success();
     }
 
     public BookAnnotation? GetAnnotationForRange(int startOffset, int endOffset)
@@ -443,7 +421,7 @@ public class ReaderService(
             && annotation.EndOffset > startOffset);
     }
 
-    public bool HasHighlightsInRange(int startOffset, int endOffset)
+    public bool HasAnnotationsInRange(int startOffset, int endOffset)
     {
         if (State is null) return false;
 
@@ -473,15 +451,48 @@ public class ReaderService(
         return coveredEnd < endOffset;
     }
 
-    private async Task<Result> SaveAnnotationsAsync(List<BookAnnotation> annotations)
+    private async Task<Result> SaveAnnotationChangesAsync(List<BookAnnotation> annotations)
     {
-        var result = await sender.Send(new SyncBookAnnotations.Command(_bookId, _profileId, annotations));
+        var existingById = _annotations
+            .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
+            .ToDictionary(annotation => annotation.BookAnnotationId);
+        var requestedById = annotations
+            .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
+            .ToDictionary(annotation => annotation.BookAnnotationId);
+        var upserts = annotations
+            .Where(annotation => annotation.BookAnnotationId == Guid.Empty
+                                 || !existingById.TryGetValue(annotation.BookAnnotationId, out var existing)
+                                 || HasAnnotationChanged(existing, annotation))
+            .ToList();
+        var deletedAnnotationIds = _annotations
+            .Where(annotation => !requestedById.ContainsKey(annotation.BookAnnotationId))
+            .Select(annotation => annotation.BookAnnotationId)
+            .ToList();
+
+        if (upserts.Count == 0 && deletedAnnotationIds.Count == 0)
+        {
+            return Result.Success();
+        }
+
+        var result = await sender.Send(new ApplyBookAnnotationChanges.Command(
+            _bookId,
+            _profileId,
+            upserts,
+            deletedAnnotationIds));
         if (result.IsFailure) return Result.Failure(result.Error);
 
         _annotations = annotations;
         OnHighlightsChanged?.Invoke();
         return Result.Success();
     }
+
+    private static bool HasAnnotationChanged(BookAnnotation existing, BookAnnotation updated) =>
+        existing.ChapterIndex != updated.ChapterIndex
+        || existing.ChapterTitle != updated.ChapterTitle
+        || existing.StartOffset != updated.StartOffset
+        || existing.EndOffset != updated.EndOffset
+        || existing.Text != updated.Text
+        || existing.Note != updated.Note;
 
     private BookAnnotation CreateAnnotation(
         int chapterIndex,
@@ -516,6 +527,7 @@ public class ReaderService(
             BookId = source.BookId,
             ProfileId = source.ProfileId,
             ChapterIndex = source.ChapterIndex,
+            ChapterTitle = source.ChapterTitle,
             StartOffset = startOffset ?? source.StartOffset,
             EndOffset = endOffset ?? source.EndOffset,
             Text = text ?? source.Text,

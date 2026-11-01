@@ -27,13 +27,12 @@ public interface IReaderService : IDisposable
     void NextChapter();
     void PreviousChapter();
     Task SaveProgressAsync();
-    Task<Result> AddHighlightAsync(int startOffset, int endOffset, string text);
-    Task<Result> RemoveHighlightsAsync(int startOffset, int endOffset);
-    Task<Result> SaveAnnotationNoteAsync(int startOffset, int endOffset, string text, string? note);
-    Task<Result> UpdateAnnotationNoteAsync(Guid annotationId, string? note);
+    Task<Result> AddAnnotationAsync(int startOffset, int endOffset, string text);
+    Task<Result> RemoveAnnotationsAsync(int startOffset, int endOffset);
+    Task<Result> SaveAnnotationAsync(BookAnnotation annotation);
     Task<Result> DeleteAnnotationAsync(Guid annotationId);
     BookAnnotation? GetAnnotationForRange(int startOffset, int endOffset);
-    bool HasHighlightsInRange(int startOffset, int endOffset);
+    bool HasAnnotationsInRange(int startOffset, int endOffset);
     bool HasUnhighlightedInRange(int startOffset, int endOffset);
     IReadOnlyList<BookAnnotation> GetAnnotationsForCurrentChapter();
     IReadOnlyList<BookAnnotation> GetAllAnnotations();

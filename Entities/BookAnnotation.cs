@@ -6,6 +6,9 @@ namespace BookHeaven.Core.Entities;
 
 public class BookAnnotation : BaseEntity
 {
+    public static string? NormalizeNote(string? note) =>
+        string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+
     public Guid BookAnnotationId { get; set; }
     public Guid BookId { get; set; }
     public Guid ProfileId { get; set; }

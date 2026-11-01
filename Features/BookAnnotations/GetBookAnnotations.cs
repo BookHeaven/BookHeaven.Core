@@ -1,6 +1,6 @@
 using BookHeaven.Core.Entities;
 
-namespace BookHeaven.Core.Features.Reader.Annotations;
+namespace BookHeaven.Core.Features.BookAnnotations;
 
 public static class GetBookAnnotations
 {
