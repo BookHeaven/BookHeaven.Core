@@ -140,6 +140,53 @@ namespace BookHeaven.Core.Migrations
                     b.ToTable("Books");
                 });
 
+            modelBuilder.Entity("BookHeaven.Core.Entities.BookAnnotation", b =>
+                {
+                    b.Property<Guid>("BookAnnotationId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("BookId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ChapterIndex")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ChapterTitle")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("EndOffset")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StartOffset")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("BookAnnotationId");
+
+                    b.HasIndex("BookId");
+
+                    b.HasIndex("ProfileId", "BookId", "ChapterIndex", "StartOffset");
+
+                    b.ToTable("BookAnnotations");
+                });
+
             modelBuilder.Entity("BookHeaven.Core.Entities.BookProgress", b =>
                 {
                     b.Property<Guid>("BookProgressId")
@@ -462,6 +509,25 @@ namespace BookHeaven.Core.Migrations
                     b.Navigation("Author");
 
                     b.Navigation("Series");
+                });
+
+            modelBuilder.Entity("BookHeaven.Core.Entities.BookAnnotation", b =>
+                {
+                    b.HasOne("BookHeaven.Core.Entities.Book", "Book")
+                        .WithMany()
+                        .HasForeignKey("BookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("BookHeaven.Core.Entities.Profile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Book");
+
+                    b.Navigation("Profile");
                 });
 
             modelBuilder.Entity("BookHeaven.Core.Entities.BookProgress", b =>
