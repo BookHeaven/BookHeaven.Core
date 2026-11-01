@@ -22,7 +22,12 @@ public static class SyncBookAnnotations
             var existingAnnotations = await context.BookAnnotations
                 .Where(annotation => annotation.BookId == request.BookId && annotation.ProfileId == request.ProfileId)
                 .ToListAsync(cancellationToken);
-            var requestedById = request.Annotations.ToDictionary(annotation => annotation.BookAnnotationId);
+            var newAnnotations = request.Annotations
+                .Where(annotation => annotation.BookAnnotationId == Guid.Empty)
+                .ToList();
+            var requestedById = request.Annotations
+                .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
+                .ToDictionary(annotation => annotation.BookAnnotationId);
 
             foreach (var existing in existingAnnotations)
             {
@@ -40,11 +45,9 @@ public static class SyncBookAnnotations
                 existing.Note = updated.Note;
             }
 
-            foreach (var annotation in requestedById.Values)
-            {
-                context.BookAnnotations.Add(new BookAnnotation
+            var annotationsToAdd = newAnnotations.Select(annotation =>
+                new BookAnnotation
                 {
-                    BookAnnotationId = annotation.BookAnnotationId,
                     BookId = annotation.BookId,
                     ProfileId = annotation.ProfileId,
                     ChapterIndex = annotation.ChapterIndex,
@@ -53,8 +56,8 @@ public static class SyncBookAnnotations
                     EndOffset = annotation.EndOffset,
                     Text = annotation.Text,
                     Note = annotation.Note
-                });
-            }
+                }).ToList();
+            context.BookAnnotations.AddRange(annotationsToAdd);
 
             try
             {
@@ -63,6 +66,11 @@ public static class SyncBookAnnotations
             catch (DbUpdateException)
             {
                 return Result.Failure(new Error("An error occurred while saving the book annotations"));
+            }
+
+            for (var index = 0; index < newAnnotations.Count; index++)
+            {
+                newAnnotations[index].BookAnnotationId = annotationsToAdd[index].BookAnnotationId;
             }
 
             return Result.Success();
