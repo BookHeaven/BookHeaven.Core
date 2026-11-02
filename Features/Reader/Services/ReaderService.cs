@@ -382,7 +382,7 @@ public class ReaderService(
     {
         annotation.BookId = _bookId;
         annotation.ProfileId = _profileId;
-        annotation.Note = BookAnnotation.NormalizeNote(annotation.Note);
+        annotation.NormalizeNote();
 
         var result = await sender.Send(new SaveBookAnnotation.Command(annotation));
         if (result.IsFailure) return Result.Failure(result.Error);
@@ -462,7 +462,7 @@ public class ReaderService(
         var upserts = annotations
             .Where(annotation => annotation.BookAnnotationId == Guid.Empty
                                  || !existingById.TryGetValue(annotation.BookAnnotationId, out var existing)
-                                 || BookAnnotation.HasContentChanged(existing, annotation))
+                                 || existing.HasContentChanged(annotation))
             .ToList();
         var deletedAnnotationIds = _annotations
             .Where(annotation => !requestedById.ContainsKey(annotation.BookAnnotationId))

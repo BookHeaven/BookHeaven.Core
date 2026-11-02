@@ -1,4 +1,5 @@
 using BookHeaven.Core.Entities;
+using BookHeaven.Core.Extensions;
 
 namespace BookHeaven.Core.Features.BookAnnotations;
 
@@ -34,7 +35,7 @@ public static class SyncBookAnnotations
                 continue;
             }
 
-            if (BookAnnotation.HasContentChanged(local, server) && server.UpdatedAt >= local.UpdatedAt)
+            if (local.HasContentChanged(server) && server.UpdatedAt >= local.UpdatedAt)
             {
                 upserts.Add(server);
             }
@@ -79,7 +80,7 @@ public static class SyncBookAnnotations
             foreach (var existing in existingAnnotations)
             {
                 if (incomingById.TryGetValue(existing.BookAnnotationId, out var incoming)
-                    && BookAnnotation.HasContentChanged(existing, incoming)
+                    && existing.HasContentChanged(incoming)
                     && incoming.UpdatedAt > existing.UpdatedAt)
                 {
                     existing.ChapterIndex = incoming.ChapterIndex;
@@ -87,7 +88,7 @@ public static class SyncBookAnnotations
                     existing.StartOffset = incoming.StartOffset;
                     existing.EndOffset = incoming.EndOffset;
                     existing.Text = incoming.Text;
-                    existing.Note = BookAnnotation.NormalizeNote(incoming.Note);
+                    existing.Note = incoming.NormalizedNote();
                 }
             }
 
@@ -104,7 +105,7 @@ public static class SyncBookAnnotations
                     StartOffset = annotation.StartOffset,
                     EndOffset = annotation.EndOffset,
                     Text = annotation.Text,
-                    Note = BookAnnotation.NormalizeNote(annotation.Note)
+                    Note = annotation.NormalizedNote()
                 }).ToList();
             context.BookAnnotations.AddRange(annotationsToAdd);
 

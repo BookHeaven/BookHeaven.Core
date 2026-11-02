@@ -1,4 +1,5 @@
 using BookHeaven.Core.Entities;
+using BookHeaven.Core.Extensions;
 
 namespace BookHeaven.Core.Features.BookAnnotations;
 
@@ -11,7 +12,7 @@ public static class SaveBookAnnotation
     {
         public async ValueTask<Result<Guid>> Handle(Command request, CancellationToken cancellationToken)
         {
-            request.Annotation.Note = BookAnnotation.NormalizeNote(request.Annotation.Note);
+            request.Annotation.NormalizeNote();
             await using var context = await dbContextFactory.CreateDbContextAsync(cancellationToken);
             var existing =
                 await context.BookAnnotations.FirstOrDefaultAsync(

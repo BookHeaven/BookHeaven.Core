@@ -6,17 +6,6 @@ namespace BookHeaven.Core.Entities;
 
 public class BookAnnotation : BaseEntity
 {
-    public static string? NormalizeNote(string? note) =>
-        string.IsNullOrWhiteSpace(note) ? null : note.Trim();
-
-    public static bool HasContentChanged(BookAnnotation first, BookAnnotation second) =>
-        first.ChapterIndex != second.ChapterIndex
-        || first.ChapterTitle != second.ChapterTitle
-        || first.StartOffset != second.StartOffset
-        || first.EndOffset != second.EndOffset
-        || first.Text != second.Text
-        || first.Note != second.Note;
-
     public Guid BookAnnotationId { get; set; }
     public Guid BookId { get; set; }
     public Guid ProfileId { get; set; }

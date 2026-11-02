@@ -1,4 +1,5 @@
 using BookHeaven.Core.Entities;
+using BookHeaven.Core.Extensions;
 
 namespace BookHeaven.Core.Features.BookAnnotations;
 
@@ -44,7 +45,7 @@ public static class ApplyBookAnnotationChanges
 
             foreach (var annotation in request.Upserts)
             {
-                annotation.Note = BookAnnotation.NormalizeNote(annotation.Note);
+                annotation.NormalizeNote();
                 if (annotation.BookAnnotationId != Guid.Empty
                     && existingAnnotations.TryGetValue(annotation.BookAnnotationId, out var existing))
                 {
