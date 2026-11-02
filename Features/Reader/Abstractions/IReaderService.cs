@@ -14,7 +14,6 @@ public interface IReaderService : IDisposable
     event Action? OnPageChanged;
     event Action? OnChapterChanged;
     event Action? OnTotalPagesChanged;
-    event Action? OnHighlightsChanged;
     Task<Result> InitializeAsync(Guid bookId, Guid profileId);
     Task LoadCachedPagesAsync(ReaderContext context);
     void PauseTimer();
@@ -27,15 +26,6 @@ public interface IReaderService : IDisposable
     void NextChapter();
     void PreviousChapter();
     Task SaveProgressAsync();
-    Task<Result> AddAnnotationAsync(int startOffset, int endOffset, string text);
-    Task<Result> RemoveAnnotationsAsync(int startOffset, int endOffset);
-    Task<Result> SaveAnnotationAsync(BookAnnotation annotation);
-    Task<Result> DeleteAnnotationAsync(Guid annotationId);
-    BookAnnotation? GetAnnotationForRange(int startOffset, int endOffset);
-    bool HasAnnotationsInRange(int startOffset, int endOffset);
-    bool HasUnhighlightedInRange(int startOffset, int endOffset);
-    IReadOnlyList<BookAnnotation> GetAnnotationsForCurrentChapter();
-    IReadOnlyList<BookAnnotation> GetAllAnnotations();
     bool NavigateToAnnotation(BookAnnotation annotation);
     void NavigateToPage(int pageNumber);
 }

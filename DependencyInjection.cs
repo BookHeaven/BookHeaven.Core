@@ -52,6 +52,7 @@ public static class DependencyInjection
         services.AddSingleton<IReaderCacheService, ReaderCacheService>();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IReaderSettingsService, ReaderSettingsService>();
+        services.AddScoped<IReaderAnnotationService, ReaderAnnotationService>();
         services.AddScoped<IReaderService, ReaderService>();
         services.AddScoped<BookManager>();
         

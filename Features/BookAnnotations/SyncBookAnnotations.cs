@@ -83,11 +83,7 @@ public static class SyncBookAnnotations
                     && existing.HasContentChanged(incoming)
                     && incoming.UpdatedAt > existing.UpdatedAt)
                 {
-                    existing.ChapterIndex = incoming.ChapterIndex;
-                    existing.ChapterTitle = incoming.ChapterTitle;
-                    existing.StartOffset = incoming.StartOffset;
-                    existing.EndOffset = incoming.EndOffset;
-                    existing.Text = incoming.Text;
+                    existing.CopyContentFrom(incoming);
                     existing.Note = incoming.NormalizedNote();
                 }
             }
@@ -95,18 +91,8 @@ public static class SyncBookAnnotations
             var annotationsToAdd = request.Annotations
                 .Where(annotation => annotation.BookAnnotationId == Guid.Empty
                                      || !existingIds.Contains(annotation.BookAnnotationId))
-                .Select(annotation => new BookAnnotation
-                {
-                    BookAnnotationId = annotation.BookAnnotationId,
-                    BookId = annotation.BookId,
-                    ProfileId = annotation.ProfileId,
-                    ChapterIndex = annotation.ChapterIndex,
-                    ChapterTitle = annotation.ChapterTitle,
-                    StartOffset = annotation.StartOffset,
-                    EndOffset = annotation.EndOffset,
-                    Text = annotation.Text,
-                    Note = annotation.NormalizedNote()
-                }).ToList();
+                .Select(annotation => annotation.WithNote(annotation.NormalizedNote()))
+                .ToList();
             context.BookAnnotations.AddRange(annotationsToAdd);
 
             try

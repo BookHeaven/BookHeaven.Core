@@ -49,12 +49,7 @@ public static class ApplyBookAnnotationChanges
                 if (annotation.BookAnnotationId != Guid.Empty
                     && existingAnnotations.TryGetValue(annotation.BookAnnotationId, out var existing))
                 {
-                    existing.ChapterIndex = annotation.ChapterIndex;
-                    existing.ChapterTitle = annotation.ChapterTitle;
-                    existing.StartOffset = annotation.StartOffset;
-                    existing.EndOffset = annotation.EndOffset;
-                    existing.Text = annotation.Text;
-                    existing.Note = annotation.Note;
+                    existing.CopyContentFrom(annotation);
                 }
                 else
                 {

@@ -24,12 +24,7 @@ public static class SaveBookAnnotation
             }
             else
             {
-                existing.ChapterIndex = request.Annotation.ChapterIndex;
-                existing.ChapterTitle = request.Annotation.ChapterTitle;
-                existing.StartOffset = request.Annotation.StartOffset;
-                existing.EndOffset = request.Annotation.EndOffset;
-                existing.Text = request.Annotation.Text;
-                existing.Note = request.Annotation.Note;
+                existing.CopyContentFrom(request.Annotation);
             }
             try
             {

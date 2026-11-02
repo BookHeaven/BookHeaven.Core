@@ -1,0 +1,22 @@
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Features.Reader.Models;
+using BookHeaven.Core.Shared;
+
+namespace BookHeaven.Core.Features.Reader.Abstractions;
+
+public interface IReaderAnnotationService
+{
+    event Action? OnHighlightsChanged;
+
+    Task<Result> InitializeAsync(Guid bookId, Guid profileId, ReaderState state);
+    Task<Result> AddAnnotationAsync(int startOffset, int endOffset, string text);
+    Task<Result> RemoveAnnotationsAsync(int startOffset, int endOffset);
+    Task<Result> SaveAnnotationAsync(BookAnnotation annotation);
+    Task<Result> DeleteAnnotationAsync(Guid annotationId);
+    BookAnnotation? GetAnnotationForRange(int startOffset, int endOffset);
+    bool HasAnnotationsInRange(int startOffset, int endOffset);
+    bool HasUnhighlightedInRange(int startOffset, int endOffset);
+    IReadOnlyList<BookAnnotation> GetAnnotationsForCurrentChapter();
+    IReadOnlyList<BookAnnotation> GetAllAnnotations();
+    void Clear();
+}

@@ -1,0 +1,281 @@
+using BookHeaven.Core.Entities;
+using BookHeaven.Core.Extensions;
+using BookHeaven.Core.Features.BookAnnotations;
+using BookHeaven.Core.Features.Reader.Abstractions;
+using BookHeaven.Core.Features.Reader.Models;
+using BookHeaven.Core.Shared;
+using Mediator;
+
+namespace BookHeaven.Core.Features.Reader.Services;
+
+public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
+{
+    public event Action? OnHighlightsChanged;
+
+    private ReaderState? _state;
+    private List<BookAnnotation> _annotations = [];
+    private Guid _bookId;
+    private Guid _profileId;
+
+    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId, ReaderState state)
+    {
+        _bookId = bookId;
+        _profileId = profileId;
+        _state = state;
+
+        var getAnnotations = await sender.Send(new GetBookAnnotations.Query(bookId, profileId));
+        if (getAnnotations.IsFailure)
+        {
+            return Result.Failure(getAnnotations.Error);
+        }
+
+        _annotations = getAnnotations.Value;
+        return Result.Success();
+    }
+
+    public async Task<Result> AddAnnotationAsync(int startOffset, int endOffset, string text)
+    {
+        var state = _state;
+        if (state is null || endOffset <= startOffset)
+        {
+            return Result.Success();
+        }
+
+        var annotations = _annotations.ToList();
+        var overlapping = annotations
+            .Where(annotation => annotation.ChapterIndex == state.ChapterNumber
+                                 && annotation.Overlaps(startOffset, endOffset))
+            .ToList();
+
+        if (overlapping.Count == 0)
+        {
+            annotations.Add(CreateAnnotation(state.ChapterNumber, state.ChapterTitle, startOffset, endOffset, text));
+        }
+        else
+        {
+            var mergedStart = Math.Min(startOffset, overlapping.Min(annotation => annotation.StartOffset));
+            var mergedEnd = Math.Max(endOffset, overlapping.Max(annotation => annotation.EndOffset));
+            var mergedText = new char[mergedEnd - mergedStart];
+            foreach (var annotation in overlapping)
+            {
+                var index = annotation.StartOffset - mergedStart;
+                annotation.Text.CopyTo(0, mergedText, index, Math.Min(annotation.Text.Length, mergedText.Length - index));
+            }
+
+            var newIndex = startOffset - mergedStart;
+            text.CopyTo(0, mergedText, newIndex, Math.Min(text.Length, mergedText.Length - newIndex));
+            var notes = overlapping
+                .Select(annotation => annotation.Note)
+                .Where(note => !string.IsNullOrWhiteSpace(note))
+                .Distinct()
+                .ToList();
+            annotations.RemoveAll(annotation => overlapping.Contains(annotation));
+            annotations.Add(CreateAnnotation(
+                state.ChapterNumber,
+                state.ChapterTitle,
+                mergedStart,
+                mergedEnd,
+                new string(mergedText),
+                notes.Count == 0 ? null : string.Join(Environment.NewLine + Environment.NewLine, notes)));
+        }
+
+        return await SaveAnnotationChangesAsync(annotations);
+    }
+
+    public async Task<Result> RemoveAnnotationsAsync(int startOffset, int endOffset)
+    {
+        var state = _state;
+        if (state is null || endOffset <= startOffset)
+        {
+            return Result.Success();
+        }
+
+        var annotations = _annotations.ToList();
+        var changed = annotations.Any(annotation =>
+            annotation.ChapterIndex == state.ChapterNumber
+            && annotation.Overlaps(startOffset, endOffset));
+        if (!changed) return Result.Success();
+
+        SubtractRange(annotations, state.ChapterNumber, startOffset, endOffset);
+        return await SaveAnnotationChangesAsync(annotations);
+    }
+
+    public async Task<Result> SaveAnnotationAsync(BookAnnotation annotation)
+    {
+        annotation.BookId = _bookId;
+        annotation.ProfileId = _profileId;
+        annotation.NormalizeNote();
+
+        var result = await sender.Send(new SaveBookAnnotation.Command(annotation));
+        if (result.IsFailure) return Result.Failure(result.Error);
+
+        var annotationIndex = _annotations.FindIndex(item => item.BookAnnotationId == annotation.BookAnnotationId);
+        if (annotationIndex < 0)
+        {
+            _annotations.Add(annotation);
+        }
+        else
+        {
+            _annotations[annotationIndex] = annotation;
+        }
+
+        OnHighlightsChanged?.Invoke();
+        return Result.Success();
+    }
+
+    public async Task<Result> DeleteAnnotationAsync(Guid annotationId)
+    {
+        var result = await sender.Send(new DeleteBookAnnotation.Command(_bookId, _profileId, annotationId));
+        if (result.IsFailure) return Result.Failure(result.Error);
+
+        _annotations.RemoveAll(annotation => annotation.BookAnnotationId == annotationId);
+        OnHighlightsChanged?.Invoke();
+        return Result.Success();
+    }
+
+    public BookAnnotation? GetAnnotationForRange(int startOffset, int endOffset)
+    {
+        var state = _state;
+        if (state is null) return null;
+        return _annotations.FirstOrDefault(annotation =>
+            annotation.ChapterIndex == state.ChapterNumber
+            && annotation.Overlaps(startOffset, endOffset));
+    }
+
+    public bool HasAnnotationsInRange(int startOffset, int endOffset)
+    {
+        var state = _state;
+        if (state is null) return false;
+
+        return _annotations.Any(annotation =>
+            annotation.ChapterIndex == state.ChapterNumber
+            && annotation.Overlaps(startOffset, endOffset));
+    }
+
+    public bool HasUnhighlightedInRange(int startOffset, int endOffset)
+    {
+        var state = _state;
+        if (state is null || endOffset <= startOffset) return false;
+
+        // Highlights never overlap, so a single sweep tells us whether the
+        // range is fully covered or has a gap.
+        var coveredEnd = startOffset;
+        foreach (var annotation in _annotations
+            .Where(annotation => annotation.ChapterIndex == state.ChapterNumber
+                                 && annotation.Overlaps(startOffset, endOffset))
+            .OrderBy(annotation => annotation.StartOffset))
+        {
+            if (annotation.StartOffset > coveredEnd) return true;
+            coveredEnd = Math.Max(coveredEnd, annotation.EndOffset);
+            if (coveredEnd >= endOffset) return false;
+        }
+        return coveredEnd < endOffset;
+    }
+
+    public IReadOnlyList<BookAnnotation> GetAnnotationsForCurrentChapter()
+    {
+        var state = _state;
+        return state is null ? [] : _annotations.Where(annotation => annotation.ChapterIndex == state.ChapterNumber).ToList();
+    }
+
+    public IReadOnlyList<BookAnnotation> GetAllAnnotations() =>
+        _annotations.OrderBy(annotation => annotation.ChapterIndex)
+            .ThenBy(annotation => annotation.StartOffset)
+            .ToList();
+
+    public void Clear()
+    {
+        _state = null;
+        _bookId = Guid.Empty;
+        _profileId = Guid.Empty;
+        _annotations = [];
+    }
+
+    private async Task<Result> SaveAnnotationChangesAsync(List<BookAnnotation> annotations)
+    {
+        var existingById = _annotations
+            .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
+            .ToDictionary(annotation => annotation.BookAnnotationId);
+        var requestedById = annotations
+            .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
+            .ToDictionary(annotation => annotation.BookAnnotationId);
+        var upserts = annotations
+            .Where(annotation => annotation.BookAnnotationId == Guid.Empty
+                                 || !existingById.TryGetValue(annotation.BookAnnotationId, out var existing)
+                                 || existing.HasContentChanged(annotation))
+            .ToList();
+        var deletedAnnotationIds = _annotations
+            .Where(annotation => !requestedById.ContainsKey(annotation.BookAnnotationId))
+            .Select(annotation => annotation.BookAnnotationId)
+            .ToList();
+
+        if (upserts.Count == 0 && deletedAnnotationIds.Count == 0)
+        {
+            return Result.Success();
+        }
+
+        var result = await sender.Send(new ApplyBookAnnotationChanges.Command(
+            _bookId,
+            _profileId,
+            upserts,
+            deletedAnnotationIds));
+        if (result.IsFailure) return Result.Failure(result.Error);
+
+        _annotations = annotations;
+        OnHighlightsChanged?.Invoke();
+        return Result.Success();
+    }
+
+    private BookAnnotation CreateAnnotation(
+        int chapterIndex,
+        string chapterTitle,
+        int startOffset,
+        int endOffset,
+        string text,
+        string? note = null) =>
+        new()
+        {
+            BookId = _bookId,
+            ProfileId = _profileId,
+            ChapterIndex = chapterIndex,
+            ChapterTitle = chapterTitle,
+            StartOffset = startOffset,
+            EndOffset = endOffset,
+            Text = text,
+            Note = note
+        };
+
+    // Removes the selected range from the affected annotations, keeping their non-overlapping remainders.
+    private static void SubtractRange(List<BookAnnotation> annotations, int chapterIndex, int startOffset, int endOffset)
+    {
+        var overlapping = annotations
+            .Where(annotation => annotation.ChapterIndex == chapterIndex
+                                && annotation.Overlaps(startOffset, endOffset))
+            .ToList();
+
+        foreach (var annotation in overlapping)
+        {
+            annotations.Remove(annotation);
+            var noteAssigned = false;
+            if (annotation.StartOffset < startOffset)
+            {
+                annotations.Add(annotation.WithRange(
+                    endOffset: startOffset,
+                    text: annotation.Text[..Math.Min(startOffset - annotation.StartOffset, annotation.Text.Length)]));
+                noteAssigned = true;
+            }
+            if (annotation.EndOffset > endOffset)
+            {
+                var remainder = annotation.WithRange(
+                    startOffset: endOffset,
+                    text: annotation.Text[Math.Min(endOffset - annotation.StartOffset, annotation.Text.Length)..]);
+                if (noteAssigned)
+                {
+                    remainder.Note = null;
+                    remainder.BookAnnotationId = Guid.Empty;
+                }
+                annotations.Add(remainder);
+            }
+        }
+    }
+}
