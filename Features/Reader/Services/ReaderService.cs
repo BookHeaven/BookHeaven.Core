@@ -462,7 +462,7 @@ public class ReaderService(
         var upserts = annotations
             .Where(annotation => annotation.BookAnnotationId == Guid.Empty
                                  || !existingById.TryGetValue(annotation.BookAnnotationId, out var existing)
-                                 || HasAnnotationChanged(existing, annotation))
+                                 || BookAnnotation.HasContentChanged(existing, annotation))
             .ToList();
         var deletedAnnotationIds = _annotations
             .Where(annotation => !requestedById.ContainsKey(annotation.BookAnnotationId))
@@ -485,14 +485,6 @@ public class ReaderService(
         OnHighlightsChanged?.Invoke();
         return Result.Success();
     }
-
-    private static bool HasAnnotationChanged(BookAnnotation existing, BookAnnotation updated) =>
-        existing.ChapterIndex != updated.ChapterIndex
-        || existing.ChapterTitle != updated.ChapterTitle
-        || existing.StartOffset != updated.StartOffset
-        || existing.EndOffset != updated.EndOffset
-        || existing.Text != updated.Text
-        || existing.Note != updated.Note;
 
     private BookAnnotation CreateAnnotation(
         int chapterIndex,
