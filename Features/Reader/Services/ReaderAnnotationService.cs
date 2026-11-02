@@ -2,7 +2,6 @@ using BookHeaven.Core.Entities;
 using BookHeaven.Core.Extensions;
 using BookHeaven.Core.Features.BookAnnotations;
 using BookHeaven.Core.Features.Reader.Abstractions;
-using BookHeaven.Core.Features.Reader.Models;
 using BookHeaven.Core.Shared;
 using Mediator;
 
@@ -12,16 +11,18 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
 {
     public event Action? OnHighlightsChanged;
 
-    private ReaderState? _state;
+    private bool _isInitialized;
+    private int _chapterIndex;
+    private string _chapterTitle = string.Empty;
     private List<BookAnnotation> _annotations = [];
     private Guid _bookId;
     private Guid _profileId;
 
-    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId, ReaderState state)
+    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
     {
         _bookId = bookId;
         _profileId = profileId;
-        _state = state;
+        _isInitialized = true;
 
         var getAnnotations = await sender.Send(new GetBookAnnotations.Query(bookId, profileId));
         if (getAnnotations.IsFailure)
@@ -33,23 +34,28 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
         return Result.Success();
     }
 
+    public void SetChapter(int chapterIndex, string chapterTitle)
+    {
+        _chapterIndex = chapterIndex;
+        _chapterTitle = chapterTitle;
+    }
+
     public async Task<Result> AddAnnotationAsync(int startOffset, int endOffset, string text)
     {
-        var state = _state;
-        if (state is null || endOffset <= startOffset)
+        if (!_isInitialized || endOffset <= startOffset)
         {
             return Result.Success();
         }
 
         var annotations = _annotations.ToList();
         var overlapping = annotations
-            .Where(annotation => annotation.ChapterIndex == state.ChapterNumber
+            .Where(annotation => annotation.ChapterIndex == _chapterIndex
                                  && annotation.Overlaps(startOffset, endOffset))
             .ToList();
 
         if (overlapping.Count == 0)
         {
-            annotations.Add(CreateAnnotation(state.ChapterNumber, state.ChapterTitle, startOffset, endOffset, text));
+            annotations.Add(CreateAnnotation(_chapterIndex, _chapterTitle, startOffset, endOffset, text));
         }
         else
         {
@@ -71,8 +77,8 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
                 .ToList();
             annotations.RemoveAll(annotation => overlapping.Contains(annotation));
             annotations.Add(CreateAnnotation(
-                state.ChapterNumber,
-                state.ChapterTitle,
+                _chapterIndex,
+                _chapterTitle,
                 mergedStart,
                 mergedEnd,
                 new string(mergedText),
@@ -84,19 +90,18 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
 
     public async Task<Result> RemoveAnnotationsAsync(int startOffset, int endOffset)
     {
-        var state = _state;
-        if (state is null || endOffset <= startOffset)
+        if (!_isInitialized || endOffset <= startOffset)
         {
             return Result.Success();
         }
 
         var annotations = _annotations.ToList();
         var changed = annotations.Any(annotation =>
-            annotation.ChapterIndex == state.ChapterNumber
+            annotation.ChapterIndex == _chapterIndex
             && annotation.Overlaps(startOffset, endOffset));
         if (!changed) return Result.Success();
 
-        SubtractRange(annotations, state.ChapterNumber, startOffset, endOffset);
+        SubtractRange(annotations, _chapterIndex, startOffset, endOffset);
         return await SaveAnnotationChangesAsync(annotations);
     }
 
@@ -135,33 +140,30 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
 
     public BookAnnotation? GetAnnotationForRange(int startOffset, int endOffset)
     {
-        var state = _state;
-        if (state is null) return null;
+        if (!_isInitialized) return null;
         return _annotations.FirstOrDefault(annotation =>
-            annotation.ChapterIndex == state.ChapterNumber
+            annotation.ChapterIndex == _chapterIndex
             && annotation.Overlaps(startOffset, endOffset));
     }
 
     public bool HasAnnotationsInRange(int startOffset, int endOffset)
     {
-        var state = _state;
-        if (state is null) return false;
+        if (!_isInitialized) return false;
 
         return _annotations.Any(annotation =>
-            annotation.ChapterIndex == state.ChapterNumber
+            annotation.ChapterIndex == _chapterIndex
             && annotation.Overlaps(startOffset, endOffset));
     }
 
     public bool HasUnhighlightedInRange(int startOffset, int endOffset)
     {
-        var state = _state;
-        if (state is null || endOffset <= startOffset) return false;
+        if (!_isInitialized || endOffset <= startOffset) return false;
 
         // Highlights never overlap, so a single sweep tells us whether the
         // range is fully covered or has a gap.
         var coveredEnd = startOffset;
         foreach (var annotation in _annotations
-            .Where(annotation => annotation.ChapterIndex == state.ChapterNumber
+            .Where(annotation => annotation.ChapterIndex == _chapterIndex
                                  && annotation.Overlaps(startOffset, endOffset))
             .OrderBy(annotation => annotation.StartOffset))
         {
@@ -174,8 +176,7 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
 
     public IReadOnlyList<BookAnnotation> GetAnnotationsForCurrentChapter()
     {
-        var state = _state;
-        return state is null ? [] : _annotations.Where(annotation => annotation.ChapterIndex == state.ChapterNumber).ToList();
+        return _isInitialized ? _annotations.Where(annotation => annotation.ChapterIndex == _chapterIndex).ToList() : [];
     }
 
     public IReadOnlyList<BookAnnotation> GetAllAnnotations() =>
@@ -185,7 +186,9 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
 
     public void Clear()
     {
-        _state = null;
+        _isInitialized = false;
+        _chapterIndex = 0;
+        _chapterTitle = string.Empty;
         _bookId = Guid.Empty;
         _profileId = Guid.Empty;
         _annotations = [];

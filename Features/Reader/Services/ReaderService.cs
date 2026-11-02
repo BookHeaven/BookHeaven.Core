@@ -69,7 +69,7 @@ public class ReaderService(
         }
         _progress = getProgress.Value;
 
-        var getAnnotations = await annotationService.InitializeAsync(bookId, profileId, State);
+        var getAnnotations = await annotationService.InitializeAsync(bookId, profileId);
         if (getAnnotations.IsFailure)
         {
             return Result.Failure(getAnnotations.Error);
@@ -177,7 +177,13 @@ public class ReaderService(
     private void NavigateTo(int page, int chapter)
     {
         if(State is null) return;
-        State.SetChapterAndPage(chapter, page);
+        ChangeChapter(chapter, page);
+    }
+
+    private void ChangeChapter(int chapter, int page)
+    {
+        State!.SetChapterAndPage(chapter, page);
+        annotationService.SetChapter(chapter, State.ChapterTitle);
         MarkDirty();
         OnChapterChanged?.Invoke();
     }
@@ -230,9 +236,7 @@ public class ReaderService(
 
         if(State.ChapterNumber == State.TotalChapters - 1) return;
 
-        State.SetChapterAndPage(State.ChapterNumber + 1, 1);
-        MarkDirty();
-        OnChapterChanged?.Invoke();
+        ChangeChapter(State.ChapterNumber + 1, 1);
         OnTotalPagesChanged?.Invoke();
     }
 
@@ -249,9 +253,7 @@ public class ReaderService(
 
         if(State.ChapterNumber == 0) return;
 
-        State.SetChapterAndPage(State.ChapterNumber - 1, State.PagesPerChapter.ElementAtOrDefault(State.ChapterNumber - 1));
-        MarkDirty();
-        OnChapterChanged?.Invoke();
+        ChangeChapter(State.ChapterNumber - 1, State.PagesPerChapter.ElementAtOrDefault(State.ChapterNumber - 1));
         OnTotalPagesChanged?.Invoke();
     }
 
@@ -259,18 +261,14 @@ public class ReaderService(
     {
         if (State is null) return;
         if (State.ChapterNumber >= State.TotalChapters - 1) return;
-        State.SetChapterAndPage(State.ChapterNumber + 1, 1);
-        MarkDirty();
-        OnChapterChanged?.Invoke();
+        ChangeChapter(State.ChapterNumber + 1, 1);
     }
 
     public void PreviousChapter()
     {
         if (State is null) return;
         if (State.ChapterNumber <= 0) return;
-        State.SetChapterAndPage(State.ChapterNumber - 1, 1);
-        MarkDirty();
-        OnChapterChanged?.Invoke();
+        ChangeChapter(State.ChapterNumber - 1, 1);
     }
 
     public async Task SaveProgressAsync()
@@ -323,10 +321,16 @@ public class ReaderService(
         if (targetChapterIndex < 0 || targetChapterIndex >= chapters.Count) return false;
 
         var chapterChanged = targetChapterIndex != State.ChapterNumber;
-        State.SetChapterAndPage(targetChapterIndex, 1);
-        MarkDirty();
-        if (chapterChanged) OnChapterChanged?.Invoke();
-        else OnPageChanged?.Invoke();
+        if (chapterChanged)
+        {
+            ChangeChapter(targetChapterIndex, 1);
+        }
+        else
+        {
+            State.SetChapterAndPage(targetChapterIndex, 1);
+            MarkDirty();
+            OnPageChanged?.Invoke();
+        }
         return true;
     }
 

@@ -1,5 +1,4 @@
 using BookHeaven.Core.Entities;
-using BookHeaven.Core.Features.Reader.Models;
 using BookHeaven.Core.Shared;
 
 namespace BookHeaven.Core.Features.Reader.Abstractions;
@@ -8,7 +7,8 @@ public interface IReaderAnnotationService
 {
     event Action? OnHighlightsChanged;
 
-    Task<Result> InitializeAsync(Guid bookId, Guid profileId, ReaderState state);
+    Task<Result> InitializeAsync(Guid bookId, Guid profileId);
+    void SetChapter(int chapterIndex, string chapterTitle);
     Task<Result> AddAnnotationAsync(int startOffset, int endOffset, string text);
     Task<Result> RemoveAnnotationsAsync(int startOffset, int endOffset);
     Task<Result> SaveAnnotationAsync(BookAnnotation annotation);
