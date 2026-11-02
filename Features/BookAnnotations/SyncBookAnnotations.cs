@@ -4,49 +4,97 @@ namespace BookHeaven.Core.Features.BookAnnotations;
 
 public static class SyncBookAnnotations
 {
-    public sealed record Command(Guid BookId, Guid ProfileId, List<BookAnnotation> Annotations) : ICommand;
+    public sealed record Command(Guid BookId, Guid ProfileId, List<BookAnnotation> Annotations) : ICommand<List<BookAnnotation>>;
+
+    /// <summary>
+    /// Merges the server annotations into the local ones, returning the changes to apply locally.
+    /// Last-write-wins by <c>UpdatedAt</c>; on a tie the server copy wins so both sides converge.
+    /// </summary>
+    public static (List<BookAnnotation> Upserts, List<Guid> DeletedAnnotationIds) Merge(
+        List<BookAnnotation> localAnnotations,
+        List<BookAnnotation> serverAnnotations)
+    {
+        var localIds = localAnnotations
+            .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
+            .Select(annotation => annotation.BookAnnotationId)
+            .ToHashSet();
+        var serverById = serverAnnotations
+            .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
+            .ToDictionary(annotation => annotation.BookAnnotationId);
+
+        List<BookAnnotation> upserts = [];
+        List<Guid> deletedAnnotationIds = [];
+
+        foreach (var local in localAnnotations)
+        {
+            if (local.BookAnnotationId == Guid.Empty) continue;
+            if (!serverById.TryGetValue(local.BookAnnotationId, out var server))
+            {
+                deletedAnnotationIds.Add(local.BookAnnotationId);
+                continue;
+            }
+
+            if (BookAnnotation.HasContentChanged(local, server) && server.UpdatedAt >= local.UpdatedAt)
+            {
+                upserts.Add(server);
+            }
+        }
+
+        foreach (var server in serverAnnotations)
+        {
+            if (server.BookAnnotationId != Guid.Empty && !localIds.Contains(server.BookAnnotationId))
+            {
+                upserts.Add(server);
+            }
+        }
+
+        return (upserts, deletedAnnotationIds);
+    }
 
     internal sealed class Handler(IDbContextFactory<DatabaseContext> dbContextFactory)
-        : ICommandHandler<Command>
+        : ICommandHandler<Command, List<BookAnnotation>>
     {
-        public async ValueTask<Result> Handle(Command request, CancellationToken cancellationToken)
+        public async ValueTask<Result<List<BookAnnotation>>> Handle(Command request, CancellationToken cancellationToken)
         {
             if (request.Annotations.Any(annotation =>
                     annotation.BookId != request.BookId || annotation.ProfileId != request.ProfileId))
             {
-                return Result.Failure(new Error("Annotations must belong to the requested book and profile"));
+                return new Error("Annotations must belong to the requested book and profile");
             }
 
             await using var context = await dbContextFactory.CreateDbContextAsync(cancellationToken);
             var existingAnnotations = await context.BookAnnotations
                 .Where(annotation => annotation.BookId == request.BookId && annotation.ProfileId == request.ProfileId)
                 .ToListAsync(cancellationToken);
-            var requestedById = request.Annotations
+            var existingIds = existingAnnotations
+                .Select(annotation => annotation.BookAnnotationId)
+                .ToHashSet();
+            var incomingById = request.Annotations
                 .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
                 .ToDictionary(annotation => annotation.BookAnnotationId);
 
+            // Last-write-wins: an incoming annotation only replaces the stored one when its
+            // content differs and it is newer. Stored annotations missing from the incoming
+            // list are kept, so changes made on the server survive the sync.
             foreach (var existing in existingAnnotations)
             {
-                if (!requestedById.Remove(existing.BookAnnotationId, out var updated))
+                if (incomingById.TryGetValue(existing.BookAnnotationId, out var incoming)
+                    && BookAnnotation.HasContentChanged(existing, incoming)
+                    && incoming.UpdatedAt > existing.UpdatedAt)
                 {
-                    context.BookAnnotations.Remove(existing);
-                    continue;
+                    existing.ChapterIndex = incoming.ChapterIndex;
+                    existing.ChapterTitle = incoming.ChapterTitle;
+                    existing.StartOffset = incoming.StartOffset;
+                    existing.EndOffset = incoming.EndOffset;
+                    existing.Text = incoming.Text;
+                    existing.Note = BookAnnotation.NormalizeNote(incoming.Note);
                 }
-
-                existing.ChapterIndex = updated.ChapterIndex;
-                existing.ChapterTitle = updated.ChapterTitle;
-                existing.StartOffset = updated.StartOffset;
-                existing.EndOffset = updated.EndOffset;
-                existing.Text = updated.Text;
-                existing.Note = BookAnnotation.NormalizeNote(updated.Note);
             }
 
-            var newAnnotations = request.Annotations
+            var annotationsToAdd = request.Annotations
                 .Where(annotation => annotation.BookAnnotationId == Guid.Empty
-                                     || requestedById.ContainsKey(annotation.BookAnnotationId))
-                .ToList();
-            var annotationsToAdd = newAnnotations.Select(annotation =>
-                new BookAnnotation
+                                     || !existingIds.Contains(annotation.BookAnnotationId))
+                .Select(annotation => new BookAnnotation
                 {
                     BookAnnotationId = annotation.BookAnnotationId,
                     BookId = annotation.BookId,
@@ -66,15 +114,14 @@ public static class SyncBookAnnotations
             }
             catch (DbUpdateException)
             {
-                return Result.Failure(new Error("An error occurred while saving the book annotations"));
+                return new Error("An error occurred while saving the book annotations");
             }
 
-            for (var index = 0; index < newAnnotations.Count; index++)
-            {
-                newAnnotations[index].BookAnnotationId = annotationsToAdd[index].BookAnnotationId;
-            }
-
-            return Result.Success();
+            // Return the merged state so the client can converge to it.
+            return await context.BookAnnotations
+                .AsNoTracking()
+                .Where(annotation => annotation.BookId == request.BookId && annotation.ProfileId == request.ProfileId)
+                .ToListAsync(cancellationToken);
         }
     }
 }
