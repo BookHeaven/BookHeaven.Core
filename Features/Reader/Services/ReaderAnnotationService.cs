@@ -59,30 +59,15 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
         }
         else
         {
-            var mergedStart = Math.Min(startOffset, overlapping.Min(annotation => annotation.StartOffset));
-            var mergedEnd = Math.Max(endOffset, overlapping.Max(annotation => annotation.EndOffset));
-            var mergedText = new char[mergedEnd - mergedStart];
-            foreach (var annotation in overlapping)
-            {
-                var index = annotation.StartOffset - mergedStart;
-                annotation.Text.CopyTo(0, mergedText, index, Math.Min(annotation.Text.Length, mergedText.Length - index));
-            }
-
-            var newIndex = startOffset - mergedStart;
-            text.CopyTo(0, mergedText, newIndex, Math.Min(text.Length, mergedText.Length - newIndex));
-            var notes = overlapping
-                .Select(annotation => annotation.Note)
-                .Where(note => !string.IsNullOrWhiteSpace(note))
-                .Distinct()
-                .ToList();
+            var merged = MergeAnnotationContent(overlapping, startOffset, endOffset, text, null);
             annotations.RemoveAll(annotation => overlapping.Contains(annotation));
             annotations.Add(CreateAnnotation(
                 _chapterIndex,
                 _chapterTitle,
-                mergedStart,
-                mergedEnd,
-                new string(mergedText),
-                notes.Count == 0 ? null : string.Join(Environment.NewLine + Environment.NewLine, notes)));
+                merged.StartOffset,
+                merged.EndOffset,
+                merged.Text,
+                merged.Note));
         }
 
         return await SaveAnnotationChangesAsync(annotations);
@@ -98,10 +83,56 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
         var annotations = _annotations.ToList();
         var changed = annotations.Any(annotation =>
             annotation.ChapterIndex == _chapterIndex
-            && annotation.Overlaps(startOffset, endOffset));
+            && CanRemoveWithoutSplitting(annotation, startOffset, endOffset));
         if (!changed) return Result.Success();
 
         SubtractRange(annotations, _chapterIndex, startOffset, endOffset);
+        return await SaveAnnotationChangesAsync(annotations);
+    }
+
+    public async Task<Result> UpdateAnnotationRangeAsync(BookAnnotation annotation)
+    {
+        if (!_isInitialized || annotation.EndOffset <= annotation.StartOffset)
+        {
+            return Result.Failure(new Error("Invalid highlight range"));
+        }
+
+        var existing = _annotations.FirstOrDefault(item =>
+            item.BookAnnotationId == annotation.BookAnnotationId);
+        if (existing is null || existing.ChapterIndex != annotation.ChapterIndex)
+        {
+            return Result.Failure(new Error("The book annotation could not be found"));
+        }
+
+        annotation.BookId = _bookId;
+        annotation.ProfileId = _profileId;
+        annotation.NormalizeNote();
+        var overlapping = _annotations
+            .Where(item => item.BookAnnotationId != annotation.BookAnnotationId
+                           && item.ChapterIndex == annotation.ChapterIndex
+                           && item.Overlaps(annotation.StartOffset, annotation.EndOffset))
+            .ToList();
+        var updatedAnnotation = annotation.Clone();
+        if (overlapping.Count > 0)
+        {
+            var merged = MergeAnnotationContent(
+                overlapping,
+                annotation.StartOffset,
+                annotation.EndOffset,
+                annotation.Text,
+                annotation.Note);
+            updatedAnnotation.StartOffset = merged.StartOffset;
+            updatedAnnotation.EndOffset = merged.EndOffset;
+            updatedAnnotation.Text = merged.Text;
+            updatedAnnotation.Note = merged.Note;
+        }
+
+        var annotations = _annotations
+            .Where(item => item.BookAnnotationId != annotation.BookAnnotationId
+                           && !overlapping.Contains(item))
+            .Select(item => item.Clone())
+            .ToList();
+        annotations.Add(updatedAnnotation);
         return await SaveAnnotationChangesAsync(annotations);
     }
 
@@ -153,6 +184,15 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
         return _annotations.Any(annotation =>
             annotation.ChapterIndex == _chapterIndex
             && annotation.Overlaps(startOffset, endOffset));
+    }
+
+    public bool HasRemovableAnnotationsInRange(int startOffset, int endOffset)
+    {
+        if (!_isInitialized || endOffset <= startOffset) return false;
+
+        return _annotations.Any(annotation =>
+            annotation.ChapterIndex == _chapterIndex
+            && CanRemoveWithoutSplitting(annotation, startOffset, endOffset));
     }
 
     public bool HasUnhighlightedInRange(int startOffset, int endOffset)
@@ -248,12 +288,42 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
             Note = note
         };
 
-    // Removes the selected range from the affected annotations, keeping their non-overlapping remainders.
+    private static (int StartOffset, int EndOffset, string Text, string? Note) MergeAnnotationContent(
+        IReadOnlyCollection<BookAnnotation> overlapping,
+        int startOffset,
+        int endOffset,
+        string text,
+        string? note)
+    {
+        var mergedStart = Math.Min(startOffset, overlapping.Min(annotation => annotation.StartOffset));
+        var mergedEnd = Math.Max(endOffset, overlapping.Max(annotation => annotation.EndOffset));
+        var mergedText = new char[mergedEnd - mergedStart];
+        foreach (var annotation in overlapping)
+        {
+            var index = annotation.StartOffset - mergedStart;
+            annotation.Text.CopyTo(0, mergedText, index, Math.Min(annotation.Text.Length, mergedText.Length - index));
+        }
+
+        var newIndex = startOffset - mergedStart;
+        text.CopyTo(0, mergedText, newIndex, Math.Min(text.Length, mergedText.Length - newIndex));
+        var notes = new[] { note }
+            .Concat(overlapping.Select(annotation => annotation.Note))
+            .Where(existingNote => !string.IsNullOrWhiteSpace(existingNote))
+            .Distinct()
+            .ToList();
+        return (
+            mergedStart,
+            mergedEnd,
+            new string(mergedText),
+            notes.Count == 0 ? null : string.Join(Environment.NewLine + Environment.NewLine, notes));
+    }
+
+    // Removes edge overlaps without splitting a highlight into two separate annotations.
     private static void SubtractRange(List<BookAnnotation> annotations, int chapterIndex, int startOffset, int endOffset)
     {
         var overlapping = annotations
             .Where(annotation => annotation.ChapterIndex == chapterIndex
-                                && annotation.Overlaps(startOffset, endOffset))
+                                 && CanRemoveWithoutSplitting(annotation, startOffset, endOffset))
             .ToList();
 
         foreach (var annotation in overlapping)
@@ -281,4 +351,8 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
             }
         }
     }
+
+    private static bool CanRemoveWithoutSplitting(BookAnnotation annotation, int startOffset, int endOffset) =>
+        annotation.Overlaps(startOffset, endOffset)
+        && (startOffset <= annotation.StartOffset || endOffset >= annotation.EndOffset);
 }
