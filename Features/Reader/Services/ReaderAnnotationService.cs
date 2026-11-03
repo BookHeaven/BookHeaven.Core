@@ -73,6 +73,55 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
         return await SaveAnnotationChangesAsync(annotations);
     }
 
+    public async Task<Result> CombineAdjacentAnnotationsAsync(int startOffset, int endOffset, string text)
+    {
+        if (!_isInitialized || endOffset <= startOffset || !HasAdjacentAnnotations(startOffset, endOffset))
+        {
+            return Result.Success();
+        }
+
+        List<BookAnnotation> annotationsToCombine = [];
+        var combinedStart = startOffset;
+        var combinedEnd = endOffset;
+        var expandedRange = true;
+        while (expandedRange)
+        {
+            expandedRange = false;
+            foreach (var annotation in _annotations)
+            {
+                if (annotation.ChapterIndex != _chapterIndex ||
+                    annotationsToCombine.Contains(annotation) ||
+                    annotation.StartOffset > combinedEnd ||
+                    annotation.EndOffset < combinedStart)
+                {
+                    continue;
+                }
+
+                annotationsToCombine.Add(annotation);
+                combinedStart = Math.Min(combinedStart, annotation.StartOffset);
+                combinedEnd = Math.Max(combinedEnd, annotation.EndOffset);
+                expandedRange = true;
+            }
+        }
+
+        var merged = MergeAnnotationContent(annotationsToCombine, startOffset, endOffset, text, null);
+        var retainedAnnotation = annotationsToCombine
+            .OrderBy(annotation => annotation.StartOffset)
+            .First()
+            .Clone();
+        retainedAnnotation.StartOffset = merged.StartOffset;
+        retainedAnnotation.EndOffset = merged.EndOffset;
+        retainedAnnotation.Text = merged.Text;
+        retainedAnnotation.Note = merged.Note;
+
+        var annotations = _annotations
+            .Where(annotation => !annotationsToCombine.Contains(annotation))
+            .Select(annotation => annotation.Clone())
+            .ToList();
+        annotations.Add(retainedAnnotation);
+        return await SaveAnnotationChangesAsync(annotations);
+    }
+
     public async Task<Result> RemoveAnnotationsAsync(int startOffset, int endOffset)
     {
         if (!_isInitialized || endOffset <= startOffset)
@@ -184,6 +233,15 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
         return _annotations.Any(annotation =>
             annotation.ChapterIndex == _chapterIndex
             && annotation.Overlaps(startOffset, endOffset));
+    }
+
+    public bool HasAdjacentAnnotations(int startOffset, int endOffset)
+    {
+        if (!_isInitialized || endOffset <= startOffset) return false;
+
+        return _annotations.Any(annotation =>
+            annotation.ChapterIndex == _chapterIndex
+            && (annotation.EndOffset == startOffset || annotation.StartOffset == endOffset));
     }
 
     public bool HasRemovableAnnotationsInRange(int startOffset, int endOffset)
