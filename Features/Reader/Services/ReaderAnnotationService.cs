@@ -7,7 +7,9 @@ using Mediator;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
-public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
+public class ReaderAnnotationService(
+    ISender sender,
+    IPendingBookAnnotationDeletionStore pendingDeletionStore) : IReaderAnnotationService
 {
     public event Action? OnHighlightsChanged;
 
@@ -213,6 +215,7 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
         var result = await sender.Send(new DeleteBookAnnotation.Command(_bookId, _profileId, annotationId));
         if (result.IsFailure) return Result.Failure(result.Error);
 
+        await pendingDeletionStore.QueueAsync(_bookId, _profileId, [annotationId]);
         _annotations.RemoveAll(annotation => annotation.BookAnnotationId == annotationId);
         OnHighlightsChanged?.Invoke();
         return Result.Success();
@@ -322,6 +325,7 @@ public class ReaderAnnotationService(ISender sender) : IReaderAnnotationService
             deletedAnnotationIds));
         if (result.IsFailure) return Result.Failure(result.Error);
 
+        await pendingDeletionStore.QueueAsync(_bookId, _profileId, deletedAnnotationIds);
         _annotations = annotations;
         OnHighlightsChanged?.Invoke();
         return Result.Success();

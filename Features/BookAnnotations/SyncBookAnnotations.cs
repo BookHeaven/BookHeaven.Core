@@ -5,7 +5,11 @@ namespace BookHeaven.Core.Features.BookAnnotations;
 
 public static class SyncBookAnnotations
 {
-    public sealed record Command(Guid BookId, Guid ProfileId, List<BookAnnotation> Annotations) : ICommand<List<BookAnnotation>>;
+    public sealed record Command(
+        Guid BookId,
+        Guid ProfileId,
+        List<BookAnnotation> Annotations,
+        List<Guid> DeletedAnnotationIds) : ICommand<List<BookAnnotation>>;
 
     /// <summary>
     /// Merges the server annotations into the local ones, returning the changes to apply locally.
@@ -58,11 +62,14 @@ public static class SyncBookAnnotations
         public async ValueTask<Result<List<BookAnnotation>>> Handle(Command request, CancellationToken cancellationToken)
         {
             if (request.Annotations.Any(annotation =>
-                    annotation.BookId != request.BookId || annotation.ProfileId != request.ProfileId))
+                    annotation.BookId != request.BookId || annotation.ProfileId != request.ProfileId)
+                || request.DeletedAnnotationIds.Any(annotationId => annotationId == Guid.Empty)
+                || request.DeletedAnnotationIds.Distinct().Count() != request.DeletedAnnotationIds.Count)
             {
-                return new Error("Annotations must belong to the requested book and profile");
+                return new Error("Invalid book annotation sync request");
             }
 
+            var deletedAnnotationIds = request.DeletedAnnotationIds.ToHashSet();
             await using var context = await dbContextFactory.CreateDbContextAsync(cancellationToken);
             var existingAnnotations = await context.BookAnnotations
                 .Where(annotation => annotation.BookId == request.BookId && annotation.ProfileId == request.ProfileId)
@@ -74,11 +81,19 @@ public static class SyncBookAnnotations
                 .Where(annotation => annotation.BookAnnotationId != Guid.Empty)
                 .ToDictionary(annotation => annotation.BookAnnotationId);
 
-            // Last-write-wins: an incoming annotation only replaces the stored one when its
-            // content differs and it is newer. Stored annotations missing from the incoming
-            // list are kept, so changes made on the server survive the sync.
+            foreach (var annotationId in request.DeletedAnnotationIds)
+            {
+                if (existingIds.Contains(annotationId))
+                {
+                    var existing = existingAnnotations.Single(annotation =>
+                        annotation.BookAnnotationId == annotationId);
+                    context.BookAnnotations.Remove(existing);
+                }
+            }
+
             foreach (var existing in existingAnnotations)
             {
+                if (deletedAnnotationIds.Contains(existing.BookAnnotationId)) continue;
                 if (incomingById.TryGetValue(existing.BookAnnotationId, out var incoming)
                     && existing.HasContentChanged(incoming)
                     && incoming.UpdatedAt > existing.UpdatedAt)
@@ -90,7 +105,8 @@ public static class SyncBookAnnotations
 
             var annotationsToAdd = request.Annotations
                 .Where(annotation => annotation.BookAnnotationId == Guid.Empty
-                                     || !existingIds.Contains(annotation.BookAnnotationId))
+                                     || (!existingIds.Contains(annotation.BookAnnotationId)
+                                         && !deletedAnnotationIds.Contains(annotation.BookAnnotationId)))
                 .Select(annotation => annotation.WithNote(annotation.NormalizedNote()))
                 .ToList();
             context.BookAnnotations.AddRange(annotationsToAdd);
@@ -111,4 +127,5 @@ public static class SyncBookAnnotations
                 .ToListAsync(cancellationToken);
         }
     }
+
 }

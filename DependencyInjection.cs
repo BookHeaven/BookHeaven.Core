@@ -1,6 +1,7 @@
 using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Services.Abstractions;
+using BookHeaven.Core.Features.BookAnnotations;
 using BookHeaven.Core.Features.Reader.Abstractions;
 using BookHeaven.Core.Features.Reader.Services;
 using BookHeaven.Core.Services;
@@ -35,6 +36,9 @@ public static class DependencyInjection
             options.EnableSensitiveDataLogging();
 #endif
         });
+        services.AddSingleton<IPendingBookAnnotationDeletionStore>(
+            new PendingBookAnnotationDeletionFileStore(
+                Path.Combine(folderOptions.DatabasePath, "pending-book-annotation-deletions.json")));
         
         services.AddEbookManager(options =>
         {
