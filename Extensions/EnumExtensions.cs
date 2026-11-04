@@ -25,7 +25,7 @@ public static class EnumExtensions
         _ => throw new ArgumentOutOfRangeException(nameof(format), format, null)
     };
     
-    public static EbookFormat GetFormatByExtension(string extension) => extension.ToLower() switch
+    public static EbookFormat GetFormatByExtension(string extension) => extension.ToLowerInvariant() switch
     {
         ".epub" => EbookFormat.Epub,
         ".pdf" => EbookFormat.Pdf,
