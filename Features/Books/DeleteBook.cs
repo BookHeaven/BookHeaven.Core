@@ -1,11 +1,8 @@
-﻿using BookHeaven.Core.Abstractions.Messaging;
-using BookHeaven.Core.Abstractions.Services;
+﻿using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.Events;
 using BookHeaven.Core.Services;
-using BookHeaven.Core.Shared;
-using BookHeaven.Core.Extensions;
+using BookHeaven.Core.Features.BookAnnotations.Abstractions;
 using BookHeaven.Core.Features.Reader.Abstractions;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace BookHeaven.Core.Features.Books;
@@ -19,7 +16,8 @@ public static class DeleteBook
         IDbContextFactory<DatabaseContext> dbContextFactory,
         IReaderCacheService readerCacheService,
         IUrlBuilder urlBuilder,
-        GlobalEventsService globalEventsService) : ICommandHandler<Command>
+        GlobalEventsService globalEventsService,
+        IDeletedAnnotationHistory deletedAnnotationHistory) : ICommandHandler<Command>
     {
         public async ValueTask<Result> Handle(Command request, CancellationToken cancellationToken)
         {
@@ -48,6 +46,15 @@ public static class DeleteBook
                 return new Error("Failed to delete book");
             }
            
+
+            try
+            {
+                await deletedAnnotationHistory.ClearBookAsync(request.BookId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to clear pending annotation deletions for book {BookId}", request.BookId);
+            }
 
             await globalEventsService.Publish(new BookDeleted(request.BookId));
 
