@@ -55,8 +55,9 @@ internal static class TableHelpers
         foreach (var rowEl in rowElements)
         {
             var sum = 0;
-            foreach (var cellEl in rowEl.Children.Where(IsCellTag))
-                sum += ParseSpan(cellEl, "colspan");
+            foreach (var cellEl in rowEl.Children)
+                if (IsCellTag(cellEl))
+                    sum += ParseSpan(cellEl, "colspan");
             columnCount = Math.Max(columnCount, sum);
         }
 
@@ -67,8 +68,9 @@ internal static class TableHelpers
         for (var r = 0; r < rowElements.Count; r++)
         {
             var col = 0;
-            foreach (var cellEl in rowElements[r].Children.Where(IsCellTag))
+            foreach (var cellEl in rowElements[r].Children)
             {
+                if (!IsCellTag(cellEl)) continue;
                 while (col < columnCount && occupied[r, col]) col++;
                 if (col >= columnCount) break;
 
@@ -147,8 +149,9 @@ internal static class TableHelpers
             }
 
             // Process colspan cells (percent-surplus, then min/max distribution).
-            foreach (var cell in cells.Where(c => c.ColSpan > 1))
-                DistributeColspanCell(cell, borderSpacing, columns);
+            foreach (var cell in cells)
+                if (cell.ColSpan > 1)
+                    DistributeColspanCell(cell, borderSpacing, columns);
 
             // Clamp cumulative percentages to 100% (auto tables).
             var totalPercent = 0f;
@@ -170,8 +173,9 @@ internal static class TableHelpers
         for (var r = 0; r < rowElements.Count; r++)
         {
             var rowHeight = 0f;
-            foreach (var cell in cells.Where(c => c.Row == r))
+            foreach (var cell in cells)
             {
+                if (cell.Row != r) continue;
                 var contentWidth = CellContentWidth(cell, columnWidths, borderSpacing, isCollapsed);
                 var cellContentHeight = MeasureCellContentHeight(
                     cell, contentWidth, measurer, options, coreOptions, parser,
@@ -888,8 +892,9 @@ internal static class TableHelpers
         }
 
         // The first row's cells set (or override) the widths of the columns they span.
-        foreach (var cell in cells.Where(c => c.Row == 0))
+        foreach (var cell in cells)
         {
+            if (cell.Row != 0) continue;
             var start = cell.Column;
             var span = Math.Min(cell.ColSpan, columnCount - start);
             if (span <= 0) continue;
