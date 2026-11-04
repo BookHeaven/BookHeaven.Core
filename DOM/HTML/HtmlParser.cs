@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using System.Text;
 using BookHeaven.Core.DOM.CSS;
@@ -40,26 +41,28 @@ public sealed class HtmlParser
     }
 
     // HTML void elements: no content, no closing tag.
-    private static readonly HashSet<string> VoidTags =
-    [
-        "area", "base", "br", "col", "embed", "hr", "img", "input",
-        "link", "meta", "param", "source", "track", "wbr"
-    ];
+    private static readonly FrozenSet<string> VoidTags =
+        new HashSet<string>
+        {
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr"
+        }.ToFrozenSet();
 
     // The named entities that actually occur in EPUB content. Numeric entities
     // (&#nn; / &#xhh;) are handled separately.
-    private static readonly Dictionary<string, string> NamedEntities = new()
-    {
-        ["amp"] = "&", ["lt"] = "<", ["gt"] = ">", ["quot"] = "\"", ["apos"] = "'",
-        ["nbsp"] = "\u00A0", ["copy"] = "\u00A9", ["reg"] = "\u00AE", ["trade"] = "\u2122",
-        ["hellip"] = "\u2026", ["mdash"] = "\u2014", ["ndash"] = "\u2013",
-        ["lsquo"] = "\u2018", ["rsquo"] = "\u2019", ["ldquo"] = "\u201C", ["rdquo"] = "\u201D",
-        ["laquo"] = "\u00AB", ["raquo"] = "\u00BB", ["times"] = "\u00D7", ["divide"] = "\u00F7",
-        ["deg"] = "\u00B0", ["plusmn"] = "\u00B1", ["sup2"] = "\u00B2", ["sup3"] = "\u00B3",
-        ["frac12"] = "\u00BD", ["frac14"] = "\u00BC", ["frac34"] = "\u00BE",
-        ["euro"] = "\u20AC", ["pound"] = "\u00A3", ["cent"] = "\u00A2", ["yen"] = "\u00A5",
-        ["ZeroWidthSpace"] = "\u200B", ["zwnj"] = "\u200C", ["zwj"] = "\u200D",
-    };
+    private static readonly FrozenDictionary<string, string> NamedEntities =
+        new Dictionary<string, string>
+        {
+            ["amp"] = "&", ["lt"] = "<", ["gt"] = ">", ["quot"] = "\"", ["apos"] = "'",
+            ["nbsp"] = "\u00A0", ["copy"] = "\u00A9", ["reg"] = "\u00AE", ["trade"] = "\u2122",
+            ["hellip"] = "\u2026", ["mdash"] = "\u2014", ["ndash"] = "\u2013",
+            ["lsquo"] = "\u2018", ["rsquo"] = "\u2019", ["ldquo"] = "\u201C", ["rdquo"] = "\u201D",
+            ["laquo"] = "\u00AB", ["raquo"] = "\u00BB", ["times"] = "\u00D7", ["divide"] = "\u00F7",
+            ["deg"] = "\u00B0", ["plusmn"] = "\u00B1", ["sup2"] = "\u00B2", ["sup3"] = "\u00B3",
+            ["frac12"] = "\u00BD", ["frac14"] = "\u00BC", ["frac34"] = "\u00BE",
+            ["euro"] = "\u20AC", ["pound"] = "\u00A3", ["cent"] = "\u00A2", ["yen"] = "\u00A5",
+            ["ZeroWidthSpace"] = "\u200B", ["zwnj"] = "\u200C", ["zwj"] = "\u200D",
+        }.ToFrozenDictionary();
 
     /// <summary>
     /// Builds the full document (global stylesheet + chapter stylesheets as
