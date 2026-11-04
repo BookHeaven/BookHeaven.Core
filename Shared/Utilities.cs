@@ -2,6 +2,11 @@
 
 public static class Utilities
 {
+    private static readonly HttpClient HttpClient = new(new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+    });
+
     public static async Task StoreFile(string? source, string destination, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(source))
@@ -10,10 +15,9 @@ public static class Utilities
         }
             
         byte[] fileBytes;
-        if (source.StartsWith("http"))
+        if (source.StartsWith("http", StringComparison.OrdinalIgnoreCase))
         {
-            using var httpClient = new HttpClient();
-            fileBytes = await httpClient.GetByteArrayAsync(source, cancellationToken);
+            fileBytes = await HttpClient.GetByteArrayAsync(source, cancellationToken);
         }
         else
         {
