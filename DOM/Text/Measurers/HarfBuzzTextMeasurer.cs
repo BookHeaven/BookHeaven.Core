@@ -381,9 +381,10 @@ public sealed class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
         foreach (var file in Directory.EnumerateFiles(fontDirectory))
         {
             var name = Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
-            var style = name.Contains("bold") && name.Contains("italic") ? FontStyle.BoldItalic
-                : name.Contains("bold") ? FontStyle.Bold
-                : name.Contains("italic") ? FontStyle.Italic
+            var style = name.Contains("bold", StringComparison.OrdinalIgnoreCase) &&
+                        name.Contains("italic", StringComparison.OrdinalIgnoreCase) ? FontStyle.BoldItalic
+                : name.Contains("bold", StringComparison.OrdinalIgnoreCase) ? FontStyle.Bold
+                : name.Contains("italic", StringComparison.OrdinalIgnoreCase) ? FontStyle.Italic
                 : FontStyle.Regular;
             paths.TryAdd(style, file);
         }
