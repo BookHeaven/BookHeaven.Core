@@ -294,7 +294,16 @@ public sealed partial class CssLengthParser(RenderContext context)
             var c = expr[i];
             if (c is '+' or '-' or '*' or '/' or '(' or ')')
             {
-                tokens.Add(c.ToString());
+                // Interned literals: zero allocation per token.
+                tokens.Add(c switch
+                {
+                    '+' => "+",
+                    '-' => "-",
+                    '*' => "*",
+                    '/' => "/",
+                    '(' => "(",
+                    _ => ")"
+                });
                 i++;
                 continue;
             }
