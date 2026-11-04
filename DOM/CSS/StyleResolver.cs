@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using BookHeaven.Core.DOM.CSS.Models;
 using BookHeaven.Core.DOM.HTML.Models;
@@ -12,11 +13,11 @@ namespace BookHeaven.Core.DOM.CSS;
 public static class StyleResolver
 {
     /// <summary>Properties that inherit from the parent when not set on the element.</summary>
-    private static readonly HashSet<string> Inheritable = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenSet<string> Inheritable = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "font-weight", "font-style", "font-size", "line-height",
         "letter-spacing", "word-spacing", "text-indent", "visibility",
-    };
+    }.ToFrozenSet();
 
     /// <summary>
     /// Resolves the style for <paramref name="el"/> against the parsed rules, inheriting
@@ -199,23 +200,24 @@ public static class StyleResolver
     /// only ever reads physical longhands (margin-top, ...), so every logical form
     /// (margin-block, margin-block-start, margin-inline, ...) is mapped here.
     /// </summary>
-    private static readonly Dictionary<string, string[]> BoxShorthands = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["margin"] = ["margin-top", "margin-right", "margin-bottom", "margin-left"],
-        ["padding"] = ["padding-top", "padding-right", "padding-bottom", "padding-left"],
-        ["margin-block"] = ["margin-top", "margin-bottom"],
-        ["margin-inline"] = ["margin-left", "margin-right"],
-        ["padding-block"] = ["padding-top", "padding-bottom"],
-        ["padding-inline"] = ["padding-left", "padding-right"],
-        ["margin-block-start"] = ["margin-top"],
-        ["margin-block-end"] = ["margin-bottom"],
-        ["margin-inline-start"] = ["margin-left"],
-        ["margin-inline-end"] = ["margin-right"],
-        ["padding-block-start"] = ["padding-top"],
-        ["padding-block-end"] = ["padding-bottom"],
-        ["padding-inline-start"] = ["padding-left"],
-        ["padding-inline-end"] = ["padding-right"],
-    };
+    private static readonly FrozenDictionary<string, string[]> BoxShorthands =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["margin"] = ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+            ["padding"] = ["padding-top", "padding-right", "padding-bottom", "padding-left"],
+            ["margin-block"] = ["margin-top", "margin-bottom"],
+            ["margin-inline"] = ["margin-left", "margin-right"],
+            ["padding-block"] = ["padding-top", "padding-bottom"],
+            ["padding-inline"] = ["padding-left", "padding-right"],
+            ["margin-block-start"] = ["margin-top"],
+            ["margin-block-end"] = ["margin-bottom"],
+            ["margin-inline-start"] = ["margin-left"],
+            ["margin-inline-end"] = ["margin-right"],
+            ["padding-block-start"] = ["padding-top"],
+            ["padding-block-end"] = ["padding-bottom"],
+            ["padding-inline-start"] = ["padding-left"],
+            ["padding-inline-end"] = ["padding-right"],
+        }.ToFrozenDictionary();
 
     /// <summary>
     /// Feeds a declaration into the cascade, expanding box shorthands into their
