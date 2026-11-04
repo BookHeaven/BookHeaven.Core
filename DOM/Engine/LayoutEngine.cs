@@ -1220,8 +1220,10 @@ public sealed class LayoutEngine : IDisposable
         foreach (var node in el.ChildNodes)
             if (node.NodeType == NodeType.Text)
             {
-                if (node.TextContent.Any(c => !TextRunWrapper.IsCollapsibleWhitespace(c)))
-                    return true;
+                var text = node.TextContent;
+                for (var i = 0; i < text.Length; i++)
+                    if (!TextRunWrapper.IsCollapsibleWhitespace(text[i]))
+                        return true;
             }
             else if (node is Element childEl)
             {
