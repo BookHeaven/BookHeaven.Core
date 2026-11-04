@@ -1,15 +1,15 @@
 using BookHeaven.Core.Entities;
 using BookHeaven.Core.Extensions;
 using BookHeaven.Core.Features.BookAnnotations;
+using BookHeaven.Core.Features.BookAnnotations.Abstractions;
 using BookHeaven.Core.Features.Reader.Abstractions;
-using BookHeaven.Core.Shared;
 using Mediator;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
 public class ReaderAnnotationService(
     ISender sender,
-    IPendingBookAnnotationDeletionStore pendingDeletionStore) : IReaderAnnotationService
+    IDeletedAnnotationHistory pendingHistory) : IReaderAnnotationService
 {
     public event Action? OnHighlightsChanged;
 
@@ -215,7 +215,7 @@ public class ReaderAnnotationService(
         var result = await sender.Send(new DeleteBookAnnotation.Command(_bookId, _profileId, annotationId));
         if (result.IsFailure) return Result.Failure(result.Error);
 
-        await pendingDeletionStore.QueueAsync(_bookId, _profileId, [annotationId]);
+        await pendingHistory.QueueAsync(_bookId, _profileId, [annotationId]);
         _annotations.RemoveAll(annotation => annotation.BookAnnotationId == annotationId);
         OnHighlightsChanged?.Invoke();
         return Result.Success();
@@ -325,7 +325,7 @@ public class ReaderAnnotationService(
             deletedAnnotationIds));
         if (result.IsFailure) return Result.Failure(result.Error);
 
-        await pendingDeletionStore.QueueAsync(_bookId, _profileId, deletedAnnotationIds);
+        await pendingHistory.QueueAsync(_bookId, _profileId, deletedAnnotationIds);
         _annotations = annotations;
         OnHighlightsChanged?.Invoke();
         return Result.Success();

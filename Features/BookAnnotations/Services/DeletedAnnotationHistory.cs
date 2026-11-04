@@ -1,25 +1,9 @@
 using System.Text.Json;
+using BookHeaven.Core.Features.BookAnnotations.Abstractions;
 
-namespace BookHeaven.Core.Features.BookAnnotations;
+namespace BookHeaven.Core.Features.BookAnnotations.Services;
 
-public interface IPendingBookAnnotationDeletionStore
-{
-    Task<List<Guid>> GetAsync(Guid bookId, Guid profileId, CancellationToken cancellationToken = default);
-
-    Task QueueAsync(
-        Guid bookId,
-        Guid profileId,
-        IReadOnlyCollection<Guid> annotationIds,
-        CancellationToken cancellationToken = default);
-
-    Task AcknowledgeAsync(
-        Guid bookId,
-        Guid profileId,
-        IReadOnlyCollection<Guid> annotationIds,
-        CancellationToken cancellationToken = default);
-}
-
-public sealed class PendingBookAnnotationDeletionFileStore(string filePath) : IPendingBookAnnotationDeletionStore
+public sealed class DeletedAnnotationHistory(string filePath) : IDeletedAnnotationHistory
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -94,6 +78,21 @@ public sealed class PendingBookAnnotationDeletionFileStore(string filePath) : IP
                 deletion.BookId == bookId
                 && deletion.ProfileId == profileId
                 && annotationIdSet.Contains(deletion.AnnotationId));
+            await SaveAsync(pendingDeletions, cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task ClearBookAsync(Guid bookId, CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var pendingDeletions = await LoadAsync(cancellationToken);
+            if (pendingDeletions.RemoveAll(deletion => deletion.BookId == bookId) == 0) return;
             await SaveAsync(pendingDeletions, cancellationToken);
         }
         finally
