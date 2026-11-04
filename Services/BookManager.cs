@@ -11,7 +11,7 @@ using Mediator;
 
 namespace BookHeaven.Core.Services;
 
-public class BookManager(
+public sealed class BookManager(
     IAlertService alertService,
     ISender sender,
     IReaderCacheService readerCacheService)

@@ -2,7 +2,7 @@
 
 namespace BookHeaven.Core.Features.Reader.Models;
 
-public class ReaderContext
+public sealed class ReaderContext
 {
     public int ViewportWidth { get; init; }
     public int ViewportHeight { get; init; }

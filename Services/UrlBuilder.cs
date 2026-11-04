@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace BookHeaven.Core.Services;
 
-public class UrlBuilder(IOptions<CoreOptions> options) : IUrlBuilder
+public sealed class UrlBuilder(IOptions<CoreOptions> options) : IUrlBuilder
 {
     public string EbookFilePath(Guid bookId, EbookFormat format) => Path.Combine(options.Value.BooksPath, bookId.ToString() + format.GetExtension());
 

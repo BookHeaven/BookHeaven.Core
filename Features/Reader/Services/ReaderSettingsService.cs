@@ -5,7 +5,7 @@ using Mediator;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
-public class ReaderSettingsService(ISender sender) : IReaderSettingsService
+public sealed class ReaderSettingsService(ISender sender) : IReaderSettingsService
 {
     public ProfileSettings? ReaderSettings { get; private set; }
     public event Action<string?>? OnSettingChanged;

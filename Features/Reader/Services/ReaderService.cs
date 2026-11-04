@@ -14,7 +14,7 @@ using Mediator;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
-public class ReaderService(
+public sealed class ReaderService(
     IUrlBuilder urlBuilder,
     IReaderSettingsService readerSettingsService,
     IEbookManagerProvider ebookManagerProvider,

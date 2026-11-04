@@ -2,7 +2,7 @@
 
 namespace BookHeaven.Core.Services;
 
-public class GlobalEventsService
+public sealed class GlobalEventsService
 {
     private readonly Dictionary<Type, List<Delegate>> _handlers = new();
     

@@ -34,7 +34,7 @@ namespace BookHeaven.Core.DOM.Text.Measurers;
 ///     * Only the legacy SKShaper/SKFont fallback (used when HarfBuzz shaping is
 ///     unavailable) is not thread-safe; that path is serialized with a lock.
 /// </summary>
-public class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
+public sealed class HarfBuzzTextMeasurer : ITextMeasurer, IDisposable
 {
     // Per-style fallback chains: a missing variant degrades to the closest available
     // face (a browser synthesizes oblique/bold; we approximate with the nearest real face).

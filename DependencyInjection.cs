@@ -1,7 +1,6 @@
 using BookHeaven.Core.Abstractions.Services;
 using BookHeaven.Core.DOM.Services;
 using BookHeaven.Core.DOM.Services.Abstractions;
-using BookHeaven.Core.Features.BookAnnotations;
 using BookHeaven.Core.Features.BookAnnotations.Abstractions;
 using BookHeaven.Core.Features.BookAnnotations.Services;
 using BookHeaven.Core.Features.Reader.Abstractions;
@@ -82,7 +81,7 @@ public static class DependencyInjection
     }
 }
 
-public class CoreOptions
+public sealed class CoreOptions
 {
     public string BooksPath { get; set; } = null!;
     public string CoversPath { get; set; } = null!;

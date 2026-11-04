@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
-public class ReaderCacheService(
+public sealed class ReaderCacheService(
     IEbookManagerProvider ebookManagerProvider,
     IOptions<CoreOptions> options) : IReaderCacheService
 {

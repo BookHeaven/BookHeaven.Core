@@ -56,7 +56,7 @@ public enum LayoutBlockFlags
 /// their children in <see cref="Children"/>; the page splitter places them
 /// individually (browser behaviour) instead of treating the container as one box.
 /// </remarks>
-public class LayoutBlock
+public sealed class LayoutBlock
 {
     public string TagName = "";
     public BlockKind Kind = BlockKind.Text;
@@ -273,7 +273,7 @@ public class LayoutBlock
 /// line range; image/container fragments use <c>LineCount = 0</c> (whole move
 /// or pixel slice). <see cref="Y"/> is relative to the page top.
 /// </summary>
-public class PageBlockSlice
+public sealed class PageBlockSlice
 {
     /// <summary>Index of the source block in the flat block list.</summary>
     public int BlockIndex;
@@ -297,7 +297,7 @@ public class PageBlockSlice
     public float Height;
 }
 
-public class BlockPageInfo
+public sealed class BlockPageInfo
 { 
     /// <summary>The block fragments placed on this page, in reading order.</summary>
     public List<PageBlockSlice> Blocks = [];

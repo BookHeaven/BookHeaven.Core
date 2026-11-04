@@ -4,7 +4,7 @@ namespace BookHeaven.Core.Features.Reader.Models;
 /// Maps profile IDs to the reader settings hash each profile currently uses,
 /// so the cache can tell which page-count files are still needed.
 /// </summary>
-public class ReaderCacheRegistry
+public sealed class ReaderCacheRegistry
 {
     public Dictionary<string, string> Profiles { get; set; } = [];
 }

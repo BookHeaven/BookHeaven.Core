@@ -7,7 +7,7 @@ using Mediator;
 
 namespace BookHeaven.Core.Features.Reader.Services;
 
-public class ReaderAnnotationService(
+public sealed class ReaderAnnotationService(
     ISender sender,
     IDeletedAnnotationHistory pendingHistory) : IReaderAnnotationService
 {
