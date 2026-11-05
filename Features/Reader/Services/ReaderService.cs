@@ -123,11 +123,13 @@ public sealed class ReaderService(
 
     public void PauseTimer()
     {
+        _saveTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         State?.PauseTimer();
     }
 
     public void ResumeTimer()
     {
+        _saveTimer?.Change(SaveProgressInterval, SaveProgressInterval);
         State?.ResumeTimer();
     }
 
