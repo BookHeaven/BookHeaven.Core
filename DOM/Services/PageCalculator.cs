@@ -70,7 +70,6 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
         // tag interning, shorthand splits, var() resolution) is fresh per
         // CalculatePagesAsync and shared across the parallel chapter workers.
         var scope = new ParseScope();
-        Task[]? workers = null;
         try
         {
             // A bounded channel of chapter indices feeds a fixed pool of workers:
@@ -82,7 +81,7 @@ public sealed class PageCalculator(IOptions<CoreOptions> coreOptions, ISender? s
 
             // Workers must be running before the producer writes: the channel is
             // bounded, so a producer ahead of the workers would deadlock.
-            workers = Enumerable.Range(0, workerCount).Select(_ => Task.Run(async () =>
+            var workers = Enumerable.Range(0, workerCount).Select(_ => Task.Run(async () =>
             {
                 await foreach (var i in queue.Reader.ReadAllAsync(cancellationToken))
                 {
