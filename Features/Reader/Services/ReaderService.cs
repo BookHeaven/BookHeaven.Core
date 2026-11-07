@@ -5,6 +5,7 @@ using BookHeaven.Core.Extensions;
 using BookHeaven.Core.Features.Books;
 using BookHeaven.Core.Features.BooksProgress;
 using BookHeaven.Core.Features.Reader.Abstractions;
+using BookHeaven.Core.Features.Reader.Enums;
 using BookHeaven.Core.Features.Reader.Extensions;
 using BookHeaven.Core.Features.Reader.Models;
 using BookHeaven.EbookManager.Abstractions;
@@ -24,10 +25,12 @@ public sealed class ReaderService(
     IReaderAnnotationService annotationService,
     TimeProvider timeProvider) : IReaderService
 {
-    public bool IsReady { get; private set; }
-    public bool IsCalculatingPages { get; private set; }
+    private ReaderPageCalculationState _pageCalculationState = ReaderPageCalculationState.NotStarted;
+    private ReaderRecountState _recountState = ReaderRecountState.None;
 
     public ReaderState? State { get; private set; }
+    public ReaderFlowState FlowState { get; private set; } = ReaderFlowState.Uninitialized;
+    public ReaderPageCalculationState PageCalculationState => _pageCalculationState;
     public ProfileSettings? Settings => readerSettingsService.ReaderSettings;
 
     public event Action? OnPageChanged;
@@ -43,13 +46,20 @@ public sealed class ReaderService(
     private bool _isDirty;
     private int _isSaving;
 
-    // Tracks the in-flight page calculation so a new call can cancel the previous
-    // one. Each calculation owns its CTS and disposes it in its own finally block;
-    // this field is only ever null or a live (non-disposed) source.
     private CancellationTokenSource? _calcCts;
+    private Guid _assetLoadToken = Guid.NewGuid();
+    private IReaderViewAdapter? _viewAdapter;
+    private int _viewFlowRunning;
 
-    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId)
+    public async Task<Result> InitializeAsync(Guid bookId, Guid profileId, IReaderViewAdapter viewAdapter)
     {
+        ArgumentNullException.ThrowIfNull(viewAdapter);
+
+        TransitionFlowTo(ReaderFlowState.Uninitialized);
+        TransitionPageCalculationTo(ReaderPageCalculationState.NotStarted);
+        TransitionRecountTo(ReaderRecountState.None);
+        _viewAdapter = viewAdapter;
+
         _bookId = bookId;
         _profileId = profileId;
         State = new(timeProvider);
@@ -58,6 +68,7 @@ public sealed class ReaderService(
         var getBook = await sender.Send(new GetBook.Query { BookId = bookId });
         if(getBook.IsFailure)
         {
+            TransitionFlowTo(ReaderFlowState.Initialized);
             return Result.Failure(getBook.Error);
         }
         var book = getBook.Value;
@@ -65,6 +76,7 @@ public sealed class ReaderService(
         var getProgress = await sender.Send(new GetBookProgressByProfile.Query(bookId, profileId));
         if(getProgress.IsFailure)
         {
+            TransitionFlowTo(ReaderFlowState.Initialized);
             return Result.Failure(getProgress.Error);
         }
         _progress = getProgress.Value;
@@ -72,6 +84,7 @@ public sealed class ReaderService(
         var getAnnotations = await annotationService.InitializeAsync(bookId, profileId);
         if (getAnnotations.IsFailure)
         {
+            TransitionFlowTo(ReaderFlowState.Initialized);
             return Result.Failure(getAnnotations.Error);
         }
 
@@ -88,10 +101,99 @@ public sealed class ReaderService(
         }, null, SaveProgressInterval, SaveProgressInterval);
 
         State.SetEbook(await LoadEbookAsync(book));
+        TransitionFlowTo(ReaderFlowState.Initialized);
         return Result.Success();
     }
 
-    public async Task LoadCachedPagesAsync(ReaderContext readerContext)
+    public async Task<bool> AdvanceViewAsync()
+    {
+        var viewAdapter = _viewAdapter
+            ?? throw new InvalidOperationException("The reader view adapter has not been initialized.");
+
+        if (Interlocked.Exchange(ref _viewFlowRunning, 1) != 0) return false;
+
+        try
+        {
+            if (FlowState == ReaderFlowState.Initialized)
+            {
+                var context = await viewAdapter.GetReaderContextAsync();
+                await LoadCachedPagesAsync(context);
+                if (State?.PagesPerChapter.Length > 0)
+                {
+                    NavigateToInitialPage();
+                }
+                else
+                {
+                    await UpdateTotalPagesAsync(context);
+                }
+
+                _assetLoadToken = Guid.NewGuid();
+                TransitionFlowTo(ReaderFlowState.WaitingForInitialAssets);
+                return true;
+            }
+
+            if (IsWaitingForAssets(FlowState))
+            {
+                var assetLoadToken = _assetLoadToken;
+                await viewAdapter.WaitForAssetsToLoadAsync();
+                if (assetLoadToken != _assetLoadToken || !IsWaitingForAssets(FlowState))
+                {
+                    return true;
+                }
+
+                if (_pageCalculationState != ReaderPageCalculationState.Ready) return true;
+                await viewAdapter.RestoreHighlightsAsync();
+                if (assetLoadToken != _assetLoadToken || !IsWaitingForAssets(FlowState))
+                {
+                    return true;
+                }
+
+                TransitionFlowTo(ReaderFlowState.Ready);
+                return true;
+            }
+
+            if (FlowState == ReaderFlowState.Ready && _recountState == ReaderRecountState.Requested)
+            {
+                TransitionRecountTo(ReaderRecountState.None);
+                var calculationCompleted = false;
+                try
+                {
+                    var context = await viewAdapter.GetReaderContextAsync();
+                    await UpdateTotalPagesAsync(context);
+                    calculationCompleted = true;
+                    return true;
+                }
+                finally
+                {
+                    if (!calculationCompleted && _recountState == ReaderRecountState.None)
+                    {
+                        TransitionRecountTo(ReaderRecountState.Requested);
+                    }
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _viewFlowRunning, 0);
+        }
+    }
+
+    public void RequestPageRecount()
+    {
+        if (_pageCalculationState is
+            ReaderPageCalculationState.CalculatingInitialPages or ReaderPageCalculationState.RecalculatingPages)
+        {
+            TransitionRecountTo(ReaderRecountState.RequestedDuringCalculation);
+        }
+        else if (_recountState == ReaderRecountState.None)
+        {
+            TransitionRecountTo(ReaderRecountState.Requested);
+        }
+    }
+
+    private async Task LoadCachedPagesAsync(ReaderContext readerContext)
     {
         if (State is null || Settings is null) return;
         var options = Settings.ToPageCalculatorOptions(readerContext);
@@ -133,17 +235,15 @@ public sealed class ReaderService(
         State?.ResumeTimer();
     }
 
-    public async Task CalculatePagesAsync(ReaderContext readerContext)
+    private async Task CalculatePagesAsync(ReaderContext readerContext)
     {
         if (State?.Ebook is null || Settings is null) return;
 
-        IsCalculatingPages = true;
-        // Supersede any in-flight calculation: cancel it so it stops ASAP and its
-        // partial result is dropped, then start a fresh one with a new token.
-        if (_calcCts is not null)
-        {
-            await _calcCts.CancelAsync();
-        }
+        var calculationState = _pageCalculationState is
+            ReaderPageCalculationState.Ready or ReaderPageCalculationState.RecalculatingPages
+            ? ReaderPageCalculationState.RecalculatingPages
+            : ReaderPageCalculationState.CalculatingInitialPages;
+        TransitionPageCalculationTo(calculationState);
         var cts = new CancellationTokenSource();
         _calcCts = cts;
 
@@ -156,18 +256,23 @@ public sealed class ReaderService(
             OnTotalPagesChanged?.Invoke();
             _ = readerCacheService.SaveCachedPagesAsync(_bookId, _profileId, options.CalculateHash(), State.PagesPerChapter);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            // A newer calculation superseded this one; drop the partial result.
+            // Disposal cancels the active calculation; discard its partial result.
         }
         finally
         {
-            // Clear the field before disposing so no other thread ever sees a
-            // disposed source; only the current owner clears it.
             if (ReferenceEquals(_calcCts, cts))
                 _calcCts = null;
+            if (_recountState == ReaderRecountState.RequestedDuringCalculation)
+            {
+                TransitionRecountTo(ReaderRecountState.Requested);
+            }
+            TransitionPageCalculationTo(
+                FlowState == ReaderFlowState.Uninitialized || calculationState == ReaderPageCalculationState.CalculatingInitialPages
+                    ? ReaderPageCalculationState.NotStarted
+                    : ReaderPageCalculationState.Ready);
             cts.Dispose();
-            IsCalculatingPages = false;
         }
     }
 
@@ -187,6 +292,16 @@ public sealed class ReaderService(
         State!.SetChapterAndPage(chapter, page);
         annotationService.SetChapter(chapter, State.ChapterTitle);
         MarkDirty();
+        if (FlowState is ReaderFlowState.Initialized or ReaderFlowState.WaitingForInitialAssets)
+        {
+            _assetLoadToken = Guid.NewGuid();
+            TransitionFlowTo(ReaderFlowState.WaitingForInitialAssets);
+        }
+        else if (FlowState is ReaderFlowState.Ready or ReaderFlowState.WaitingForChapterAssets)
+        {
+            _assetLoadToken = Guid.NewGuid();
+            TransitionFlowTo(ReaderFlowState.WaitingForChapterAssets);
+        }
         OnChapterChanged?.Invoke();
     }
 
@@ -195,7 +310,7 @@ public sealed class ReaderService(
         _isDirty = true;
     }
 
-    public void NavigateToInitialPage()
+    private void NavigateToInitialPage()
     {
         if(State is null) return;
         var targetChapter = _progress?.Chapter ?? 0;
@@ -214,8 +329,90 @@ public sealed class ReaderService(
         _progress?.StartDate ??= DateTimeOffset.Now;
         NavigateTo(targetPage, targetChapter);
         State.StartTimer();
-        IsReady = true;
+        TransitionPageCalculationTo(ReaderPageCalculationState.Ready);
     }
+
+    private async Task UpdateTotalPagesAsync(ReaderContext context)
+    {
+        await CalculatePagesAsync(context);
+        if (_pageCalculationState is
+            ReaderPageCalculationState.NotStarted or ReaderPageCalculationState.CalculatingInitialPages)
+        {
+            NavigateToInitialPage();
+        }
+    }
+
+    private void TransitionFlowTo(ReaderFlowState nextState)
+    {
+        if (FlowState == nextState) return;
+
+        var transitionAllowed = nextState == ReaderFlowState.Uninitialized ||
+            (FlowState, nextState) switch
+            {
+                (ReaderFlowState.Uninitialized, ReaderFlowState.Initialized) => true,
+                (ReaderFlowState.Initialized, ReaderFlowState.WaitingForInitialAssets) => true,
+                (ReaderFlowState.WaitingForInitialAssets, ReaderFlowState.Ready) => true,
+                (ReaderFlowState.Ready, ReaderFlowState.WaitingForChapterAssets) => true,
+                (ReaderFlowState.WaitingForChapterAssets, ReaderFlowState.Ready) => true,
+                _ => false
+            };
+
+        if (!transitionAllowed)
+        {
+            throw new InvalidOperationException($"Invalid reader flow transition: {FlowState} -> {nextState}.");
+        }
+
+        FlowState = nextState;
+    }
+
+    private void TransitionPageCalculationTo(ReaderPageCalculationState nextState)
+    {
+        if (_pageCalculationState == nextState) return;
+
+        var transitionAllowed = nextState == ReaderPageCalculationState.NotStarted ||
+            (_pageCalculationState, nextState) switch
+            {
+                (ReaderPageCalculationState.NotStarted, ReaderPageCalculationState.CalculatingInitialPages) => true,
+                (ReaderPageCalculationState.NotStarted, ReaderPageCalculationState.Ready) => true,
+                (ReaderPageCalculationState.CalculatingInitialPages, ReaderPageCalculationState.NotStarted) => true,
+                (ReaderPageCalculationState.Ready, ReaderPageCalculationState.RecalculatingPages) => true,
+                (ReaderPageCalculationState.RecalculatingPages, ReaderPageCalculationState.Ready) => true,
+                _ => false
+            };
+
+        if (!transitionAllowed)
+        {
+            throw new InvalidOperationException(
+                $"Invalid page calculation transition: {_pageCalculationState} -> {nextState}.");
+        }
+
+        _pageCalculationState = nextState;
+    }
+
+    private void TransitionRecountTo(ReaderRecountState nextState)
+    {
+        if (_recountState == nextState) return;
+
+        var transitionAllowed = nextState == ReaderRecountState.None ||
+            (_recountState, nextState) switch
+            {
+                (ReaderRecountState.None, ReaderRecountState.Requested) => true,
+                (ReaderRecountState.None, ReaderRecountState.RequestedDuringCalculation) => true,
+                (ReaderRecountState.Requested, ReaderRecountState.RequestedDuringCalculation) => true,
+                (ReaderRecountState.RequestedDuringCalculation, ReaderRecountState.Requested) => true,
+                _ => false
+            };
+
+        if (!transitionAllowed)
+        {
+            throw new InvalidOperationException($"Invalid page recount transition: {_recountState} -> {nextState}.");
+        }
+
+        _recountState = nextState;
+    }
+
+    private static bool IsWaitingForAssets(ReaderFlowState state) =>
+        state is ReaderFlowState.WaitingForInitialAssets or ReaderFlowState.WaitingForChapterAssets;
 
     public void NavigateToChapter(TocEntry tocEntry)
     {
@@ -351,11 +548,15 @@ public sealed class ReaderService(
 
     public void Dispose()
     {
-        IsReady = false;
+        TransitionFlowTo(ReaderFlowState.Uninitialized);
+        TransitionPageCalculationTo(ReaderPageCalculationState.NotStarted);
+        TransitionRecountTo(ReaderRecountState.None);
         State = null;
         _bookId = Guid.Empty;
         _profileId = Guid.Empty;
         _progress = null;
+        _viewAdapter = null;
+        _assetLoadToken = Guid.NewGuid();
         annotationService.Clear();
         // Waiting here also guarantees an in-flight save (whose state was already
         // captured locally) completes before the service is torn down.
