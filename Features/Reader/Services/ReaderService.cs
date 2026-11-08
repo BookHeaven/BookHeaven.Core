@@ -120,65 +120,71 @@ public sealed class ReaderService(
 
         try
         {
-            if (FlowState == ReaderFlowState.Initialized)
+            switch (FlowState)
             {
-                var context = await viewAdapter.GetReaderContextAsync();
-                await LoadCachedPagesAsync(context);
-                if (State?.PagesPerChapter.Length > 0)
-                {
-                    NavigateToInitialPage();
-                }
-                else
-                {
-                    await UpdateTotalPagesAsync(context);
-                }
-
-                _assetLoadToken = Guid.NewGuid();
-                TransitionFlowTo(ReaderFlowState.WaitingForInitialAssets);
-                return true;
-            }
-
-            if (IsWaitingForAssets(FlowState))
-            {
-                var assetLoadToken = _assetLoadToken;
-                await viewAdapter.WaitForAssetsToLoadAsync();
-                if (assetLoadToken != _assetLoadToken || !IsWaitingForAssets(FlowState))
-                {
-                    return true;
-                }
-
-                if (PageCalculationState != ReaderPageCalculationState.Ready) return true;
-                await viewAdapter.RestoreHighlightsAsync();
-                if (assetLoadToken != _assetLoadToken || !IsWaitingForAssets(FlowState))
-                {
-                    return true;
-                }
-
-                TransitionFlowTo(ReaderFlowState.Ready);
-                return true;
-            }
-
-            if (FlowState == ReaderFlowState.Ready && _recountState == ReaderRecountState.Requested)
-            {
-                TransitionRecountTo(ReaderRecountState.None);
-                var calculationCompleted = false;
-                try
+                case ReaderFlowState.Initialized:
                 {
                     var context = await viewAdapter.GetReaderContextAsync();
-                    await UpdateTotalPagesAsync(context);
-                    calculationCompleted = true;
+                    await LoadCachedPagesAsync(context);
+                    if (State?.PagesPerChapter.Length > 0)
+                    {
+                        NavigateToInitialPage();
+                    }
+                    else
+                    {
+                        await UpdateTotalPagesAsync(context);
+                    }
+
+                    _assetLoadToken = Guid.NewGuid();
+                    TransitionFlowTo(ReaderFlowState.WaitingForInitialAssets);
                     return true;
                 }
-                finally
+
+                case ReaderFlowState.WaitingForInitialAssets:
+                case ReaderFlowState.WaitingForChapterAssets:
                 {
-                    if (!calculationCompleted && _recountState == ReaderRecountState.None)
+                    var assetLoadToken = _assetLoadToken;
+                    await viewAdapter.WaitForAssetsToLoadAsync();
+                    if (assetLoadToken != _assetLoadToken || !IsWaitingForAssets(FlowState))
                     {
-                        TransitionRecountTo(ReaderRecountState.Requested);
+                        return true;
+                    }
+
+                    if (PageCalculationState != ReaderPageCalculationState.Ready) return true;
+
+                    await viewAdapter.RestoreHighlightsAsync();
+                    if (assetLoadToken != _assetLoadToken || !IsWaitingForAssets(FlowState))
+                    {
+                        return true;
+                    }
+
+                    TransitionFlowTo(ReaderFlowState.Ready);
+                    return true;
+                }
+
+                case ReaderFlowState.Ready when _recountState == ReaderRecountState.Requested:
+                {
+                    TransitionRecountTo(ReaderRecountState.None);
+                    var calculationCompleted = false;
+                    try
+                    {
+                        var context = await viewAdapter.GetReaderContextAsync();
+                        await UpdateTotalPagesAsync(context);
+                        calculationCompleted = true;
+                        return true;
+                    }
+                    finally
+                    {
+                        if (!calculationCompleted && _recountState == ReaderRecountState.None)
+                        {
+                            TransitionRecountTo(ReaderRecountState.Requested);
+                        }
                     }
                 }
-            }
 
-            return false;
+                default:
+                    return false;
+            }
         }
         finally
         {
