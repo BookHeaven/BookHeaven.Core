@@ -25,12 +25,18 @@ public sealed class ReaderService(
     IReaderAnnotationService annotationService,
     TimeProvider timeProvider) : IReaderService
 {
-    private ReaderPageCalculationState _pageCalculationState = ReaderPageCalculationState.NotStarted;
     private ReaderRecountState _recountState = ReaderRecountState.None;
 
     public ReaderState? State { get; private set; }
-    public ReaderFlowState FlowState { get; private set; } = ReaderFlowState.Uninitialized;
-    public ReaderPageCalculationState PageCalculationState => _pageCalculationState;
+    private ReaderFlowState FlowState { get; set; } = ReaderFlowState.Uninitialized;
+    private ReaderPageCalculationState PageCalculationState { get; set; } = ReaderPageCalculationState.NotStarted;
+
+    public bool IsInitialLoadReady =>
+        FlowState is ReaderFlowState.Ready or ReaderFlowState.WaitingForChapterAssets;
+    public bool IsCurrentChapterLoaded => FlowState == ReaderFlowState.Ready;
+    public bool IsCalculatingPages => PageCalculationState is
+        ReaderPageCalculationState.CalculatingInitialPages or ReaderPageCalculationState.RecalculatingPages;
+
     public ProfileSettings? Settings => readerSettingsService.ReaderSettings;
 
     public event Action? OnPageChanged;
@@ -141,7 +147,7 @@ public sealed class ReaderService(
                     return true;
                 }
 
-                if (_pageCalculationState != ReaderPageCalculationState.Ready) return true;
+                if (PageCalculationState != ReaderPageCalculationState.Ready) return true;
                 await viewAdapter.RestoreHighlightsAsync();
                 if (assetLoadToken != _assetLoadToken || !IsWaitingForAssets(FlowState))
                 {
@@ -182,7 +188,7 @@ public sealed class ReaderService(
 
     public void RequestPageRecount()
     {
-        if (_pageCalculationState is
+        if (PageCalculationState is
             ReaderPageCalculationState.CalculatingInitialPages or ReaderPageCalculationState.RecalculatingPages)
         {
             TransitionRecountTo(ReaderRecountState.RequestedDuringCalculation);
@@ -239,7 +245,7 @@ public sealed class ReaderService(
     {
         if (State?.Ebook is null || Settings is null) return;
 
-        var calculationState = _pageCalculationState is
+        var calculationState = PageCalculationState is
             ReaderPageCalculationState.Ready or ReaderPageCalculationState.RecalculatingPages
             ? ReaderPageCalculationState.RecalculatingPages
             : ReaderPageCalculationState.CalculatingInitialPages;
@@ -335,7 +341,7 @@ public sealed class ReaderService(
     private async Task UpdateTotalPagesAsync(ReaderContext context)
     {
         await CalculatePagesAsync(context);
-        if (_pageCalculationState is
+        if (PageCalculationState is
             ReaderPageCalculationState.NotStarted or ReaderPageCalculationState.CalculatingInitialPages)
         {
             NavigateToInitialPage();
@@ -367,10 +373,10 @@ public sealed class ReaderService(
 
     private void TransitionPageCalculationTo(ReaderPageCalculationState nextState)
     {
-        if (_pageCalculationState == nextState) return;
+        if (PageCalculationState == nextState) return;
 
         var transitionAllowed = nextState == ReaderPageCalculationState.NotStarted ||
-            (_pageCalculationState, nextState) switch
+            (PageCalculationState, nextState) switch
             {
                 (ReaderPageCalculationState.NotStarted, ReaderPageCalculationState.CalculatingInitialPages) => true,
                 (ReaderPageCalculationState.NotStarted, ReaderPageCalculationState.Ready) => true,
@@ -383,10 +389,10 @@ public sealed class ReaderService(
         if (!transitionAllowed)
         {
             throw new InvalidOperationException(
-                $"Invalid page calculation transition: {_pageCalculationState} -> {nextState}.");
+                $"Invalid page calculation transition: {PageCalculationState} -> {nextState}.");
         }
 
-        _pageCalculationState = nextState;
+        PageCalculationState = nextState;
     }
 
     private void TransitionRecountTo(ReaderRecountState nextState)

@@ -1,6 +1,6 @@
 namespace BookHeaven.Core.Features.Reader.Enums;
 
-public enum ReaderFlowState
+internal enum ReaderFlowState
 {
     Uninitialized,
     Initialized,

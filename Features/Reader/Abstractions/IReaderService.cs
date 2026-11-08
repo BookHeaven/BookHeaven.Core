@@ -1,5 +1,4 @@
 using BookHeaven.Core.Entities;
-using BookHeaven.Core.Features.Reader.Enums;
 using BookHeaven.Core.Features.Reader.Models;
 using BookHeaven.EbookManager.Entities;
 
@@ -8,8 +7,9 @@ namespace BookHeaven.Core.Features.Reader.Abstractions;
 public interface IReaderService : IDisposable
 {
     ReaderState? State { get; }
-    ReaderFlowState FlowState { get; }
-    ReaderPageCalculationState PageCalculationState { get; }
+    bool IsInitialLoadReady { get; }
+    bool IsCurrentChapterLoaded { get; }
+    bool IsCalculatingPages { get; }
     ProfileSettings? Settings { get; }
     event Action? OnPageChanged;
     event Action? OnChapterChanged;
