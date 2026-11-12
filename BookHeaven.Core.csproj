@@ -3,7 +3,7 @@
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <LangVersion>default</LangVersion>
+    <LangVersion>latest</LangVersion>
     <Authors>Guillem Garrido</Authors>
     <RepositoryUrl>https://github.com/BookHeaven/BookHeaven.Core</RepositoryUrl>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
