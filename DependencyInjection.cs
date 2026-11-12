@@ -72,10 +72,7 @@ public static class DependencyInjection
         var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<DatabaseContext>>();
         using var dbContext = dbContextFactory.CreateDbContext();
 
-        if (dbContext.Database.GetPendingMigrations().Any())
-        {
-            dbContext.Database.Migrate();
-        }
+        dbContext.Database.Migrate();
 
         return services;
     }
